@@ -15,6 +15,8 @@ final class AuthViewModel {
     var households: [Household] = []
     var members: [HouseholdMember] = []
     var categories: [Category] = []
+    var sectors: [Sector] = []
+    var sectorCategories: [UUID: [UUID]] = [:] // sectorId -> [categoryId]
     var error: String?
     
     // MARK: - Services
@@ -93,6 +95,8 @@ final class AuthViewModel {
             households = []
             members = []
             categories = []
+            sectors = []
+            sectorCategories = [:]
             isAuthenticated = false
         } catch {
             self.error = error.localizedDescription
@@ -150,8 +154,51 @@ final class AuthViewModel {
                 userId: userId
             )
             
-            // Fetch categories
+            // Fetch categories and sectors
             categories = try await dataService.fetchCategories(householdId: household.id)
+            sectors = try await dataService.fetchSectors(householdId: household.id)
+            
+            // Fetch sector-category relationships
+            await loadSectorCategories()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+    
+    @MainActor
+    private func loadSectorCategories() async {
+        var mapping: [UUID: [UUID]] = [:]
+        
+        for sector in sectors {
+            do {
+                let links = try await dataService.fetchSectorCategories(sectorId: sector.id)
+                mapping[sector.id] = links.map { $0.categoryId }
+            } catch {
+                mapping[sector.id] = []
+            }
+        }
+        
+        sectorCategories = mapping
+    }
+    
+    @MainActor
+    func refreshCategories() async {
+        guard let householdId = currentHousehold?.id else { return }
+        
+        do {
+            categories = try await dataService.fetchCategories(householdId: householdId)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+    
+    @MainActor
+    func refreshSectors() async {
+        guard let householdId = currentHousehold?.id else { return }
+        
+        do {
+            sectors = try await dataService.fetchSectors(householdId: householdId)
+            await loadSectorCategories()
         } catch {
             self.error = error.localizedDescription
         }

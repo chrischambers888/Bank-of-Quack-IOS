@@ -21,7 +21,19 @@ struct TransactionsListView: View {
         let grouped = Dictionary(grouping: filteredTransactions) { transaction in
             transaction.date.formatted(as: .monthYear)
         }
-        return grouped.sorted { $0.key > $1.key }
+        // Sort groups by date (newest month first), and transactions within each group (newest first)
+        return grouped
+            .map { (key, transactions) in
+                (key, transactions.sorted { $0.date > $1.date })
+            }
+            .sorted { first, second in
+                // Compare by the first transaction's date in each group
+                guard let firstDate = first.1.first?.date,
+                      let secondDate = second.1.first?.date else {
+                    return first.0 > second.0
+                }
+                return firstDate > secondDate
+            }
     }
     
     var body: some View {

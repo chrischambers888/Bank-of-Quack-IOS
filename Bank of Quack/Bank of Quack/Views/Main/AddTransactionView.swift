@@ -17,10 +17,19 @@ struct AddTransactionView: View {
     @State private var excludedFromBudget = false
     
     @State private var showDatePicker = false
+    @State private var showNotes = false
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var showSuccess = false
+    
+    @FocusState private var focusedField: Field?
+    
+    enum Field: Hashable {
+        case amount
+        case description
+        case notes
+    }
     
     private var isFormValid: Bool {
         guard let amountValue = Decimal(string: amount), amountValue > 0 else { return false }
@@ -68,17 +77,20 @@ struct AddTransactionView: View {
                                 .font(.caption)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                             
-                            HStack(alignment: .center, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline, spacing: 2) {
                                 Text("$")
                                     .font(.system(size: 36, weight: .bold))
                                     .foregroundStyle(Theme.Colors.textSecondary)
                                 
-                                TextField("0.00", text: $amount)
+                                TextField("0", text: $amount)
                                     .font(.system(size: 48, weight: .bold))
                                     .foregroundStyle(Theme.Colors.textPrimary)
                                     .keyboardType(.decimalPad)
-                                    .multilineTextAlignment(.center)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                    .focused($focusedField, equals: .amount)
                             }
+                            .frame(maxWidth: .infinity)
                         }
                         .padding(.vertical, Theme.Spacing.md)
                         
@@ -88,6 +100,7 @@ struct AddTransactionView: View {
                             FormField(label: "Description") {
                                 TextField("What was this for?", text: $description)
                                     .inputFieldStyle()
+                                    .focused($focusedField, equals: .description)
                             }
                             
                             // Date
@@ -115,6 +128,11 @@ struct AddTransactionView: View {
                                 .datePickerStyle(.graphical)
                                 .tint(Theme.Colors.accent)
                                 .colorScheme(.dark)
+                                .onChange(of: date) { _, _ in
+                                    withAnimation {
+                                        showDatePicker = false
+                                    }
+                                }
                             }
                             
                             // Paid By (for expense, settlement, reimbursement)
@@ -159,39 +177,71 @@ struct AddTransactionView: View {
                                 }
                             }
                             
-                            // Notes
-                            FormField(label: "Notes (Optional)") {
-                                TextField("Add any notes...", text: $notes, axis: .vertical)
-                                    .lineLimit(3...5)
-                                    .inputFieldStyle()
-                            }
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Submit Button
-                        Button {
-                            submitTransaction()
-                        } label: {
-                            if isSubmitting {
-                                ProgressView()
-                                    .tint(Theme.Colors.textInverse)
-                            } else {
-                                Text("Add Transaction")
+                        // Notes (expandable, shown above buttons)
+                        if showNotes {
+                            FormField(label: "Notes") {
+                                TextField("Add any notes...", text: $notes, axis: .vertical)
+                                    .lineLimit(3...5)
+                                    .inputFieldStyle()
+                                    .focused($focusedField, equals: .notes)
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Submit Button + Notes Icon
+                        HStack(spacing: Theme.Spacing.sm) {
+                            // Add Transaction Button (80%)
+                            Button {
+                                submitTransaction()
+                            } label: {
+                                if isSubmitting {
+                                    ProgressView()
+                                        .tint(Theme.Colors.textInverse)
+                                } else {
+                                    Text("Add Transaction")
+                                }
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .disabled(!isFormValid || isSubmitting)
+                            .frame(maxWidth: .infinity)
+                            
+                            // Notes Icon Button (20%)
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showNotes.toggle()
+                                }
+                            } label: {
+                                Image(systemName: showNotes ? "note.text" : "note.text.badge.plus")
+                                    .font(.title2)
+                                    .foregroundStyle(showNotes ? Theme.Colors.accent : Theme.Colors.textSecondary)
+                                    .frame(width: 56, height: 56)
+                                    .background(showNotes ? Theme.Colors.accent.opacity(0.2) : Theme.Colors.backgroundCard)
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
                             }
                         }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .disabled(!isFormValid || isSubmitting)
                         .padding(.horizontal, Theme.Spacing.md)
                         .padding(.top, Theme.Spacing.md)
                         
                         Spacer(minLength: 100)
                     }
                 }
+                .scrollDismissesKeyboard(.interactively)
             }
             .navigationTitle("Add Transaction")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        focusedField = nil
+                    }
+                }
+            }
         }
         .onAppear {
             // Set default paid by to current member
@@ -259,6 +309,7 @@ struct AddTransactionView: View {
         categoryId = nil
         splitType = .equal
         notes = ""
+        showNotes = false
         excludedFromBudget = false
     }
 }
@@ -355,10 +406,6 @@ struct CategorySelector: View {
                         .padding(.vertical, Theme.Spacing.sm)
                         .background(selectedId == category.id ? Theme.Colors.accent : Theme.Colors.backgroundCard)
                         .foregroundStyle(selectedId == category.id ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.CornerRadius.full)
-                                .stroke(category.swiftUIColor, lineWidth: selectedId == category.id ? 0 : 2)
-                        )
                         .clipShape(Capsule())
                     }
                 }

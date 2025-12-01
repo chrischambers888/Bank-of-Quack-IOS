@@ -91,7 +91,7 @@ final class TransactionViewModel {
             createdByUserId: createdByUserId
         )
         
-        _ = try await dataService.createTransaction(dto)
+        try await dataService.createTransaction(dto)
         
         // Refresh transactions
         await fetchTransactions(householdId: householdId)
@@ -113,17 +113,35 @@ final class TransactionViewModel {
     // MARK: - Calculations
     
     private func calculateMonthlyTotals() {
+        let calendar = Calendar.current
         let now = Date()
-        let startOfMonth = now.startOfMonth
-        let endOfMonth = now.endOfMonth
+        let currentMonth = calendar.component(.month, from: now)
+        let currentYear = calendar.component(.year, from: now)
         
+        // Filter transactions by matching month/year components (avoids timezone issues)
         let monthTransactions = transactions.filter { t in
-            t.date >= startOfMonth && t.date <= endOfMonth
+            let transactionMonth = calendar.component(.month, from: t.date)
+            let transactionYear = calendar.component(.year, from: t.date)
+            return transactionMonth == currentMonth && transactionYear == currentYear
         }
         
-        let totals = dataService.calculateMonthlyTotals(transactions: monthTransactions)
-        totalExpenses = totals.expenses
-        totalIncome = totals.income
+        // Calculate totals directly
+        var expenses: Decimal = 0
+        var income: Decimal = 0
+        
+        for transaction in monthTransactions {
+            switch transaction.transactionType {
+            case .expense:
+                expenses += transaction.amount
+            case .income:
+                income += transaction.amount
+            case .settlement, .reimbursement:
+                break
+            }
+        }
+        
+        totalExpenses = expenses
+        totalIncome = income
     }
     
     // MARK: - Filtering

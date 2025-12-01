@@ -4,6 +4,8 @@ struct SettingsView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     
     @State private var showSwitchHousehold = false
+    @State private var showCategories = false
+    @State private var showSectors = false
     @State private var showSignOutConfirm = false
     
     var body: some View {
@@ -99,6 +101,45 @@ struct SettingsView: View {
                             .padding(.horizontal, Theme.Spacing.md)
                         }
                         
+                        // Categories & Sectors Section
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Text("ORGANIZATION")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                                .padding(.horizontal, Theme.Spacing.md)
+                            
+                            VStack(spacing: 0) {
+                                Button {
+                                    showCategories = true
+                                } label: {
+                                    SettingsRow(
+                                        icon: "folder.fill",
+                                        title: "Categories",
+                                        subtitle: "\(authViewModel.categories.count) categories",
+                                        showChevron: true
+                                    )
+                                }
+                                
+                                Divider()
+                                    .background(Theme.Colors.borderLight)
+                                
+                                Button {
+                                    showSectors = true
+                                } label: {
+                                    SettingsRow(
+                                        icon: "rectangle.3.group.fill",
+                                        title: "Sectors",
+                                        subtitle: "\(authViewModel.sectors.count) sectors",
+                                        showChevron: true
+                                    )
+                                }
+                            }
+                            .background(Theme.Colors.backgroundCard)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
                         // Account Section
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                             Text("ACCOUNT")
@@ -140,6 +181,12 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showSwitchHousehold) {
             SwitchHouseholdView()
+        }
+        .sheet(isPresented: $showCategories) {
+            CategoriesView()
+        }
+        .sheet(isPresented: $showSectors) {
+            SectorsView()
         }
         .alert("Sign Out?", isPresented: $showSignOutConfirm) {
             Button("Cancel", role: .cancel) { }

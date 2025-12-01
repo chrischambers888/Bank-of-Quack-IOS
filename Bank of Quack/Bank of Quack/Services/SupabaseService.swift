@@ -15,7 +15,13 @@ final class SupabaseService: Sendable {
     private init() {
         client = SupabaseClient(
             supabaseURL: AppConfig.supabaseURL,
-            supabaseKey: AppConfig.supabaseAnonKey
+            supabaseKey: AppConfig.supabaseAnonKey,
+            options: SupabaseClientOptions(
+                auth: SupabaseClientOptions.AuthOptions(
+                    redirectToURL: AppConfig.redirectURL,
+                    emitLocalSessionAsInitialSession: true
+                )
+            )
         )
     }
 }

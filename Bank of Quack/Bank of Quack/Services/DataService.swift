@@ -119,6 +119,122 @@ actor DataService {
             .value
     }
     
+    func createCategory(_ dto: CreateCategoryDTO) async throws -> Category {
+        try await supabase
+            .from(.categories)
+            .insert(dto)
+            .select()
+            .single()
+            .execute()
+            .value
+    }
+    
+    func updateCategory(id: UUID, dto: UpdateCategoryDTO) async throws -> Category {
+        try await supabase
+            .from(.categories)
+            .update(dto)
+            .eq("id", value: id.uuidString)
+            .select()
+            .single()
+            .execute()
+            .value
+    }
+    
+    func deleteCategory(id: UUID) async throws {
+        try await supabase
+            .from(.categories)
+            .delete()
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+    
+    // MARK: - Sectors
+    
+    func fetchSectors(householdId: UUID) async throws -> [Sector] {
+        try await supabase
+            .from(.sectors)
+            .select()
+            .eq("household_id", value: householdId.uuidString)
+            .order("sort_order")
+            .execute()
+            .value
+    }
+    
+    func createSector(_ dto: CreateSectorDTO) async throws -> Sector {
+        try await supabase
+            .from(.sectors)
+            .insert(dto)
+            .select()
+            .single()
+            .execute()
+            .value
+    }
+    
+    func updateSector(id: UUID, dto: UpdateSectorDTO) async throws -> Sector {
+        try await supabase
+            .from(.sectors)
+            .update(dto)
+            .eq("id", value: id.uuidString)
+            .select()
+            .single()
+            .execute()
+            .value
+    }
+    
+    func deleteSector(id: UUID) async throws {
+        try await supabase
+            .from(.sectors)
+            .delete()
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+    
+    // MARK: - Sector Categories (linking)
+    
+    func fetchSectorCategories(sectorId: UUID) async throws -> [SectorCategory] {
+        try await supabase
+            .from(.sectorCategories)
+            .select()
+            .eq("sector_id", value: sectorId.uuidString)
+            .execute()
+            .value
+    }
+    
+    func addCategoryToSector(sectorId: UUID, categoryId: UUID) async throws {
+        let dto = CreateSectorCategoryDTO(sectorId: sectorId, categoryId: categoryId)
+        try await supabase
+            .from(.sectorCategories)
+            .insert(dto)
+            .execute()
+    }
+    
+    func removeCategoryFromSector(sectorId: UUID, categoryId: UUID) async throws {
+        try await supabase
+            .from(.sectorCategories)
+            .delete()
+            .eq("sector_id", value: sectorId.uuidString)
+            .eq("category_id", value: categoryId.uuidString)
+            .execute()
+    }
+    
+    func updateSectorCategories(sectorId: UUID, categoryIds: [UUID]) async throws {
+        // Delete all existing links
+        try await supabase
+            .from(.sectorCategories)
+            .delete()
+            .eq("sector_id", value: sectorId.uuidString)
+            .execute()
+        
+        // Insert new links
+        if !categoryIds.isEmpty {
+            let dtos = categoryIds.map { CreateSectorCategoryDTO(sectorId: sectorId, categoryId: $0) }
+            try await supabase
+                .from(.sectorCategories)
+                .insert(dtos)
+                .execute()
+        }
+    }
+    
     // MARK: - Transactions
     
     func fetchTransactions(householdId: UUID, limit: Int? = nil) async throws -> [TransactionView] {
@@ -156,14 +272,11 @@ actor DataService {
             .value
     }
     
-    func createTransaction(_ dto: CreateTransactionDTO) async throws -> Transaction {
+    func createTransaction(_ dto: CreateTransactionDTO) async throws {
         try await supabase
             .from(.transactions)
             .insert(dto)
-            .select()
-            .single()
             .execute()
-            .value
     }
     
     func deleteTransaction(id: UUID) async throws {

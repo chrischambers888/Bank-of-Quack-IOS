@@ -179,7 +179,20 @@ struct TransactionView: Identifiable, Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         householdId = try container.decode(UUID.self, forKey: .householdId)
-        date = try container.decode(Date.self, forKey: .date)
+        
+        // Parse date from string (PostgreSQL DATE format: "2025-12-01")
+        // Create date in LOCAL timezone to avoid off-by-one-day issues
+        let dateString = try container.decode(String.self, forKey: .date)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        dateFormatter.timeZone = TimeZone.current // Use local timezone
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        if let parsedDate = dateFormatter.date(from: dateString) {
+            date = parsedDate
+        } else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.date], debugDescription: "Invalid date format: \(dateString)"))
+        }
+        
         description = try container.decode(String.self, forKey: .description)
         amount = try container.decode(Decimal.self, forKey: .amount)
         transactionType = try container.decode(TransactionType.self, forKey: .transactionType)
@@ -190,9 +203,30 @@ struct TransactionView: Identifiable, Codable, Hashable, Sendable {
         reimbursesTransactionId = try container.decodeIfPresent(UUID.self, forKey: .reimbursesTransactionId)
         excludedFromBudget = try container.decode(Bool.self, forKey: .excludedFromBudget)
         notes = try container.decodeIfPresent(String.self, forKey: .notes)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        
+        // Parse timestamps from ISO8601 strings (PostgreSQL TIMESTAMPTZ format)
+        let timestampFormatter = ISO8601DateFormatter()
+        timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        let createdAtString = try container.decode(String.self, forKey: .createdAt)
+        if let parsed = timestampFormatter.date(from: createdAtString) {
+            createdAt = parsed
+        } else {
+            // Try without fractional seconds
+            timestampFormatter.formatOptions = [.withInternetDateTime]
+            createdAt = timestampFormatter.date(from: createdAtString) ?? Date()
+        }
+        
         createdByUserId = try container.decodeIfPresent(UUID.self, forKey: .createdByUserId)
-        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        
+        let updatedAtString = try container.decode(String.self, forKey: .updatedAt)
+        if let parsed = timestampFormatter.date(from: updatedAtString) {
+            updatedAt = parsed
+        } else {
+            timestampFormatter.formatOptions = [.withInternetDateTime]
+            updatedAt = timestampFormatter.date(from: updatedAtString) ?? Date()
+        }
+        
         categoryName = try container.decodeIfPresent(String.self, forKey: .categoryName)
         categoryIcon = try container.decodeIfPresent(String.self, forKey: .categoryIcon)
         categoryColor = try container.decodeIfPresent(String.self, forKey: .categoryColor)
@@ -237,7 +271,14 @@ struct CreateTransactionDTO: Encodable, Sendable {
     nonisolated func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(householdId, forKey: .householdId)
-        try container.encode(date, forKey: .date)
+        
+        // Format date as yyyy-MM-dd string for PostgreSQL DATE column
+        // Use local calendar to get the correct date components
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        let dateString = String(format: "%04d-%02d-%02d", components.year!, components.month!, components.day!)
+        try container.encode(dateString, forKey: .date)
+        
         try container.encode(description, forKey: .description)
         try container.encode(amount, forKey: .amount)
         try container.encode(transactionType, forKey: .transactionType)

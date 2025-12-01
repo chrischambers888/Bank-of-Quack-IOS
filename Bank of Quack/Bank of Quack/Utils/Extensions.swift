@@ -48,8 +48,8 @@ extension Decimal {
     
     func formatted(as style: MoneyFormatStyle = .standard) -> String {
         let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = "USD"
+        formatter.numberStyle = .decimal
+        formatter.currencySymbol = "$"
         
         switch style {
         case .standard:
@@ -60,7 +60,10 @@ extension Decimal {
             formatter.maximumFractionDigits = 0
         }
         
-        return formatter.string(from: self as NSDecimalNumber) ?? "$0.00"
+        guard let formatted = formatter.string(from: self as NSDecimalNumber) else {
+            return "$0.00"
+        }
+        return "$\(formatted)"
     }
     
     enum MoneyFormatStyle {
@@ -71,15 +74,20 @@ extension Decimal {
 extension Double {
     func formattedAsMoney(showSign: Bool = false) -> String {
         let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = "USD"
+        formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
         
-        if showSign && self > 0 {
-            return "+" + (formatter.string(from: NSNumber(value: self)) ?? "$0.00")
+        guard let formatted = formatter.string(from: NSNumber(value: abs(self))) else {
+            return "$0.00"
         }
-        return formatter.string(from: NSNumber(value: self)) ?? "$0.00"
+        
+        if self < 0 {
+            return "-$\(formatted)"
+        } else if showSign && self > 0 {
+            return "+$\(formatted)"
+        }
+        return "$\(formatted)"
     }
 }
 

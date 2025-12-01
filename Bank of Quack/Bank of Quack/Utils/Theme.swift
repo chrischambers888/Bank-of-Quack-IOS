@@ -120,15 +120,16 @@ struct SolidCardStyle: ViewModifier {
 }
 
 struct PrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     var isLoading: Bool = false
     
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
-            .foregroundStyle(Theme.Colors.textInverse)
+            .foregroundStyle(isEnabled ? Theme.Colors.textInverse : Theme.Colors.textInverse.opacity(0.5))
             .frame(maxWidth: .infinity)
             .padding(Theme.Spacing.md)
-            .background(Theme.Colors.accent)
+            .background(isEnabled ? Theme.Colors.accent : Theme.Colors.accent.opacity(0.4))
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
             .opacity(configuration.isPressed ? 0.8 : 1.0)
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
