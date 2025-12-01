@@ -35,6 +35,26 @@ struct Transaction: Identifiable, Codable, Hashable, Sendable {
         case createdByUserId = "created_by_user_id"
         case updatedAt = "updated_at"
     }
+    
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        householdId = try container.decode(UUID.self, forKey: .householdId)
+        date = try container.decode(Date.self, forKey: .date)
+        description = try container.decode(String.self, forKey: .description)
+        amount = try container.decode(Decimal.self, forKey: .amount)
+        transactionType = try container.decode(TransactionType.self, forKey: .transactionType)
+        paidByMemberId = try container.decodeIfPresent(UUID.self, forKey: .paidByMemberId)
+        paidToMemberId = try container.decodeIfPresent(UUID.self, forKey: .paidToMemberId)
+        categoryId = try container.decodeIfPresent(UUID.self, forKey: .categoryId)
+        splitType = try container.decode(SplitType.self, forKey: .splitType)
+        reimbursesTransactionId = try container.decodeIfPresent(UUID.self, forKey: .reimbursesTransactionId)
+        excludedFromBudget = try container.decode(Bool.self, forKey: .excludedFromBudget)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        createdByUserId = try container.decodeIfPresent(UUID.self, forKey: .createdByUserId)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
 }
 
 enum TransactionType: String, Codable, CaseIterable, Sendable {
@@ -154,11 +174,38 @@ struct TransactionView: Identifiable, Codable, Hashable, Sendable {
         case paidToName = "paid_to_name"
         case paidToAvatar = "paid_to_avatar"
     }
+    
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        householdId = try container.decode(UUID.self, forKey: .householdId)
+        date = try container.decode(Date.self, forKey: .date)
+        description = try container.decode(String.self, forKey: .description)
+        amount = try container.decode(Decimal.self, forKey: .amount)
+        transactionType = try container.decode(TransactionType.self, forKey: .transactionType)
+        paidByMemberId = try container.decodeIfPresent(UUID.self, forKey: .paidByMemberId)
+        paidToMemberId = try container.decodeIfPresent(UUID.self, forKey: .paidToMemberId)
+        categoryId = try container.decodeIfPresent(UUID.self, forKey: .categoryId)
+        splitType = try container.decode(SplitType.self, forKey: .splitType)
+        reimbursesTransactionId = try container.decodeIfPresent(UUID.self, forKey: .reimbursesTransactionId)
+        excludedFromBudget = try container.decode(Bool.self, forKey: .excludedFromBudget)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        createdByUserId = try container.decodeIfPresent(UUID.self, forKey: .createdByUserId)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        categoryName = try container.decodeIfPresent(String.self, forKey: .categoryName)
+        categoryIcon = try container.decodeIfPresent(String.self, forKey: .categoryIcon)
+        categoryColor = try container.decodeIfPresent(String.self, forKey: .categoryColor)
+        paidByName = try container.decodeIfPresent(String.self, forKey: .paidByName)
+        paidByAvatar = try container.decodeIfPresent(String.self, forKey: .paidByAvatar)
+        paidToName = try container.decodeIfPresent(String.self, forKey: .paidToName)
+        paidToAvatar = try container.decodeIfPresent(String.self, forKey: .paidToAvatar)
+    }
 }
 
 // MARK: - Create/Update DTOs
 
-struct CreateTransactionDTO: Encodable {
+struct CreateTransactionDTO: Encodable, Sendable {
     let householdId: UUID
     let date: Date
     let description: String
@@ -185,6 +232,23 @@ struct CreateTransactionDTO: Encodable {
         case excludedFromBudget = "excluded_from_budget"
         case notes
         case createdByUserId = "created_by_user_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(householdId, forKey: .householdId)
+        try container.encode(date, forKey: .date)
+        try container.encode(description, forKey: .description)
+        try container.encode(amount, forKey: .amount)
+        try container.encode(transactionType, forKey: .transactionType)
+        try container.encodeIfPresent(paidByMemberId, forKey: .paidByMemberId)
+        try container.encodeIfPresent(paidToMemberId, forKey: .paidToMemberId)
+        try container.encodeIfPresent(categoryId, forKey: .categoryId)
+        try container.encode(splitType, forKey: .splitType)
+        try container.encodeIfPresent(reimbursesTransactionId, forKey: .reimbursesTransactionId)
+        try container.encode(excludedFromBudget, forKey: .excludedFromBudget)
+        try container.encodeIfPresent(notes, forKey: .notes)
+        try container.encodeIfPresent(createdByUserId, forKey: .createdByUserId)
     }
 }
 

@@ -69,16 +69,16 @@ struct MemberBalanceCard: View {
                 .font(.headline)
                 .foregroundStyle(Theme.Colors.textPrimary)
             
-            Text(isPositive ? "You are owed" : "You owe")
-                .font(.caption)
-                .foregroundStyle(Theme.Colors.textSecondary)
-            +
-            Text(" ")
-            +
-            Text(abs(balance.doubleValue).formattedAsMoney())
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+            HStack(spacing: 4) {
+                Text(isPositive ? "You are owed" : "You owe")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                
+                Text(abs(balance.doubleValue).formattedAsMoney())
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+            }
             
             Text(isPositive ? "Others owe you money" : "You need to settle up")
                 .font(.caption)

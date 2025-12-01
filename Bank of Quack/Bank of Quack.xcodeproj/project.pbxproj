@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		D36375D42EDD490000816221 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = D36375D32EDD490000816221 /* Supabase */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		D36375882EDD47B700816221 /* Bank of Quack.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Bank of Quack.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D36375D42EDD490000816221 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = "Bank of Quack";
 			packageProductDependencies = (
+				D36375D32EDD490000816221 /* Supabase */,
 			);
 			productName = "Bank of Quack";
 			productReference = D36375882EDD47B700816221 /* Bank of Quack.app */;
@@ -346,6 +352,14 @@
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		D36375D32EDD490000816221 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D36375D22EDD48BC00816221 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = D36375802EDD47B700816221 /* Project object */;
 }

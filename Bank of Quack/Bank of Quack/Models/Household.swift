@@ -13,6 +13,15 @@ struct Household: Identifiable, Codable, Hashable, Sendable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
+    
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        inviteCode = try container.decode(String.self, forKey: .inviteCode)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
 }
 
 struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
@@ -35,6 +44,19 @@ struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
         case role, color
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+    }
+    
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        householdId = try container.decode(UUID.self, forKey: .householdId)
+        userId = try container.decode(UUID.self, forKey: .userId)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        avatarUrl = try container.decodeIfPresent(String.self, forKey: .avatarUrl)
+        role = try container.decode(MemberRole.self, forKey: .role)
+        color = try container.decode(String.self, forKey: .color)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 }
 
@@ -70,11 +92,21 @@ struct MemberBalance: Codable, Sendable {
         case totalShare = "total_share"
         case balance
     }
+    
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        householdId = try container.decode(UUID.self, forKey: .householdId)
+        memberId = try container.decode(UUID.self, forKey: .memberId)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        totalPaid = try container.decode(Decimal.self, forKey: .totalPaid)
+        totalShare = try container.decode(Decimal.self, forKey: .totalShare)
+        balance = try container.decode(Decimal.self, forKey: .balance)
+    }
 }
 
 // MARK: - RPC Request/Response
 
-struct CreateHouseholdRequest: Encodable {
+struct CreateHouseholdRequest: Encodable, Sendable {
     let pName: String
     let pDisplayName: String
     
@@ -82,15 +114,27 @@ struct CreateHouseholdRequest: Encodable {
         case pName = "p_name"
         case pDisplayName = "p_display_name"
     }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pName, forKey: .pName)
+        try container.encode(pDisplayName, forKey: .pDisplayName)
+    }
 }
 
-struct JoinHouseholdRequest: Encodable {
+struct JoinHouseholdRequest: Encodable, Sendable {
     let pInviteCode: String
     let pDisplayName: String
     
     enum CodingKeys: String, CodingKey {
         case pInviteCode = "p_invite_code"
         case pDisplayName = "p_display_name"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pInviteCode, forKey: .pInviteCode)
+        try container.encode(pDisplayName, forKey: .pDisplayName)
     }
 }
 

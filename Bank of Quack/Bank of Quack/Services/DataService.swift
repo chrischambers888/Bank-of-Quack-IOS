@@ -176,7 +176,7 @@ actor DataService {
     
     // MARK: - Transaction Totals
     
-    func calculateMonthlyTotals(
+    nonisolated func calculateMonthlyTotals(
         transactions: [TransactionView]
     ) -> (expenses: Decimal, income: Decimal) {
         var expenses: Decimal = 0

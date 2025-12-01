@@ -20,6 +20,18 @@ struct Category: Identifiable, Codable, Hashable, Sendable {
         case createdAt = "created_at"
     }
     
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        householdId = try container.decode(UUID.self, forKey: .householdId)
+        name = try container.decode(String.self, forKey: .name)
+        icon = try container.decodeIfPresent(String.self, forKey: .icon)
+        color = try container.decode(String.self, forKey: .color)
+        imageUrl = try container.decodeIfPresent(String.self, forKey: .imageUrl)
+        sortOrder = try container.decode(Int.self, forKey: .sortOrder)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+    }
+    
     var swiftUIColor: Color {
         Color(hex: color.replacingOccurrences(of: "#", with: ""))
     }

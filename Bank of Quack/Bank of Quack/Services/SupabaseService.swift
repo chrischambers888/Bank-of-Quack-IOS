@@ -1,21 +1,20 @@
 import Foundation
 import Supabase
 
-enum SupabaseConfig {
-    // TODO: Replace with your actual Supabase credentials
-    static let url = URL(string: "https://ezskjnrdwtdgpmdxkvml.supabase.co")!
-    static let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV6c2tqbnJkd3RkZ3BtZHhrdm1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ1MTk4NTAsImV4cCI6MjA4MDA5NTg1MH0.Oqy6Jp40R1rzCw57UjSgTy3Bi8ultE37aGrkGwjCtcQ"
-}
+let supabaseConfig = (
+    url: URL(string: "https://ezskjnrdwtdgpmdxkvml.supabase.co")!,
+    anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV6c2tqbnJkd3RkZ3BtZHhrdm1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ1MTk4NTAsImV4cCI6MjA4MDA5NTg1MH0.Oqy6Jp40R1rzCw57UjSgTy3Bi8ultE37aGrkGwjCtcQ"
+)
 
 final class SupabaseService: Sendable {
-    static let shared = SupabaseService()
+    nonisolated static let shared = SupabaseService()
     
     let client: SupabaseClient
     
     private init() {
         client = SupabaseClient(
-            supabaseURL: SupabaseConfig.url,
-            supabaseKey: SupabaseConfig.anonKey
+            supabaseURL: supabaseConfig.url,
+            supabaseKey: supabaseConfig.anonKey
         )
     }
 }
@@ -23,15 +22,11 @@ final class SupabaseService: Sendable {
 // MARK: - Convenience Accessors
 
 extension SupabaseService {
-    var auth: AuthClient {
+    nonisolated var auth: AuthClient {
         client.auth
     }
     
-    var database: PostgrestClient {
-        client.database
-    }
-    
-    func from(_ table: Table) -> PostgrestQueryBuilder {
+    nonisolated func from(_ table: Table) -> PostgrestQueryBuilder {
         client.from(table.rawValue)
     }
 }

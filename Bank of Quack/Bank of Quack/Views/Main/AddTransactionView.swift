@@ -1,4 +1,5 @@
 import SwiftUI
+import Auth
 
 struct AddTransactionView: View {
     @Environment(AuthViewModel.self) private var authViewModel
