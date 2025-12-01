@@ -37,6 +37,46 @@ struct HouseholdSetupView: View {
                         .multilineTextAlignment(.center)
                 }
                 
+                // Pending Requests Section
+                if !authViewModel.pendingHouseholds.isEmpty {
+                    VStack(spacing: Theme.Spacing.sm) {
+                        HStack {
+                            Image(systemName: "clock.badge")
+                                .foregroundStyle(Theme.Colors.warning)
+                            Text("Pending Requests")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                        }
+                        
+                        VStack(spacing: Theme.Spacing.xs) {
+                            ForEach(authViewModel.pendingHouseholds) { pending in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(pending.householdName)
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(Theme.Colors.textPrimary)
+                                        
+                                        Text("Awaiting approval...")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.warning)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    Image(systemName: "hourglass")
+                                        .foregroundStyle(Theme.Colors.warning)
+                                }
+                                .padding(Theme.Spacing.md)
+                                .background(Theme.Colors.backgroundCard.opacity(0.9))
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, Theme.Spacing.lg)
+                    .padding(.top, Theme.Spacing.md)
+                }
+                
                 Spacer()
                 
                 // Actions
@@ -75,6 +115,12 @@ struct HouseholdSetupView: View {
         }
         .sheet(isPresented: $showJoinSheet) {
             JoinHouseholdView()
+        }
+        .onAppear {
+            // Refresh pending households when view appears
+            Task {
+                await authViewModel.loadUserData()
+            }
         }
     }
 }

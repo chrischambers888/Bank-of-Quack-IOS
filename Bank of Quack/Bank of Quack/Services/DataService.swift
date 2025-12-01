@@ -107,6 +107,53 @@ actor DataService {
             .value
     }
     
+    // MARK: - Member Approval
+    
+    func fetchPendingMembers(householdId: UUID) async throws -> [HouseholdMember] {
+        let request = GetPendingMembersRequest(pHouseholdId: householdId)
+        
+        return try await supabase.client
+            .rpc(RPCFunction.getPendingMembers.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    func fetchMyPendingHouseholds() async throws -> [PendingHousehold] {
+        try await supabase.client
+            .rpc(RPCFunction.getMyPendingHouseholds.rawValue)
+            .execute()
+            .value
+    }
+    
+    func approveMember(memberId: UUID) async throws {
+        let request = ApproveMemberRequest(pMemberId: memberId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.approveMember.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    func rejectMember(memberId: UUID) async throws {
+        let request = RejectMemberRequest(pMemberId: memberId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.rejectMember.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    // MARK: - Household Management
+    
+    func deleteHousehold(householdId: UUID) async throws {
+        let request = DeleteHouseholdRequest(pHouseholdId: householdId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.deleteHousehold.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
     // MARK: - Categories
     
     func fetchCategories(householdId: UUID) async throws -> [Category] {

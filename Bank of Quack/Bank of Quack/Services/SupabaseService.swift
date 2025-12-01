@@ -64,5 +64,10 @@ enum RPCFunction: String {
     case createHousehold = "create_household"
     case joinHousehold = "join_household"
     case regenerateInviteCode = "regenerate_invite_code"
+    case approveMember = "approve_member"
+    case rejectMember = "reject_member"
+    case getPendingMembers = "get_pending_members"
+    case getMyPendingHouseholds = "get_my_pending_households"
+    case deleteHousehold = "delete_household"
 }
 
