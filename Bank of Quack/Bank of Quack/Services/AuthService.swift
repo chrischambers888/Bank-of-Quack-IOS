@@ -5,6 +5,7 @@ enum AuthError: LocalizedError {
     case notAuthenticated
     case invalidCredentials
     case emailNotConfirmed
+    case userAlreadyExists
     case networkError
     case unknown(String)
     
@@ -15,7 +16,9 @@ enum AuthError: LocalizedError {
         case .invalidCredentials:
             return "Invalid email or password."
         case .emailNotConfirmed:
-            return "Please confirm your email address."
+            return "Please confirm your email address first."
+        case .userAlreadyExists:
+            return "An account with this email already exists. Try signing in instead."
         case .networkError:
             return "Network error. Please check your connection."
         case .unknown(let message):
@@ -33,7 +36,8 @@ actor AuthService {
         do {
             try await supabase.auth.signUp(
                 email: email,
-                password: password
+                password: password,
+                redirectTo: AppConfig.redirectURL
             )
         } catch {
             throw mapAuthError(error)
@@ -68,7 +72,24 @@ actor AuthService {
     
     func resetPassword(email: String) async throws {
         do {
-            try await supabase.auth.resetPasswordForEmail(email)
+            try await supabase.auth.resetPasswordForEmail(
+                email,
+                redirectTo: AppConfig.redirectURL
+            )
+        } catch {
+            throw mapAuthError(error)
+        }
+    }
+    
+    // MARK: - Resend Confirmation
+    
+    func resendConfirmation(email: String) async throws {
+        do {
+            try await supabase.auth.resend(
+                email: email,
+                type: .signup,
+                emailRedirectTo: AppConfig.redirectURL
+            )
         } catch {
             throw mapAuthError(error)
         }
@@ -105,13 +126,17 @@ actor AuthService {
     private func mapAuthError(_ error: Error) -> AuthError {
         let message = error.localizedDescription.lowercased()
         
-        if message.contains("invalid") || message.contains("credentials") {
-            return .invalidCredentials
-        } else if message.contains("confirm") || message.contains("verified") {
+        // Check for specific error conditions in order of specificity
+        if message.contains("already registered") || message.contains("already exists") || message.contains("user already") {
+            return .userAlreadyExists
+        } else if message.contains("email not confirmed") || message.contains("not verified") {
             return .emailNotConfirmed
-        } else if message.contains("network") || message.contains("connection") {
+        } else if message.contains("invalid login") || message.contains("invalid credentials") || message.contains("wrong password") {
+            return .invalidCredentials
+        } else if message.contains("network") || message.contains("connection") || message.contains("offline") {
             return .networkError
         } else {
+            // Return the original message for better debugging
             return .unknown(error.localizedDescription)
         }
     }

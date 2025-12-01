@@ -8,6 +8,7 @@ final class AuthViewModel {
     
     var isLoading = true
     var isAuthenticated = false
+    var awaitingConfirmationEmail: String?
     var currentUser: User?
     var currentHousehold: Household?
     var currentMember: HouseholdMember?
@@ -38,6 +39,7 @@ final class AuthViewModel {
         if let user = await authService.currentUser() {
             currentUser = user
             isAuthenticated = true
+            awaitingConfirmationEmail = nil // Clear awaiting state on successful auth
             await loadUserData()
         } else {
             isAuthenticated = false
@@ -70,8 +72,8 @@ final class AuthViewModel {
         
         do {
             try await authService.signUp(email: email, password: password)
-            // After signup, user needs to confirm email
-            // Show success message
+            // Show awaiting confirmation view
+            awaitingConfirmationEmail = email
         } catch {
             self.error = error.localizedDescription
         }
@@ -205,6 +207,17 @@ final class AuthViewModel {
         }
         
         isLoading = false
+    }
+    
+    // MARK: - Email Confirmation
+    
+    @MainActor
+    func cancelAwaitingConfirmation() {
+        awaitingConfirmationEmail = nil
+    }
+    
+    func resendConfirmation(email: String) async throws {
+        try await authService.resendConfirmation(email: email)
     }
     
     // MARK: - Helpers

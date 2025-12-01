@@ -7,7 +7,6 @@ struct SignUpView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var confirmPassword = ""
-    @State private var showSuccess = false
     
     private var passwordsMatch: Bool {
         password == confirmPassword && !password.isEmpty
@@ -112,9 +111,7 @@ struct SignUpView: View {
                     Button {
                         Task {
                             await authViewModel.signUp(email: email, password: password)
-                            if authViewModel.error == nil {
-                                showSuccess = true
-                            }
+                            // AwaitingConfirmationView will be shown automatically by ContentView
                         }
                     } label: {
                         if authViewModel.isLoading {
@@ -133,6 +130,7 @@ struct SignUpView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 Button {
@@ -143,12 +141,8 @@ struct SignUpView: View {
                 }
             }
         }
-        .alert("Check Your Email", isPresented: $showSuccess) {
-            Button("OK") {
-                dismiss()
-            }
-        } message: {
-            Text("We've sent a confirmation link to \(email). Please check your inbox to complete registration.")
+        .onAppear {
+            authViewModel.clearError()
         }
     }
 }

@@ -1,10 +1,11 @@
 import Foundation
 import Supabase
 
-let supabaseConfig = (
-    url: URL(string: "https://ezskjnrdwtdgpmdxkvml.supabase.co")!,
-    anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV6c2tqbnJkd3RkZ3BtZHhrdm1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ1MTk4NTAsImV4cCI6MjA4MDA5NTg1MH0.Oqy6Jp40R1rzCw57UjSgTy3Bi8ultE37aGrkGwjCtcQ"
-)
+enum AppConfig {
+    static let supabaseURL = URL(string: "https://ezskjnrdwtdgpmdxkvml.supabase.co")!
+    static let supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV6c2tqbnJkd3RkZ3BtZHhrdm1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ1MTk4NTAsImV4cCI6MjA4MDA5NTg1MH0.Oqy6Jp40R1rzCw57UjSgTy3Bi8ultE37aGrkGwjCtcQ"
+    static let redirectURL = URL(string: "bankofquack://auth-callback")!
+}
 
 final class SupabaseService: Sendable {
     nonisolated static let shared = SupabaseService()
@@ -13,8 +14,8 @@ final class SupabaseService: Sendable {
     
     private init() {
         client = SupabaseClient(
-            supabaseURL: supabaseConfig.url,
-            supabaseKey: supabaseConfig.anonKey
+            supabaseURL: AppConfig.supabaseURL,
+            supabaseKey: AppConfig.supabaseAnonKey
         )
     }
 }

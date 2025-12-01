@@ -1,4 +1,5 @@
 import SwiftUI
+import Auth
 
 @main
 struct QuackApp: App {
@@ -9,6 +10,22 @@ struct QuackApp: App {
             ContentView()
                 .environment(authViewModel)
                 .preferredColorScheme(.dark)
+                .onOpenURL { url in
+                    handleDeepLink(url)
+                }
+        }
+    }
+    
+    private func handleDeepLink(_ url: URL) {
+        Task {
+            do {
+                // Handle the auth callback from email confirmation
+                try await SupabaseService.shared.auth.session(from: url)
+                // Refresh auth state after successful callback
+                await authViewModel.checkAuthState()
+            } catch {
+                print("Deep link auth error: \(error.localizedDescription)")
+            }
         }
     }
 }
@@ -26,12 +43,15 @@ struct ContentView: View {
                 } else {
                     HouseholdSetupView()
                 }
+            } else if let email = authViewModel.awaitingConfirmationEmail {
+                AwaitingConfirmationView(email: email)
             } else {
                 LoginView()
             }
         }
         .animation(.easeInOut, value: authViewModel.isAuthenticated)
         .animation(.easeInOut, value: authViewModel.currentHousehold != nil)
+        .animation(.easeInOut, value: authViewModel.awaitingConfirmationEmail)
     }
 }
 
