@@ -9,11 +9,208 @@ struct DashboardView: View {
     @State private var isLoadingBalances = false
     @State private var showBalanceDetails = false
     
+    // Sector breakdown data
+    @State private var sectors: [Sector] = []
+    @State private var categories: [Category] = []
+    @State private var sectorCategories: [UUID: [UUID]] = [:] // sectorId -> [categoryId]
+    
     private let dataService = DataService()
     
     private var currentMemberBalance: Decimal {
         guard let memberId = authViewModel.currentMember?.id else { return 0 }
         return memberBalances.first { $0.memberId == memberId }?.balance ?? 0
+    }
+    
+    /// Member lookup for expense breakdown (includes inactive members for historical data)
+    private var memberLookup: [UUID: HouseholdMember] {
+        Dictionary(uniqueKeysWithValues: authViewModel.members.map { ($0.id, $0) })
+    }
+    
+    /// Active members only (for counting purposes where inactive shouldn't be included)
+    private var activeMembers: [HouseholdMember] {
+        authViewModel.members.filter { $0.isActive }
+    }
+    
+    /// Builds the sector expense breakdown for the donut chart
+    private var sectorExpenses: [SectorExpense] {
+        // Get only expense transactions
+        let expenses = transactionViewModel.transactions.filter { $0.transactionType == .expense }
+        
+        // Group expenses by categoryId
+        var expensesByCategory: [UUID: Decimal] = [:]
+        var uncategorizedAmount: Decimal = 0
+        
+        // Track expenses by member per category using "expense for" (owed amounts from splits)
+        var expensesByCategoryAndMember: [UUID: [UUID: Decimal]] = [:] // categoryId -> (memberId -> amount)
+        var uncategorizedByMember: [UUID: Decimal] = [:]
+        
+        for expense in expenses {
+            if let categoryId = expense.categoryId {
+                expensesByCategory[categoryId, default: 0] += expense.amount
+                
+                // Use splits to determine who the expense is FOR (owedAmount)
+                if let splits = allSplits[expense.id] {
+                    for split in splits where split.owedAmount > 0 {
+                        expensesByCategoryAndMember[categoryId, default: [:]][split.memberId, default: 0] += split.owedAmount
+                    }
+                }
+            } else {
+                uncategorizedAmount += expense.amount
+                
+                // Use splits for uncategorized expenses too
+                if let splits = allSplits[expense.id] {
+                    for split in splits where split.owedAmount > 0 {
+                        uncategorizedByMember[split.memberId, default: 0] += split.owedAmount
+                    }
+                }
+            }
+        }
+        
+        // Build category lookup
+        let categoryLookup = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
+        
+        // Calculate total expenses for percentage calculation
+        let totalExpense = expenses.reduce(Decimal(0)) { $0 + $1.amount }
+        guard totalExpense > 0 else { return [] }
+        
+        // Build sector expenses
+        var sectorExpenseList: [SectorExpense] = []
+        
+        for sector in sectors {
+            let categoryIds = sectorCategories[sector.id] ?? []
+            
+            // Build categories within this sector
+            var sectorTotal: Decimal = 0
+            var categoryExpenses: [CategoryExpense] = []
+            var sectorMemberTotals: [UUID: Decimal] = [:] // Track member totals for this sector
+            
+            for categoryId in categoryIds {
+                guard let category = categoryLookup[categoryId],
+                      let amount = expensesByCategory[categoryId], amount > 0 else { continue }
+                
+                sectorTotal += amount
+                categoryExpenses.append(CategoryExpense(
+                    id: categoryId,
+                    name: category.name,
+                    icon: category.icon,
+                    color: category.swiftUIColor,
+                    amount: amount,
+                    percentage: 0 // Will calculate after we know sector total
+                ))
+                
+                // Aggregate member expenses for this sector
+                if let categoryMemberExpenses = expensesByCategoryAndMember[categoryId] {
+                    for (memberId, memberAmount) in categoryMemberExpenses {
+                        sectorMemberTotals[memberId, default: 0] += memberAmount
+                    }
+                }
+                
+                // Remove from expensesByCategory so we can track uncategorized-to-sector
+                expensesByCategory.removeValue(forKey: categoryId)
+                expensesByCategoryAndMember.removeValue(forKey: categoryId)
+            }
+            
+            // Skip sectors with no expenses
+            guard sectorTotal > 0 else { continue }
+            
+            // Update category percentages relative to sector total
+            categoryExpenses = categoryExpenses.map { cat in
+                CategoryExpense(
+                    id: cat.id,
+                    name: cat.name,
+                    icon: cat.icon,
+                    color: cat.color,
+                    amount: cat.amount,
+                    percentage: (cat.amount.doubleValue / sectorTotal.doubleValue) * 100
+                )
+            }.sorted { $0.amount > $1.amount }
+            
+            // Build member breakdown for this sector
+            let memberBreakdown = buildMemberBreakdown(from: sectorMemberTotals, sectorTotal: sectorTotal)
+            
+            sectorExpenseList.append(SectorExpense(
+                id: sector.id,
+                name: sector.name,
+                color: sector.swiftUIColor,
+                amount: sectorTotal,
+                percentage: (sectorTotal.doubleValue / totalExpense.doubleValue) * 100,
+                categories: categoryExpenses,
+                memberBreakdown: memberBreakdown
+            ))
+        }
+        
+        // Add "Other" sector for categories not in any sector
+        let remainingCategoryTotal = expensesByCategory.values.reduce(Decimal(0), +)
+        let otherTotal = remainingCategoryTotal + uncategorizedAmount
+        
+        if otherTotal > 0 {
+            var otherCategories: [CategoryExpense] = []
+            var otherMemberTotals: [UUID: Decimal] = uncategorizedByMember
+            
+            for (categoryId, amount) in expensesByCategory where amount > 0 {
+                if let category = categoryLookup[categoryId] {
+                    otherCategories.append(CategoryExpense(
+                        id: categoryId,
+                        name: category.name,
+                        icon: category.icon,
+                        color: category.swiftUIColor,
+                        amount: amount,
+                        percentage: (amount.doubleValue / otherTotal.doubleValue) * 100
+                    ))
+                    
+                    // Add member expenses for this category (already using owed amounts from splits)
+                    if let categoryMemberExpenses = expensesByCategoryAndMember[categoryId] {
+                        for (memberId, memberAmount) in categoryMemberExpenses {
+                            otherMemberTotals[memberId, default: 0] += memberAmount
+                        }
+                    }
+                }
+            }
+            
+            if uncategorizedAmount > 0 {
+                otherCategories.append(CategoryExpense(
+                    id: UUID(),
+                    name: "Uncategorized",
+                    icon: "questionmark.circle",
+                    color: Theme.Colors.textMuted,
+                    amount: uncategorizedAmount,
+                    percentage: (uncategorizedAmount.doubleValue / otherTotal.doubleValue) * 100
+                ))
+            }
+            
+            otherCategories.sort { $0.amount > $1.amount }
+            
+            // Build member breakdown for "Other"
+            let otherMemberBreakdown = buildMemberBreakdown(from: otherMemberTotals, sectorTotal: otherTotal)
+            
+            sectorExpenseList.append(SectorExpense(
+                id: UUID(),
+                name: "Other",
+                color: Theme.Colors.textSecondary,
+                amount: otherTotal,
+                percentage: (otherTotal.doubleValue / totalExpense.doubleValue) * 100,
+                categories: otherCategories,
+                memberBreakdown: otherMemberBreakdown
+            ))
+        }
+        
+        return sectorExpenseList.sorted { $0.amount > $1.amount }
+    }
+    
+    /// Helper to build member breakdown from totals
+    private func buildMemberBreakdown(from memberTotals: [UUID: Decimal], sectorTotal: Decimal) -> [MemberExpenseBreakdown] {
+        memberTotals.compactMap { memberId, amount in
+            guard amount > 0, let member = memberLookup[memberId] else { return nil }
+            return MemberExpenseBreakdown(
+                id: memberId,
+                name: member.displayName,
+                color: member.swiftUIColor,
+                emoji: member.avatarUrl, // avatarUrl stores the emoji
+                amount: amount,
+                percentage: (amount.doubleValue / sectorTotal.doubleValue) * 100,
+                isInactive: member.isInactive
+            )
+        }.sorted { $0.amount > $1.amount }
     }
     
     /// Returns transactions that impact member balances (expenses where paid != owed, settlements, and linked reimbursements)
@@ -57,7 +254,7 @@ struct DashboardView: View {
             
             // Equal split with single payer impacts balance (one person paid for everyone)
             if transaction.splitType == .equal && transaction.paidByType == .single {
-                return authViewModel.members.filter { $0.isApproved }.count > 1
+                return authViewModel.members.count > 1
             }
             
             // For custom splits or other combinations, check the actual split data
@@ -115,21 +312,34 @@ struct DashboardView: View {
                         )
                         .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Member Balance (only show if multiple members)
-                        if authViewModel.members.filter({ $0.isApproved }).count > 1 {
+                        // Member Balance (only show if multiple members have balance history)
+                        if authViewModel.members.count > 1 {
                             MemberBalanceCardWithInfo(
                                 balance: currentMemberBalance,
-                                memberCount: authViewModel.members.filter { $0.isApproved }.count,
+                                memberCount: authViewModel.members.count,
                                 onInfoTapped: { showBalanceDetails = true }
                             )
                             .padding(.horizontal, Theme.Spacing.md)
                         }
                         
-                        // Recent Transactions
-                        RecentTransactionsCard(
-                            transactions: transactionViewModel.recentTransactions(limit: 5)
-                        )
-                        .padding(.horizontal, Theme.Spacing.md)
+                        // Expense Breakdown by Sector
+                        if sectorExpenses.isEmpty {
+                            ExpenseDonutEmptyState()
+                                .padding(.horizontal, Theme.Spacing.md)
+                        } else {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                                Text("Expenses by Sector")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                
+                                ExpenseDonutChart(
+                                    sectors: sectorExpenses,
+                                    totalExpenses: transactionViewModel.totalExpenses
+                                )
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
+                        }
                         
                         Spacer(minLength: 100)
                     }
@@ -180,9 +390,14 @@ struct DashboardView: View {
                             .stroke(Theme.Colors.accent, lineWidth: 2)
                     )
                 
-                Text(authViewModel.currentMember?.initials ?? "?")
-                    .font(.headline)
-                    .foregroundStyle(Theme.Colors.textInverse)
+                if let emoji = authViewModel.currentMember?.avatarUrl, !emoji.isEmpty {
+                    Text(emoji)
+                        .font(.system(size: 24))
+                } else {
+                    Text(authViewModel.currentMember?.initials ?? "?")
+                        .font(.headline)
+                        .foregroundStyle(Theme.Colors.textInverse)
+                }
             }
         }
         .padding(.top, Theme.Spacing.lg)
@@ -194,16 +409,30 @@ struct DashboardView: View {
         // Fetch transactions
         await transactionViewModel.fetchTransactions(householdId: householdId)
         
-        // Fetch member balances and all splits from database
+        // Fetch member balances, splits, and sector data from database
         do {
             async let balancesTask = dataService.fetchMemberBalances(householdId: householdId)
             async let splitsTask = dataService.fetchAllSplitsForHousehold(householdId: householdId)
+            async let sectorsTask = dataService.fetchSectors(householdId: householdId)
+            async let categoriesTask = dataService.fetchCategories(householdId: householdId)
             
-            let (balances, splits) = try await (balancesTask, splitsTask)
+            let (balances, splits, fetchedSectors, fetchedCategories) = try await (
+                balancesTask, splitsTask, sectorsTask, categoriesTask
+            )
             memberBalances = balances
+            sectors = fetchedSectors
+            categories = fetchedCategories
             
             // Group splits by transaction ID
             allSplits = Dictionary(grouping: splits, by: { $0.transactionId })
+            
+            // Fetch sector-category mappings for each sector
+            var mappings: [UUID: [UUID]] = [:]
+            for sector in fetchedSectors {
+                let sectorCats = try await dataService.fetchSectorCategories(sectorId: sector.id)
+                mappings[sector.id] = sectorCats.map { $0.categoryId }
+            }
+            sectorCategories = mappings
         } catch {
             print("Failed to fetch data: \(error)")
         }
@@ -283,6 +512,10 @@ struct BalanceDetailsSheet: View {
         members.first { $0.id == memberId }?.displayName ?? "Unknown"
     }
     
+    private func member(for memberId: UUID) -> HouseholdMember? {
+        members.first { $0.id == memberId }
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -307,7 +540,8 @@ struct BalanceDetailsSheet: View {
                                     ForEach(memberBalances, id: \.memberId) { balance in
                                         MemberBalanceRow(
                                             balance: balance,
-                                            isCurrentMember: balance.memberId == currentMemberId
+                                            isCurrentMember: balance.memberId == currentMemberId,
+                                            isInactive: member(for: balance.memberId)?.isInactive ?? false
                                         )
                                         
                                         if balance.memberId != memberBalances.last?.memberId {
@@ -395,6 +629,7 @@ struct BalanceDetailsSheet: View {
 struct MemberBalanceRow: View {
     let balance: MemberBalance
     var isCurrentMember: Bool = false
+    var isInactive: Bool = false
     
     private var isZero: Bool {
         abs(balance.balance.doubleValue) < 0.01
@@ -415,12 +650,23 @@ struct MemberBalanceRow: View {
                 Text(balance.displayName)
                     .font(.subheadline)
                     .fontWeight(isCurrentMember ? .semibold : .regular)
-                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .foregroundStyle(isInactive ? Theme.Colors.textMuted : Theme.Colors.textPrimary)
                 
                 if isCurrentMember {
                     Text("(You)")
                         .font(.caption)
                         .foregroundStyle(Theme.Colors.accent)
+                }
+                
+                if isInactive {
+                    Text("Inactive")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Theme.Colors.textMuted.opacity(0.2))
+                        .clipShape(Capsule())
                 }
             }
             

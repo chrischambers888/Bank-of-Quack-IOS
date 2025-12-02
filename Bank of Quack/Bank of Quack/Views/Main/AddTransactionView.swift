@@ -33,6 +33,7 @@ struct AddTransactionView: View {
     @State private var showPaidToPicker = false
     @State private var showSplitMemberPicker = false
     @State private var showNotes = false
+    @State private var showExpensePicker = false
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
@@ -54,8 +55,19 @@ struct AddTransactionView: View {
         Decimal(string: amount) ?? 0
     }
     
+    /// Active members only (for new expenses, income, reimbursements)
+    private var activeMembers: [HouseholdMember] {
+        authViewModel.members.filter { $0.isActive }
+    }
+    
+    /// Members eligible for settlements (includes inactive members for settling balances)
+    private var settlementEligibleMembers: [HouseholdMember] {
+        authViewModel.members // All members including inactive
+    }
+    
+    /// Alias for backward compatibility - used for most transaction types
     private var approvedMembers: [HouseholdMember] {
-        authViewModel.members.filter { $0.isApproved }
+        activeMembers
     }
     
     private var isFormValid: Bool {
@@ -250,12 +262,12 @@ struct AddTransactionView: View {
                                 reimbursementLinkSection
                             }
                             
-                            // Paid To (for settlement)
+                            // Paid To (for settlement - includes inactive members for settling balances)
                             if transactionType == .settlement {
                                 FormField(label: "Paid To") {
-                                    if approvedMembers.count > 5 {
+                                    if settlementEligibleMembers.count > 5 {
                                         MemberPickerButton(
-                                            members: approvedMembers,
+                                            members: settlementEligibleMembers,
                                             selectedId: paidToMemberId,
                                             excludeId: paidByMemberId
                                         ) {
@@ -263,7 +275,7 @@ struct AddTransactionView: View {
                                         }
                                     } else {
                                         MemberSelector(
-                                            members: approvedMembers,
+                                            members: settlementEligibleMembers,
                                             selectedId: $paidToMemberId,
                                             excludeId: paidByMemberId
                                         )
@@ -271,7 +283,7 @@ struct AddTransactionView: View {
                                 }
                                 .sheet(isPresented: $showPaidToPicker) {
                                     MemberPickerSheet(
-                                        members: approvedMembers,
+                                        members: settlementEligibleMembers,
                                         excludeId: paidByMemberId,
                                         title: "Paid To",
                                         selectedId: $paidToMemberId
@@ -376,6 +388,11 @@ struct AddTransactionView: View {
     
     // MARK: - Paid By Section
     
+    /// Members to use for the paid by section based on transaction type
+    private var paidByMemberList: [HouseholdMember] {
+        transactionType == .settlement ? settlementEligibleMembers : approvedMembers
+    }
+    
     private var paidBySection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             Text("Paid By")
@@ -384,10 +401,10 @@ struct AddTransactionView: View {
             
             // For settlements and reimbursements, only allow single member selection
             if transactionType == .settlement || transactionType == .reimbursement {
-                if approvedMembers.count > 5 {
+                if paidByMemberList.count > 5 {
                     // Use sheet picker for 6+ members
                     MemberPickerButton(
-                        members: approvedMembers,
+                        members: paidByMemberList,
                         selectedId: paidByMemberId,
                         excludeId: transactionType == .settlement ? paidToMemberId : nil
                     ) {
@@ -395,7 +412,7 @@ struct AddTransactionView: View {
                     }
                 } else {
                     MemberSelector(
-                        members: approvedMembers,
+                        members: paidByMemberList,
                         selectedId: $paidByMemberId,
                         excludeId: transactionType == .settlement ? paidToMemberId : nil
                     )
@@ -515,7 +532,7 @@ struct AddTransactionView: View {
         }
         .sheet(isPresented: $showPaidByPicker) {
             MemberPickerSheet(
-                members: approvedMembers,
+                members: paidByMemberList,
                 excludeId: transactionType == .settlement ? paidToMemberId : nil,
                 title: "Who Paid?",
                 selectedId: $paidByMemberId
@@ -687,10 +704,12 @@ struct AddTransactionView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
             
-            ExpensePicker(
+            ExpensePickerButton(
                 expenses: linkableExpenses,
-                selectedId: $reimbursesTransactionId
-            )
+                selectedId: reimbursesTransactionId
+            ) {
+                showExpensePicker = true
+            }
             
             if reimbursesTransactionId == nil {
                 Text("Unlinked reimbursements will count as income")
@@ -701,6 +720,13 @@ struct AddTransactionView: View {
                     .font(.caption2)
                     .foregroundStyle(Theme.Colors.textMuted)
             }
+        }
+        .sheet(isPresented: $showExpensePicker) {
+            ExpensePickerSheet(
+                expenses: linkableExpenses,
+                selectedId: $reimbursesTransactionId
+            )
+            .presentationDetents([.medium, .large])
         }
     }
     
@@ -1041,13 +1067,21 @@ struct MemberSelector: View {
                     Button {
                         selectedId = member.id
                     } label: {
-                        Text(member.displayName)
-                            .font(.subheadline)
-                            .padding(.horizontal, Theme.Spacing.md)
-                            .padding(.vertical, Theme.Spacing.sm)
-                            .background(selectedId == member.id ? Theme.Colors.accent : Theme.Colors.backgroundCard)
-                            .foregroundStyle(selectedId == member.id ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
-                            .clipShape(Capsule())
+                        HStack(spacing: 4) {
+                            Text(member.displayName)
+                                .font(.subheadline)
+                            if member.isInactive {
+                                Text("•")
+                                    .font(.caption2)
+                                    .foregroundStyle(selectedId == member.id ? Theme.Colors.textInverse.opacity(0.6) : Theme.Colors.textMuted)
+                            }
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.vertical, Theme.Spacing.sm)
+                        .background(selectedId == member.id ? Theme.Colors.accent : Theme.Colors.backgroundCard)
+                        .foregroundStyle(selectedId == member.id ? Theme.Colors.textInverse : (member.isInactive ? Theme.Colors.textMuted : Theme.Colors.textSecondary))
+                        .clipShape(Capsule())
+                        .opacity(member.isInactive ? 0.8 : 1.0)
                     }
                 }
             }
@@ -1199,12 +1233,24 @@ struct MemberPickerRow: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(Theme.Colors.textInverse)
                     .frame(width: 32, height: 32)
-                    .background(Theme.Colors.accent)
+                    .background(Theme.Colors.accent.opacity(member.isInactive ? 0.5 : 1.0))
                     .clipShape(Circle())
                 
-                Text(member.displayName)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Colors.textPrimary)
+                HStack(spacing: Theme.Spacing.xs) {
+                    Text(member.displayName)
+                        .font(.subheadline)
+                        .foregroundStyle(member.isInactive ? Theme.Colors.textMuted : Theme.Colors.textPrimary)
+                    
+                    if member.isInactive {
+                        Text("Inactive")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Theme.Colors.textMuted.opacity(0.2))
+                            .clipShape(Capsule())
+                    }
+                }
                 
                 Spacer()
                 
@@ -1699,87 +1745,249 @@ struct MemberSplitRow: View {
     }
 }
 
-struct ExpensePicker: View {
+struct ExpensePickerButton: View {
+    let expenses: [TransactionView]
+    let selectedId: UUID?
+    let action: () -> Void
+    
+    private var selectedExpense: TransactionView? {
+        expenses.first { $0.id == selectedId }
+    }
+    
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                if let expense = selectedExpense {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(expense.description)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Text(expense.amount.doubleValue.formattedAsMoney())
+                                .font(.caption)
+                            Text("•")
+                                .font(.caption)
+                            Text(expense.date.formatted(as: .dayMonth))
+                                .font(.caption)
+                        }
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                } else {
+                    Text("None (counts as income)")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            .foregroundStyle(Theme.Colors.textPrimary)
+            .inputFieldStyle()
+        }
+    }
+}
+
+struct ExpensePickerSheet: View {
     let expenses: [TransactionView]
     @Binding var selectedId: UUID?
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var searchText = ""
     
     private var sortedExpenses: [TransactionView] {
         expenses.sorted { $0.date > $1.date }
     }
     
+    private var filteredExpenses: [TransactionView] {
+        if searchText.isEmpty {
+            return sortedExpenses
+        }
+        return sortedExpenses.filter { expense in
+            expense.description.localizedCaseInsensitiveContains(searchText) ||
+            (expense.categoryName?.localizedCaseInsensitiveContains(searchText) ?? false)
+        }
+    }
+    
     var body: some View {
-        VStack(spacing: Theme.Spacing.sm) {
-            // "None" option
-            Button {
-                selectedId = nil
-            } label: {
-                HStack {
-                    Text("None (counts as income)")
-                        .font(.subheadline)
-                        .foregroundStyle(selectedId == nil ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
-                    Spacer()
-                    if selectedId == nil {
-                        Image(systemName: "checkmark")
-                            .font(.caption)
-                            .foregroundStyle(Theme.Colors.textInverse)
-                    }
-                }
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.vertical, Theme.Spacing.sm)
-                .background(selectedId == nil ? Theme.Colors.accent : Theme.Colors.backgroundCard)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
-            }
-            
-            if !sortedExpenses.isEmpty {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
                 ScrollView {
-                    VStack(spacing: Theme.Spacing.xs) {
-                        ForEach(sortedExpenses.prefix(20)) { expense in
-                            Button {
-                                selectedId = expense.id
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(expense.description)
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                            .foregroundStyle(selectedId == expense.id ? Theme.Colors.textInverse : Theme.Colors.textPrimary)
-                                            .lineLimit(1)
-                                        
-                                        HStack(spacing: Theme.Spacing.xs) {
-                                            Text(expense.amount.doubleValue.formattedAsMoney())
-                                                .font(.caption)
-                                            Text("•")
-                                                .font(.caption)
-                                            Text(expense.date.formatted(as: .dayMonth))
-                                                .font(.caption)
-                                            if let categoryName = expense.categoryName {
-                                                Text("•")
-                                                    .font(.caption)
-                                                Text(categoryName)
-                                                    .font(.caption)
-                                            }
-                                        }
-                                        .foregroundStyle(selectedId == expense.id ? Theme.Colors.textInverse.opacity(0.8) : Theme.Colors.textSecondary)
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    if selectedId == expense.id {
-                                        Image(systemName: "checkmark")
-                                            .font(.caption)
-                                            .foregroundStyle(Theme.Colors.textInverse)
-                                    }
+                    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                        // Search bar
+                        HStack {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            TextField("Search expenses...", text: $searchText)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            if !searchText.isEmpty {
+                                Button {
+                                    searchText = ""
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(Theme.Colors.textMuted)
                                 }
-                                .padding(.horizontal, Theme.Spacing.md)
-                                .padding(.vertical, Theme.Spacing.sm)
-                                .background(selectedId == expense.id ? Theme.Colors.accent : Theme.Colors.backgroundCard)
-                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
                             }
                         }
+                        .padding(Theme.Spacing.sm)
+                        .background(Theme.Colors.backgroundCard)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.top, Theme.Spacing.sm)
+                        
+                        // "None" option
+                        Button {
+                            selectedId = nil
+                            dismiss()
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("None")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                    Text("Counts as income")
+                                        .font(.caption)
+                                        .foregroundStyle(selectedId == nil ? Theme.Colors.textInverse.opacity(0.8) : Theme.Colors.textSecondary)
+                                }
+                                
+                                Spacer()
+                                
+                                if selectedId == nil {
+                                    Image(systemName: "checkmark")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(selectedId == nil ? Theme.Colors.textInverse : Theme.Colors.accent)
+                                }
+                            }
+                            .foregroundStyle(selectedId == nil ? Theme.Colors.textInverse : Theme.Colors.textPrimary)
+                            .padding(.horizontal, Theme.Spacing.md)
+                            .padding(.vertical, Theme.Spacing.sm)
+                            .background(selectedId == nil ? Theme.Colors.accent : Theme.Colors.backgroundCard)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        // Expense list
+                        if !filteredExpenses.isEmpty {
+                            VStack(spacing: 0) {
+                                ForEach(filteredExpenses) { expense in
+                                    ExpensePickerRow(
+                                        expense: expense,
+                                        isSelected: selectedId == expense.id
+                                    ) {
+                                        selectedId = expense.id
+                                        dismiss()
+                                    }
+                                    
+                                    if expense.id != filteredExpenses.last?.id {
+                                        Divider()
+                                            .background(Theme.Colors.borderLight)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Empty state
+                        if filteredExpenses.isEmpty && !searchText.isEmpty {
+                            VStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                Text("No expenses found")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                Text("Try a different search term")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Spacing.xl)
+                        } else if expenses.isEmpty {
+                            VStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "doc.text")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                Text("No expenses yet")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                Text("Add some expenses first")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Spacing.xl)
+                        }
+                        
+                        Spacer(minLength: 50)
                     }
                 }
-                .frame(maxHeight: 200)
             }
+            .navigationTitle("Link to Expense")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            }
+        }
+    }
+}
+
+struct ExpensePickerRow: View {
+    let expense: TransactionView
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Theme.Spacing.sm) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(expense.description)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .lineLimit(1)
+                    
+                    HStack(spacing: Theme.Spacing.xs) {
+                        Text(expense.amount.doubleValue.formattedAsMoney())
+                            .font(.caption)
+                        Text("•")
+                            .font(.caption)
+                        Text(expense.date.formatted(as: .dayMonth))
+                            .font(.caption)
+                        if let categoryName = expense.categoryName {
+                            Text("•")
+                                .font(.caption)
+                            Text(categoryName)
+                                .font(.caption)
+                                .lineLimit(1)
+                        }
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+                
+                Spacer()
+                
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            .padding(.vertical, Theme.Spacing.sm)
+            .background(isSelected ? Theme.Colors.accent.opacity(0.15) : Color.clear)
         }
     }
 }

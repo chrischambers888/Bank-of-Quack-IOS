@@ -68,6 +68,15 @@ struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
     var isApproved: Bool {
         status == .approved
     }
+    
+    var isInactive: Bool {
+        status == .inactive
+    }
+    
+    /// Returns true if member is active (approved) and can be used for new transactions
+    var isActive: Bool {
+        status == .approved
+    }
 }
 
 enum MemberRole: String, Codable, CaseIterable, Sendable {
@@ -92,12 +101,14 @@ enum MemberStatus: String, Codable, Sendable {
     case pending
     case approved
     case rejected
+    case inactive
     
     var displayName: String {
         switch self {
         case .pending: return "Pending Approval"
         case .approved: return "Approved"
         case .rejected: return "Rejected"
+        case .inactive: return "Inactive"
         }
     }
 }
@@ -230,6 +241,19 @@ struct PendingHousehold: Codable, Identifiable, Sendable {
 // MARK: - Household Management
 
 struct DeleteHouseholdRequest: Encodable, Sendable {
+    let pHouseholdId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pHouseholdId = "p_household_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pHouseholdId, forKey: .pHouseholdId)
+    }
+}
+
+struct LeaveHouseholdRequest: Encodable, Sendable {
     let pHouseholdId: UUID
     
     enum CodingKeys: String, CodingKey {

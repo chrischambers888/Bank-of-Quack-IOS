@@ -35,6 +35,7 @@ struct EditTransactionView: View {
     @State private var showPaidToPicker = false
     @State private var showSplitMemberPicker = false
     @State private var showNotes: Bool
+    @State private var showExpensePicker = false
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
@@ -74,8 +75,24 @@ struct EditTransactionView: View {
         Decimal(string: amount) ?? 0
     }
     
+    /// Active members only (for new expenses, income, reimbursements)
+    private var activeMembers: [HouseholdMember] {
+        authViewModel.members.filter { $0.isActive }
+    }
+    
+    /// Members eligible for settlements (includes inactive members for settling balances)
+    private var settlementEligibleMembers: [HouseholdMember] {
+        authViewModel.members // All members including inactive
+    }
+    
+    /// Alias for backward compatibility - used for most transaction types
     private var approvedMembers: [HouseholdMember] {
-        authViewModel.members.filter { $0.isApproved }
+        activeMembers
+    }
+    
+    /// Members to use for the paid by section based on transaction type
+    private var paidByMemberList: [HouseholdMember] {
+        transactionType == .settlement ? settlementEligibleMembers : approvedMembers
     }
     
     private var isFormValid: Bool {
@@ -266,12 +283,12 @@ struct EditTransactionView: View {
                                 reimbursementLinkSection
                             }
                             
-                            // Paid To (for settlement)
+                            // Paid To (for settlement - includes inactive members for settling balances)
                             if transactionType == .settlement {
                                 FormField(label: "Paid To") {
-                                    if approvedMembers.count > 5 {
+                                    if settlementEligibleMembers.count > 5 {
                                         MemberPickerButton(
-                                            members: approvedMembers,
+                                            members: settlementEligibleMembers,
                                             selectedId: paidToMemberId,
                                             excludeId: paidByMemberId
                                         ) {
@@ -279,7 +296,7 @@ struct EditTransactionView: View {
                                         }
                                     } else {
                                         MemberSelector(
-                                            members: approvedMembers,
+                                            members: settlementEligibleMembers,
                                             selectedId: $paidToMemberId,
                                             excludeId: paidByMemberId
                                         )
@@ -287,7 +304,7 @@ struct EditTransactionView: View {
                                 }
                                 .sheet(isPresented: $showPaidToPicker) {
                                     MemberPickerSheet(
-                                        members: approvedMembers,
+                                        members: settlementEligibleMembers,
                                         excludeId: paidByMemberId,
                                         title: "Paid To",
                                         selectedId: $paidToMemberId
@@ -430,10 +447,10 @@ struct EditTransactionView: View {
             
             // For settlements and reimbursements, only allow single member selection
             if transactionType == .settlement || transactionType == .reimbursement {
-                if approvedMembers.count > 5 {
+                if paidByMemberList.count > 5 {
                     // Use sheet picker for 6+ members
                     MemberPickerButton(
-                        members: approvedMembers,
+                        members: paidByMemberList,
                         selectedId: paidByMemberId,
                         excludeId: transactionType == .settlement ? paidToMemberId : nil
                     ) {
@@ -441,7 +458,7 @@ struct EditTransactionView: View {
                     }
                 } else {
                     MemberSelector(
-                        members: approvedMembers,
+                        members: paidByMemberList,
                         selectedId: $paidByMemberId,
                         excludeId: transactionType == .settlement ? paidToMemberId : nil
                     )
@@ -556,7 +573,7 @@ struct EditTransactionView: View {
         }
         .sheet(isPresented: $showPaidByPicker) {
             MemberPickerSheet(
-                members: approvedMembers,
+                members: paidByMemberList,
                 excludeId: transactionType == .settlement ? paidToMemberId : nil,
                 title: "Who Paid?",
                 selectedId: $paidByMemberId
@@ -724,10 +741,12 @@ struct EditTransactionView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
             
-            ExpensePicker(
+            ExpensePickerButton(
                 expenses: linkableExpenses,
-                selectedId: $reimbursesTransactionId
-            )
+                selectedId: reimbursesTransactionId
+            ) {
+                showExpensePicker = true
+            }
             
             if reimbursesTransactionId == nil {
                 Text("Unlinked reimbursements will count as income")
@@ -738,6 +757,13 @@ struct EditTransactionView: View {
                     .font(.caption2)
                     .foregroundStyle(Theme.Colors.textMuted)
             }
+        }
+        .sheet(isPresented: $showExpensePicker) {
+            ExpensePickerSheet(
+                expenses: linkableExpenses,
+                selectedId: $reimbursesTransactionId
+            )
+            .presentationDetents([.medium, .large])
         }
     }
     

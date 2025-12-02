@@ -150,9 +150,9 @@ final class AuthViewModel {
         currentHousehold = household
         
         do {
-            // Fetch members (approved only from regular query)
+            // Fetch members (approved and inactive - we need inactive for historical data)
             let allMembers = try await dataService.fetchMembers(householdId: household.id)
-            members = allMembers.filter { $0.isApproved }
+            members = allMembers.filter { $0.isApproved || $0.isInactive }
             
             // Find current member
             currentMember = try await dataService.fetchCurrentMember(
@@ -308,6 +308,36 @@ final class AuthViewModel {
     }
     
     @MainActor
+    func updateMyProfile(displayName: String?, emoji: String?, color: String?) async -> Bool {
+        guard let member = currentMember else { return false }
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            let updatedMember = try await dataService.updateMemberProfile(
+                memberId: member.id,
+                displayName: displayName,
+                avatarEmoji: emoji,
+                color: color
+            )
+            currentMember = updatedMember
+            
+            // Update in members list too
+            if let index = members.firstIndex(where: { $0.id == updatedMember.id }) {
+                members[index] = updatedMember
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    @MainActor
     func refreshPendingMembers() async {
         guard let household = currentHousehold,
               let role = currentMember?.role,
@@ -340,6 +370,37 @@ final class AuthViewModel {
             }
             
             // Reload user data
+            await loadUserData()
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    @MainActor
+    func leaveHousehold() async -> Bool {
+        guard let household = currentHousehold else { return false }
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.leaveHousehold(householdId: household.id)
+            
+            // Clear current household state
+            currentHousehold = nil
+            currentMember = nil
+            members = []
+            pendingMembers = []
+            categories = []
+            sectors = []
+            sectorCategories = [:]
+            
+            // Reload user data (will select another household if available)
             await loadUserData()
             
             isLoading = false

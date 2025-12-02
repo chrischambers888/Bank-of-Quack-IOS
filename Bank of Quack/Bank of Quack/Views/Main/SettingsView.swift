@@ -11,6 +11,8 @@ struct SettingsView: View {
     @State private var showInviteCode = false
     @State private var showDeleteHouseholdConfirm = false
     @State private var deleteConfirmationText = ""
+    @State private var showEditProfile = false
+    @State private var showLeaveHouseholdConfirm = false
     
     var body: some View {
         NavigationStack {
@@ -22,16 +24,24 @@ struct SettingsView: View {
                     VStack(spacing: Theme.Spacing.lg) {
                         // Profile Section
                         VStack(spacing: Theme.Spacing.md) {
-                            // Avatar
+                            // Avatar with emoji or initials
                             ZStack {
                                 Circle()
                                     .fill(authViewModel.currentMember?.swiftUIColor ?? Theme.Colors.accent)
                                     .frame(width: 80, height: 80)
                                 
-                                Text(authViewModel.currentMember?.initials ?? "?")
-                                    .font(.title)
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(Theme.Colors.textInverse)
+                                if let emoji = authViewModel.currentMember?.avatarUrl, !emoji.isEmpty {
+                                    Text(emoji)
+                                        .font(.system(size: 40))
+                                } else {
+                                    Text(authViewModel.currentMember?.initials ?? "?")
+                                        .font(.title)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(Theme.Colors.textInverse)
+                                }
+                            }
+                            .onTapGesture {
+                                showEditProfile = true
                             }
                             
                             Text(authViewModel.currentMember?.displayName ?? "User")
@@ -46,6 +56,15 @@ struct SettingsView: View {
                                 .padding(.vertical, Theme.Spacing.xs)
                                 .background(Theme.Colors.backgroundCard)
                                 .clipShape(Capsule())
+                            
+                            // Edit Profile Button
+                            Button {
+                                showEditProfile = true
+                            } label: {
+                                Label("Edit Profile", systemImage: "pencil")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.accent)
+                            }
                         }
                         .padding(.top, Theme.Spacing.lg)
                         
@@ -146,6 +165,23 @@ struct SettingsView: View {
                                             title: "Delete Household",
                                             subtitle: "Permanently delete all data",
                                             iconColor: Theme.Colors.error
+                                        )
+                                    }
+                                }
+                                
+                                // Leave Household (non-owners only)
+                                if authViewModel.currentMember?.role != .owner {
+                                    Divider()
+                                        .background(Theme.Colors.borderLight)
+                                    
+                                    Button {
+                                        showLeaveHouseholdConfirm = true
+                                    } label: {
+                                        SettingsRow(
+                                            icon: "rectangle.portrait.and.arrow.right.fill",
+                                            title: "Leave Household",
+                                            subtitle: "You can rejoin later with an invite code",
+                                            iconColor: Theme.Colors.warning
                                         )
                                     }
                                 }
@@ -331,8 +367,383 @@ struct SettingsView: View {
                 }
             )
         }
+        .sheet(isPresented: $showEditProfile) {
+            EditProfileView()
+        }
+        .alert("Leave Household?", isPresented: $showLeaveHouseholdConfirm) {
+            Button("Cancel", role: .cancel) { }
+            Button("Leave", role: .destructive) {
+                Task {
+                    let success = await authViewModel.leaveHousehold()
+                    if success {
+                        showLeaveHouseholdConfirm = false
+                    }
+                }
+            }
+        } message: {
+            Text("Your transaction history will be preserved. You can rejoin anytime with an invite code.")
+        }
     }
 }
+
+// MARK: - Edit Profile View
+
+struct EditProfileView: View {
+    @Environment(AuthViewModel.self) private var authViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var displayName: String = ""
+    @State private var selectedEmoji: String = ""
+    @State private var selectedColor: String = ""
+    @State private var isSaving = false
+    @State private var showEmojiInput = false
+    @FocusState private var isEmojiFieldFocused: Bool
+    
+    private let colorOptions = [
+        "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4",
+        "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
+        "#BB8FCE", "#85C1E9", "#F8B500", "#FF8C00",
+        "#00CED1", "#FF69B4", "#32CD32", "#FFD700"
+    ]
+    
+    private var previewInitials: String {
+        displayName.initials(count: 2)
+    }
+    
+    private var canSave: Bool {
+        !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.xl) {
+                        // Preview
+                        VStack(spacing: Theme.Spacing.md) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color(hex: selectedColor.isEmpty ? (authViewModel.currentMember?.color ?? "#4ECDC4") : selectedColor))
+                                    .frame(width: 100, height: 100)
+                                
+                                if selectedEmoji.isEmpty {
+                                    Text(previewInitials.isEmpty ? "?" : previewInitials)
+                                        .font(.largeTitle)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(.white)
+                                } else {
+                                    Text(selectedEmoji)
+                                        .font(.system(size: 50))
+                                }
+                            }
+                            
+                            Text(displayName.isEmpty ? "Your Name" : displayName)
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                        }
+                        .padding(.top, Theme.Spacing.lg)
+                        
+                        // Display Name
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Text("Display Name")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            TextField("Enter your name", text: $displayName)
+                                .inputFieldStyle()
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        // Emoji Selection
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack {
+                                Text("Profile Emoji")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                
+                                Spacer()
+                                
+                                if !selectedEmoji.isEmpty {
+                                    Button("Clear") {
+                                        selectedEmoji = ""
+                                    }
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.accent)
+                                }
+                            }
+                            
+                            Text("Choose any emoji to represent you, or leave blank to show your initials")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                            
+                            HStack(spacing: Theme.Spacing.md) {
+                                // Emoji display/input button
+                                Button {
+                                    showEmojiInput = true
+                                } label: {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                                            .fill(Theme.Colors.backgroundCard)
+                                            .frame(width: 80, height: 80)
+                                        
+                                        if selectedEmoji.isEmpty {
+                                            VStack(spacing: 4) {
+                                                Image(systemName: "face.smiling")
+                                                    .font(.title)
+                                                    .foregroundStyle(Theme.Colors.textMuted)
+                                                Text("Tap")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(Theme.Colors.textMuted)
+                                            }
+                                        } else {
+                                            Text(selectedEmoji)
+                                                .font(.system(size: 50))
+                                        }
+                                    }
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(selectedEmoji.isEmpty ? "No emoji selected" : "Emoji selected")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textPrimary)
+                                    
+                                    Text("Tap to choose from the emoji keyboard")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                }
+                                
+                                Spacer()
+                            }
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        // Color Selection
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Text("Profile Color")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: Theme.Spacing.sm) {
+                                ForEach(colorOptions, id: \.self) { color in
+                                    Button {
+                                        selectedColor = color
+                                    } label: {
+                                        Circle()
+                                            .fill(Color(hex: color))
+                                            .frame(width: 36, height: 36)
+                                            .overlay(
+                                                Circle()
+                                                    .stroke(selectedColor == color ? Theme.Colors.accent : Color.clear, lineWidth: 3)
+                                            )
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        Spacer(minLength: 100)
+                    }
+                }
+            }
+            .navigationTitle("Edit Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        saveProfile()
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                                .tint(Theme.Colors.accent)
+                        } else {
+                            Text("Save")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .foregroundStyle(canSave ? Theme.Colors.accent : Theme.Colors.textMuted)
+                    .disabled(isSaving || !canSave)
+                }
+            }
+            .onAppear {
+                // Initialize with current values
+                displayName = authViewModel.currentMember?.displayName ?? ""
+                selectedEmoji = authViewModel.currentMember?.avatarUrl ?? ""
+                selectedColor = authViewModel.currentMember?.color ?? ""
+            }
+            .sheet(isPresented: $showEmojiInput) {
+                EmojiPickerSheet(
+                    selectedEmoji: $selectedEmoji,
+                    profileColor: selectedColor.isEmpty ? (authViewModel.currentMember?.color ?? "#4ECDC4") : selectedColor
+                )
+            }
+        }
+    }
+    
+    private func saveProfile() {
+        isSaving = true
+        
+        Task {
+            let nameToSave = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let emojiToSave = selectedEmoji.isEmpty ? nil : selectedEmoji
+            let colorToSave = selectedColor.isEmpty ? nil : selectedColor
+            
+            let success = await authViewModel.updateMyProfile(
+                displayName: nameToSave,
+                emoji: emojiToSave,
+                color: colorToSave
+            )
+            
+            if success {
+                dismiss()
+            }
+            
+            isSaving = false
+        }
+    }
+}
+
+// MARK: - Emoji Picker Sheet
+
+struct EmojiPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selectedEmoji: String
+    let profileColor: String
+    
+    @State private var emojiInput: String = ""
+    @FocusState private var isInputFocused: Bool
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        isInputFocused = false
+                    }
+                
+                VStack(spacing: Theme.Spacing.xl) {
+                    // Preview with profile color
+                    ZStack {
+                        Circle()
+                            .fill(Color(hex: profileColor))
+                            .frame(width: 120, height: 120)
+                        
+                        if emojiInput.isEmpty {
+                            VStack(spacing: 4) {
+                                Image(systemName: "face.smiling")
+                                    .font(.system(size: 40))
+                                    .foregroundStyle(.white.opacity(0.7))
+                                Text("Type an emoji")
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.7))
+                            }
+                        } else {
+                            Text(String(emojiInput.prefix(1)))
+                                .font(.system(size: 70))
+                        }
+                    }
+                    .padding(.top, Theme.Spacing.xl)
+                    .onTapGesture {
+                        isInputFocused = false
+                    }
+                    
+                    // Instructions
+                    VStack(spacing: Theme.Spacing.sm) {
+                        Text("Type or paste any emoji")
+                            .font(.headline)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                        
+                        Text("Tap the field below and use your emoji keyboard 😊")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .onTapGesture {
+                        isInputFocused = false
+                    }
+                    
+                    // Emoji Input Field
+                    TextField("", text: $emojiInput)
+                        .font(.system(size: 50))
+                        .multilineTextAlignment(.center)
+                        .frame(height: 80)
+                        .background(Theme.Colors.backgroundCard)
+                        .cornerRadius(Theme.CornerRadius.lg)
+                        .padding(.horizontal, Theme.Spacing.xl)
+                        .focused($isInputFocused)
+                        .onChange(of: emojiInput) { _, newValue in
+                            // Always use the last emoji typed (allows replacing without deleting)
+                            if let lastEmoji = newValue.last, lastEmoji.isEmoji {
+                                emojiInput = String(lastEmoji)
+                            } else if !newValue.isEmpty {
+                                // If not an emoji, keep the previous valid emoji or clear
+                                let emojis = newValue.filter { $0.isEmoji }
+                                emojiInput = emojis.last.map { String($0) } ?? ""
+                            }
+                        }
+                    
+                    Spacer()
+                    
+                    // Select Button
+                    Button {
+                        if !emojiInput.isEmpty {
+                            selectedEmoji = emojiInput
+                        }
+                        dismiss()
+                    } label: {
+                        Text(emojiInput.isEmpty ? "Cancel" : "Select \(emojiInput)")
+                            .font(.headline)
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .padding(.horizontal, Theme.Spacing.lg)
+                    .padding(.bottom, Theme.Spacing.lg)
+                }
+            }
+            .navigationTitle("Choose Emoji")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        if !emojiInput.isEmpty {
+                            selectedEmoji = emojiInput
+                        }
+                        dismiss()
+                    } label: {
+                        Image(systemName: "checkmark")
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            .onAppear {
+                emojiInput = selectedEmoji
+                // Auto-focus the input field
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isInputFocused = true
+                }
+            }
+        }
+    }
+}
+
 
 struct SettingsRow: View {
     let icon: String
@@ -380,19 +791,39 @@ struct MemberRow: View {
         HStack(spacing: Theme.Spacing.md) {
             ZStack {
                 Circle()
-                    .fill(member.swiftUIColor)
+                    .fill(member.swiftUIColor.opacity(member.isInactive ? 0.5 : 1.0))
                     .frame(width: 36, height: 36)
                 
-                Text(member.initials)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Theme.Colors.textInverse)
+                if let emoji = member.avatarUrl, !emoji.isEmpty {
+                    Text(emoji)
+                        .font(.system(size: 20))
+                        .opacity(member.isInactive ? 0.6 : 1.0)
+                } else {
+                    Text(member.initials)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.textInverse)
+                        .opacity(member.isInactive ? 0.6 : 1.0)
+                }
             }
             
             VStack(alignment: .leading, spacing: 2) {
-                Text(member.displayName)
-                    .font(.body)
-                    .foregroundStyle(Theme.Colors.textPrimary)
+                HStack(spacing: Theme.Spacing.xs) {
+                    Text(member.displayName)
+                        .font(.body)
+                        .foregroundStyle(member.isInactive ? Theme.Colors.textMuted : Theme.Colors.textPrimary)
+                    
+                    if member.isInactive {
+                        Text("Inactive")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Theme.Colors.textMuted.opacity(0.2))
+                            .clipShape(Capsule())
+                    }
+                }
                 
                 Text(member.role.displayName)
                     .font(.caption)
@@ -419,10 +850,16 @@ struct PendingMemberRow: View {
                     .fill(member.swiftUIColor.opacity(0.5))
                     .frame(width: 36, height: 36)
                 
-                Text(member.initials)
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Theme.Colors.textInverse)
+                if let emoji = member.avatarUrl, !emoji.isEmpty {
+                    Text(emoji)
+                        .font(.system(size: 20))
+                        .opacity(0.7)
+                } else {
+                    Text(member.initials)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.textInverse)
+                }
             }
             
             VStack(alignment: .leading, spacing: 2) {

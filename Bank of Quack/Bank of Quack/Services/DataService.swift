@@ -143,6 +143,30 @@ actor DataService {
             .value
     }
     
+    // MARK: - Member Profile
+    
+    func updateMemberProfile(memberId: UUID, displayName: String?, avatarEmoji: String?, color: String?) async throws -> HouseholdMember {
+        var updates: [String: String] = [:]
+        if let displayName = displayName {
+            updates["display_name"] = displayName
+        }
+        if let emoji = avatarEmoji {
+            updates["avatar_url"] = emoji
+        }
+        if let color = color {
+            updates["color"] = color
+        }
+        
+        return try await supabase
+            .from(.householdMembers)
+            .update(updates)
+            .eq("id", value: memberId.uuidString)
+            .select()
+            .single()
+            .execute()
+            .value
+    }
+    
     // MARK: - Household Management
     
     func deleteHousehold(householdId: UUID) async throws {
@@ -150,6 +174,15 @@ actor DataService {
         
         let _: Bool = try await supabase.client
             .rpc(RPCFunction.deleteHousehold.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    func leaveHousehold(householdId: UUID) async throws {
+        let request = LeaveHouseholdRequest(pHouseholdId: householdId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.leaveHousehold.rawValue, params: request)
             .execute()
             .value
     }
