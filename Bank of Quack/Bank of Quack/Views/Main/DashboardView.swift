@@ -16,9 +16,20 @@ struct DashboardView: View {
         return memberBalances.first { $0.memberId == memberId }?.balance ?? 0
     }
     
-    /// Returns transactions that impact member balances (expenses where paid != owed for at least one member)
+    /// Returns transactions that impact member balances (expenses where paid != owed, settlements, and linked reimbursements)
     private var balanceImpactingTransactions: [TransactionView] {
         transactionViewModel.transactions.filter { transaction in
+            // Settlements always impact balances - they transfer money between members
+            if transaction.transactionType == .settlement {
+                return true
+            }
+            
+            // Linked reimbursements impact balances (they inversely affect the original expense's balance impact)
+            if transaction.transactionType == .reimbursement {
+                // Only linked reimbursements affect balances
+                return transaction.reimbursesTransactionId != nil
+            }
+            
             // Only expenses affect balances (income doesn't)
             guard transaction.transactionType == .expense else { return false }
             
@@ -206,6 +217,10 @@ struct MemberBalanceCardWithInfo: View {
     let memberCount: Int
     let onInfoTapped: () -> Void
     
+    private var isZero: Bool {
+        abs(balance.doubleValue) < 0.01
+    }
+    
     private var isPositive: Bool {
         balance >= 0
     }
@@ -226,15 +241,22 @@ struct MemberBalanceCardWithInfo: View {
                 }
             }
             
-            HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.xs) {
-                Text(isPositive ? "+\(abs(balance.doubleValue).formattedAsMoney())" : "-\(abs(balance.doubleValue).formattedAsMoney())")
+            if isZero {
+                Text("You're all settled up! 🎉")
                     .font(.title2)
                     .fontWeight(.bold)
-                    .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
-                
-                Text(isPositive ? "owed to you" : "you owe")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Colors.textMuted)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.xs) {
+                    Text(abs(balance.doubleValue).formattedAsMoney())
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+                    
+                    Text(isPositive ? "owed to you" : "you owe")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
             }
             
             Text("Between \(memberCount) household members")
@@ -328,6 +350,7 @@ struct BalanceDetailsSheet: View {
                                         BalanceTransactionRow(
                                             transaction: transaction,
                                             splits: transactionSplits[transaction.id] ?? [],
+                                            allSplits: transactionSplits,
                                             memberName: memberName
                                         )
                                         
@@ -373,8 +396,17 @@ struct MemberBalanceRow: View {
     let balance: MemberBalance
     var isCurrentMember: Bool = false
     
+    private var isZero: Bool {
+        abs(balance.balance.doubleValue) < 0.01
+    }
+    
     private var isPositive: Bool {
         balance.balance >= 0
+    }
+    
+    private var balanceColor: Color {
+        if isZero { return Theme.Colors.textPrimary }
+        return isPositive ? Theme.Colors.success : Theme.Colors.error
     }
     
     var body: some View {
@@ -395,14 +427,25 @@ struct MemberBalanceRow: View {
             Spacer()
             
             HStack(spacing: Theme.Spacing.xs) {
-                Text(isPositive ? "+\(abs(balance.balance.doubleValue).formattedAsMoney())" : "-\(abs(balance.balance.doubleValue).formattedAsMoney())")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
-                
-                Text(isPositive ? "owed" : "owes")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Colors.textMuted)
+                if isZero {
+                    Text("$0.00")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(balanceColor)
+                    
+                    Text("settled")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                } else {
+                    Text(isPositive ? "+\(abs(balance.balance.doubleValue).formattedAsMoney())" : "-\(abs(balance.balance.doubleValue).formattedAsMoney())")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(balanceColor)
+                    
+                    Text(isPositive ? "owed" : "owes")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
             }
         }
         .padding(.vertical, Theme.Spacing.sm)
@@ -415,9 +458,10 @@ struct MemberBalanceRow: View {
 struct BalanceTransactionRow: View {
     let transaction: TransactionView
     let splits: [TransactionSplit]
+    let allSplits: [UUID: [TransactionSplit]] // All splits, keyed by transaction ID
     let memberName: (UUID) -> String
     
-    /// Each member's net balance impact (paid - owed)
+    /// Each member's net balance impact (paid - owed) for expenses
     private var balanceImpacts: [(name: String, net: Decimal)] {
         splits.compactMap { split in
             let net = split.paidAmount - split.owedAmount
@@ -429,22 +473,83 @@ struct BalanceTransactionRow: View {
         }.sorted { abs($0.net) > abs($1.net) } // Sort by largest impact first
     }
     
+    /// Reimbursement balance impacts based on linked expense splits
+    /// - Recipient: paid decreases by full amount, owed decreases by their percentage
+    /// - Others: only owed decreases by their percentage
+    private var reimbursementBalanceImpacts: [(name: String, net: Decimal)] {
+        guard let linkedExpenseId = transaction.reimbursesTransactionId,
+              let linkedSplits = allSplits[linkedExpenseId],
+              let recipientId = transaction.paidByMemberId else {
+            return []
+        }
+        
+        let reimbursementAmount = transaction.amount
+        
+        return linkedSplits.compactMap { split -> (String, Decimal)? in
+            guard let owedPct = split.owedPercentage else { return nil }
+            let owedPercentage = owedPct / 100
+            let owedReduction = reimbursementAmount * owedPercentage
+            
+            let balanceChange: Decimal
+            if split.memberId == recipientId {
+                // Recipient: paid goes down by full amount, owed goes down by their percentage
+                // balance change = -reimbursement + owedReduction
+                balanceChange = -reimbursementAmount + owedReduction
+            } else {
+                // Others: only owed goes down by their percentage
+                // balance change = 0 - (-owedReduction) = +owedReduction
+                balanceChange = owedReduction
+            }
+            
+            // Only include if there's a meaningful impact
+            if abs(balanceChange) > 0.001 {
+                return (memberName(split.memberId), balanceChange)
+            }
+            return nil
+        }.sorted { abs($0.1) > abs($1.1) } // Sort by largest impact first
+    }
+    
+    private var isSettlement: Bool {
+        transaction.transactionType == .settlement
+    }
+    
+    private var isReimbursement: Bool {
+        transaction.transactionType == .reimbursement
+    }
+    
+    private var transactionColor: Color {
+        if isSettlement { return Theme.Colors.settlement }
+        if isReimbursement { return Theme.Colors.reimbursement }
+        return Theme.Colors.expense
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
             // Transaction header
             HStack {
-                Text(transaction.description)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                    .lineLimit(1)
+                HStack(spacing: Theme.Spacing.xs) {
+                    if isSettlement {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.settlement)
+                    } else if isReimbursement {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.reimbursement)
+                    }
+                    Text(transaction.description)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .lineLimit(1)
+                }
                 
                 Spacer()
                 
                 Text(transaction.amount.doubleValue.formattedAsMoney())
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .foregroundStyle(Theme.Colors.expense)
+                    .foregroundStyle(transactionColor)
             }
             
             // Date
@@ -452,8 +557,65 @@ struct BalanceTransactionRow: View {
                 .font(.caption2)
                 .foregroundStyle(Theme.Colors.textMuted)
             
-            // Balance impact details - who owes/is owed what
-            if !balanceImpacts.isEmpty {
+            // Settlement details - show who paid whom
+            if isSettlement {
+                if let paidByName = transaction.paidByName, let paidToName = transaction.paidToName {
+                    HStack(spacing: Theme.Spacing.xs) {
+                        Text(paidByName)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        Image(systemName: "arrow.right")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                        Text(paidToName)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        
+                        Spacer()
+                        
+                        // Show impact on each party
+                        HStack(spacing: Theme.Spacing.sm) {
+                            Text("\(paidByName) +\(transaction.amount.doubleValue.formattedAsMoney())")
+                                .foregroundStyle(Theme.Colors.success)
+                            Text("\(paidToName) -\(transaction.amount.doubleValue.formattedAsMoney())")
+                                .foregroundStyle(Theme.Colors.error)
+                        }
+                    }
+                    .font(.caption)
+                    .padding(.top, 2)
+                }
+            }
+            // Reimbursement details - show balance impact for each member
+            else if isReimbursement {
+                if !reimbursementBalanceImpacts.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let receivedByName = transaction.paidByName {
+                            Text("Received by \(receivedByName)")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                        HStack(spacing: Theme.Spacing.md) {
+                            ForEach(reimbursementBalanceImpacts, id: \.name) { impact in
+                                HStack(spacing: 2) {
+                                    Text(impact.name)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                    Text(impact.net > 0 ? "+\(impact.net.doubleValue.formattedAsMoney())" : "\(impact.net.doubleValue.formattedAsMoney())")
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(impact.net > 0 ? Theme.Colors.success : Theme.Colors.error)
+                                }
+                                .font(.caption)
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
+                } else if let receivedByName = transaction.paidByName {
+                    // Fallback if we don't have linked expense splits
+                    Text("Received by \(receivedByName)")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                        .padding(.top, 2)
+                }
+            }
+            // Balance impact details for expenses - who owes/is owed what
+            else if !balanceImpacts.isEmpty {
                 HStack(spacing: Theme.Spacing.md) {
                     ForEach(balanceImpacts, id: \.name) { impact in
                         HStack(spacing: 2) {

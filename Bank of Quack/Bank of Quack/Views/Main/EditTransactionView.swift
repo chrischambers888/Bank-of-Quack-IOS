@@ -17,6 +17,7 @@ struct EditTransactionView: View {
     @State private var splitType: SplitType
     @State private var paidByType: PaidByType
     @State private var splitMemberId: UUID?
+    @State private var reimbursesTransactionId: UUID?
     @State private var notes: String
     @State private var excludedFromBudget: Bool
     
@@ -58,6 +59,7 @@ struct EditTransactionView: View {
         _splitType = State(initialValue: transaction.splitType)
         _paidByType = State(initialValue: transaction.paidByType)
         _splitMemberId = State(initialValue: transaction.splitMemberId)
+        _reimbursesTransactionId = State(initialValue: transaction.reimbursesTransactionId)
         _notes = State(initialValue: transaction.notes ?? "")
         _excludedFromBudget = State(initialValue: transaction.excludedFromBudget)
         _showNotes = State(initialValue: transaction.notes != nil && !transaction.notes!.isEmpty)
@@ -83,7 +85,8 @@ struct EditTransactionView: View {
             if splitType == .custom && splitValidationError != nil { return false }
             return categoryId != nil
         case .income:
-            return true
+            // Income requires someone to have received it
+            return paidByMemberId != nil
         case .settlement:
             return paidByMemberId != nil && paidToMemberId != nil && paidByMemberId != paidToMemberId
         case .reimbursement:
@@ -110,7 +113,7 @@ struct EditTransactionView: View {
                                     isSelected: transactionType == type
                                 ) {
                                     withAnimation {
-                                        transactionType = type
+                                        switchTransactionType(to: type)
                                     }
                                 }
                             }
@@ -185,9 +188,25 @@ struct EditTransactionView: View {
                                 }
                             }
                             
-                            // Paid By Section (for expense, settlement, reimbursement)
-                            if transactionType != .income {
+                            // Paid By Section (for expense, settlement only)
+                            if transactionType == .expense || transactionType == .settlement {
                                 paidBySection
+                            }
+                            
+                            // Received By (for income and reimbursement)
+                            if transactionType == .income || transactionType == .reimbursement {
+                                FormField(label: "Received By") {
+                                    MemberSelector(
+                                        members: approvedMembers,
+                                        selectedId: $paidByMemberId,
+                                        excludeId: nil
+                                    )
+                                }
+                            }
+                            
+                            // Link to Expense (for reimbursement - optional)
+                            if transactionType == .reimbursement {
+                                reimbursementLinkSection
                             }
                             
                             // Paid To (for settlement)
@@ -201,7 +220,7 @@ struct EditTransactionView: View {
                                 }
                             }
                             
-                            // Category and Split (for expense)
+                            // Category and Split (for expense only)
                             if transactionType == .expense {
                                 FormField(label: "Category") {
                                     CategorySelector(
@@ -339,7 +358,15 @@ struct EditTransactionView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
             
-            if approvedMembers.count > 1 {
+            // For settlements and reimbursements, only allow single member selection
+            if transactionType == .settlement || transactionType == .reimbursement {
+                MemberSelector(
+                    members: approvedMembers,
+                    selectedId: $paidByMemberId,
+                    excludeId: transactionType == .settlement ? paidToMemberId : nil
+                )
+            } else if approvedMembers.count > 1 {
+                // Paid By Type Picker (for expenses with multiple members)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Theme.Spacing.sm) {
                         PaidByOptionButton(
@@ -396,7 +423,7 @@ struct EditTransactionView: View {
                 MemberSelector(
                     members: approvedMembers,
                     selectedId: $paidByMemberId,
-                    excludeId: transactionType == .settlement ? paidToMemberId : nil
+                    excludeId: nil
                 )
             }
         }
@@ -467,7 +494,77 @@ struct EditTransactionView: View {
         }
     }
     
+    // MARK: - Reimbursement Link Section
+    
+    private var reimbursementLinkSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("Link to Expense (Optional)")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            
+            ExpensePicker(
+                expenses: linkableExpenses,
+                selectedId: $reimbursesTransactionId
+            )
+            
+            if reimbursesTransactionId == nil {
+                Text("Unlinked reimbursements will count as income")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            } else {
+                Text("Linked reimbursements reduce the original expense value")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+        }
+    }
+    
+    /// Expenses that can be linked to for reimbursement
+    private var linkableExpenses: [TransactionView] {
+        transactionViewModel.transactions.filter { $0.transactionType == .expense }
+    }
+    
     // MARK: - Helper Methods
+    
+    private func switchTransactionType(to newType: TransactionType) {
+        let oldType = transactionType
+        transactionType = newType
+        
+        // Clear type-specific fields when switching types
+        if oldType != newType {
+            // Clear expense-specific fields
+            if oldType == .expense {
+                categoryId = nil
+                splitType = .equal
+                splitMemberId = nil
+                showCustomSplitEditor = false
+                paidByType = .single
+                showCustomPaidByEditor = false
+            }
+            
+            // Clear settlement-specific fields
+            if oldType == .settlement {
+                paidToMemberId = nil
+            }
+            
+            // Clear reimbursement-specific fields
+            if oldType == .reimbursement {
+                reimbursesTransactionId = nil
+            }
+            
+            // Reset paid by to current user when switching to a type that uses it
+            if newType == .expense || newType == .settlement || newType == .reimbursement || newType == .income {
+                paidByMemberId = authViewModel.currentMember?.id
+                paidByType = .single
+            }
+            
+            // Re-initialize member splits for expenses
+            if newType == .expense {
+                initializeMemberSplits()
+                updateMemberSplitsForAmount()
+            }
+        }
+    }
     
     private func initializeMemberSplits() {
         memberSplits = approvedMembers.map { member in
@@ -649,9 +746,21 @@ struct EditTransactionView: View {
         
         Task {
             do {
-                let splitsToSend: [MemberSplit]? = (splitType == .custom || paidByType == .custom || paidByType == .shared || splitType == .equal)
+                let splitsToSend: [MemberSplit]? = (transactionType == .expense && (splitType == .custom || paidByType == .custom || paidByType == .shared || splitType == .equal))
                     ? memberSplits
                     : nil
+                
+                // Determine paid by member ID based on transaction type
+                let effectivePaidByMemberId: UUID? = {
+                    switch transactionType {
+                    case .expense:
+                        return paidByType == .single ? paidByMemberId : nil
+                    case .income:
+                        return paidByMemberId // Always include for income (received by)
+                    case .settlement, .reimbursement:
+                        return paidByMemberId
+                    }
+                }()
                 
                 try await transactionViewModel.updateTransaction(
                     transactionId: transaction.id,
@@ -660,12 +769,13 @@ struct EditTransactionView: View {
                     description: description.trimmingCharacters(in: .whitespaces),
                     amount: parsedAmount,
                     transactionType: transactionType,
-                    paidByMemberId: paidByType == .single ? paidByMemberId : nil,
-                    paidToMemberId: paidToMemberId,
-                    categoryId: categoryId,
-                    splitType: splitType,
-                    paidByType: paidByType,
-                    splitMemberId: splitMemberId,
+                    paidByMemberId: effectivePaidByMemberId,
+                    paidToMemberId: transactionType == .settlement ? paidToMemberId : nil,
+                    categoryId: transactionType == .expense ? categoryId : nil,
+                    splitType: transactionType == .expense ? splitType : .equal,
+                    paidByType: transactionType == .expense ? paidByType : .single,
+                    splitMemberId: transactionType == .expense ? splitMemberId : nil,
+                    reimbursesTransactionId: transactionType == .reimbursement ? reimbursesTransactionId : nil,
                     excludedFromBudget: excludedFromBudget,
                     notes: notes.isEmpty ? nil : notes,
                     splits: splitsToSend

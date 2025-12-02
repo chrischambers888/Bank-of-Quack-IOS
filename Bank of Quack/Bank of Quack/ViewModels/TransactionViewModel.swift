@@ -84,6 +84,7 @@ final class TransactionViewModel {
         splitType: SplitType = .equal,
         paidByType: PaidByType = .single,
         splitMemberId: UUID? = nil,
+        reimbursesTransactionId: UUID? = nil,
         excludedFromBudget: Bool = false,
         notes: String? = nil,
         createdByUserId: UUID?,
@@ -101,6 +102,7 @@ final class TransactionViewModel {
             splitType: splitType,
             paidByType: paidByType,
             splitMemberId: splitMemberId,
+            reimbursesTransactionId: reimbursesTransactionId,
             excludedFromBudget: excludedFromBudget,
             notes: notes,
             createdByUserId: createdByUserId,
@@ -127,6 +129,7 @@ final class TransactionViewModel {
         splitType: SplitType = .equal,
         paidByType: PaidByType = .single,
         splitMemberId: UUID? = nil,
+        reimbursesTransactionId: UUID? = nil,
         excludedFromBudget: Bool = false,
         notes: String? = nil,
         splits: [MemberSplit]? = nil
@@ -143,6 +146,7 @@ final class TransactionViewModel {
             splitType: splitType,
             paidByType: paidByType,
             splitMemberId: splitMemberId,
+            reimbursesTransactionId: reimbursesTransactionId,
             excludedFromBudget: excludedFromBudget,
             notes: notes,
             splits: splits
@@ -175,13 +179,31 @@ final class TransactionViewModel {
         var expenses: Decimal = 0
         var income: Decimal = 0
         
+        // First, build a map of linked reimbursements per expense
+        var reimbursementsByExpense: [UUID: Decimal] = [:]
+        for transaction in transactions {
+            if transaction.transactionType == .reimbursement,
+               let linkedExpenseId = transaction.reimbursesTransactionId {
+                reimbursementsByExpense[linkedExpenseId, default: 0] += transaction.amount
+            }
+        }
+        
         for transaction in transactions {
             switch transaction.transactionType {
             case .expense:
-                expenses += transaction.amount
+                // Subtract any linked reimbursements from this expense
+                let reimbursedAmount = reimbursementsByExpense[transaction.id] ?? 0
+                let effectiveExpense = max(transaction.amount - reimbursedAmount, 0)
+                expenses += effectiveExpense
             case .income:
                 income += transaction.amount
-            case .settlement, .reimbursement:
+            case .reimbursement:
+                // Unlinked reimbursements count as income
+                if transaction.reimbursesTransactionId == nil {
+                    income += transaction.amount
+                }
+                // Linked reimbursements are already handled by reducing expenses above
+            case .settlement:
                 break
             }
         }

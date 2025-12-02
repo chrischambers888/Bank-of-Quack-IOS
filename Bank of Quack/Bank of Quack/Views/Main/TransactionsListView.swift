@@ -159,6 +159,21 @@ struct TransactionDetailView: View {
         }
     }
     
+    /// For reimbursements: the expense this reimbursement is linked to
+    private var linkedExpense: TransactionView? {
+        guard transaction.transactionType == .reimbursement,
+              let linkedId = transaction.reimbursesTransactionId else { return nil }
+        return transactionViewModel.transactions.first { $0.id == linkedId }
+    }
+    
+    /// For expenses: any reimbursements linked to this expense
+    private var linkedReimbursements: [TransactionView] {
+        guard transaction.transactionType == .expense else { return [] }
+        return transactionViewModel.transactions.filter {
+            $0.transactionType == .reimbursement && $0.reimbursesTransactionId == transaction.id
+        }
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -198,7 +213,32 @@ struct TransactionDetailView: View {
                                 DetailRow(label: "Paid By", value: paidByDisplayText)
                                 
                                 Divider().background(Theme.Colors.borderLight)
-                                DetailRow(label: "Split", value: splitDisplayText)
+                                DetailRow(label: "Expense For", value: splitDisplayText)
+                                
+                                // Show reimbursements linked to this expense
+                                if !linkedReimbursements.isEmpty {
+                                    Divider().background(Theme.Colors.borderLight)
+                                    ReimbursementsDetailRow(reimbursements: linkedReimbursements)
+                                }
+                            } else if transaction.transactionType == .income {
+                                if let paidByName = transaction.paidByName {
+                                    Divider().background(Theme.Colors.borderLight)
+                                    DetailRow(label: "Received By", value: paidByName)
+                                }
+                            } else if transaction.transactionType == .reimbursement {
+                                if let paidByName = transaction.paidByName {
+                                    Divider().background(Theme.Colors.borderLight)
+                                    DetailRow(label: "Received By", value: paidByName)
+                                }
+                                
+                                // Show linked expense info
+                                if let linkedExpense = linkedExpense {
+                                    Divider().background(Theme.Colors.borderLight)
+                                    LinkedExpenseDetailRow(expense: linkedExpense)
+                                } else {
+                                    Divider().background(Theme.Colors.borderLight)
+                                    DetailRow(label: "Linked Expense", value: "None (counts as income)")
+                                }
                             } else {
                                 if let paidByName = transaction.paidByName {
                                     Divider().background(Theme.Colors.borderLight)
@@ -308,6 +348,103 @@ struct DetailRow: View {
                 .font(.subheadline)
                 .foregroundStyle(Theme.Colors.textPrimary)
                 .multilineTextAlignment(.trailing)
+        }
+        .padding(Theme.Spacing.md)
+    }
+}
+
+struct LinkedExpenseDetailRow: View {
+    let expense: TransactionView
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            Text("Linked Expense")
+                .font(.subheadline)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(expense.description)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                    
+                    HStack(spacing: Theme.Spacing.xs) {
+                        Text(expense.amount.doubleValue.formattedAsMoney())
+                            .font(.caption)
+                        Text("•")
+                            .font(.caption)
+                        Text(expense.date.formatted(as: .dayMonth))
+                            .font(.caption)
+                        if let categoryName = expense.categoryName {
+                            Text("•")
+                                .font(.caption)
+                            Text(categoryName)
+                                .font(.caption)
+                        }
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "link")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.accent)
+            }
+        }
+        .padding(Theme.Spacing.md)
+    }
+}
+
+struct ReimbursementsDetailRow: View {
+    let reimbursements: [TransactionView]
+    
+    private var totalReimbursed: Decimal {
+        reimbursements.reduce(0) { $0 + $1.amount }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            HStack {
+                Text("Reimbursements")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                
+                Spacer()
+                
+                Text("-\(totalReimbursed.doubleValue.formattedAsMoney())")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.success)
+            }
+            
+            ForEach(reimbursements) { reimbursement in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(reimbursement.description)
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                        
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Text(reimbursement.date.formatted(as: .dayMonth))
+                            if let receivedBy = reimbursement.paidByName {
+                                Text("•")
+                                Text("Received by \(receivedBy)")
+                            }
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                    
+                    Spacer()
+                    
+                    Text(reimbursement.amount.doubleValue.formattedAsMoney())
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.success)
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(Theme.Spacing.md)
     }

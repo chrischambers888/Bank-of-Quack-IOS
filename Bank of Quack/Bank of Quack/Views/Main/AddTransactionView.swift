@@ -15,6 +15,7 @@ struct AddTransactionView: View {
     @State private var splitType: SplitType = .equal
     @State private var paidByType: PaidByType = .single
     @State private var splitMemberId: UUID?
+    @State private var reimbursesTransactionId: UUID?
     @State private var notes = ""
     @State private var excludedFromBudget = false
     
@@ -68,7 +69,8 @@ struct AddTransactionView: View {
             
             return categoryId != nil
         case .income:
-            return true
+            // Income requires someone to have received it
+            return paidByMemberId != nil
         case .settlement:
             return paidByMemberId != nil && paidToMemberId != nil && paidByMemberId != paidToMemberId
         case .reimbursement:
@@ -95,7 +97,7 @@ struct AddTransactionView: View {
                                     isSelected: transactionType == type
                                 ) {
                                     withAnimation {
-                                        transactionType = type
+                                        switchTransactionType(to: type)
                                     }
                                 }
                             }
@@ -170,9 +172,25 @@ struct AddTransactionView: View {
                                 }
                             }
                             
-                            // Paid By Section (for expense, settlement, reimbursement)
-                            if transactionType != .income {
+                            // Paid By Section (for expense, settlement only)
+                            if transactionType == .expense || transactionType == .settlement {
                                 paidBySection
+                            }
+                            
+                            // Received By (for income and reimbursement)
+                            if transactionType == .income || transactionType == .reimbursement {
+                                FormField(label: "Received By") {
+                                    MemberSelector(
+                                        members: approvedMembers,
+                                        selectedId: $paidByMemberId,
+                                        excludeId: nil
+                                    )
+                                }
+                            }
+                            
+                            // Link to Expense (for reimbursement - optional)
+                            if transactionType == .reimbursement {
+                                reimbursementLinkSection
                             }
                             
                             // Paid To (for settlement)
@@ -186,7 +204,7 @@ struct AddTransactionView: View {
                                 }
                             }
                             
-                            // Category and Split (for expense)
+                            // Category and Split (for expense only)
                             if transactionType == .expense {
                                 FormField(label: "Category") {
                                     CategorySelector(
@@ -295,8 +313,15 @@ struct AddTransactionView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
             
-            if approvedMembers.count > 1 {
-                // Paid By Type Picker
+            // For settlements and reimbursements, only allow single member selection
+            if transactionType == .settlement || transactionType == .reimbursement {
+                MemberSelector(
+                    members: approvedMembers,
+                    selectedId: $paidByMemberId,
+                    excludeId: transactionType == .settlement ? paidToMemberId : nil
+                )
+            } else if approvedMembers.count > 1 {
+                // Paid By Type Picker (for expenses with multiple members)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Theme.Spacing.sm) {
                         // Shared Equally option
@@ -358,7 +383,7 @@ struct AddTransactionView: View {
                 MemberSelector(
                     members: approvedMembers,
                     selectedId: $paidByMemberId,
-                    excludeId: transactionType == .settlement ? paidToMemberId : nil
+                    excludeId: nil
                 )
             }
         }
@@ -434,7 +459,77 @@ struct AddTransactionView: View {
         }
     }
     
+    // MARK: - Reimbursement Link Section
+    
+    private var reimbursementLinkSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("Link to Expense (Optional)")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            
+            ExpensePicker(
+                expenses: linkableExpenses,
+                selectedId: $reimbursesTransactionId
+            )
+            
+            if reimbursesTransactionId == nil {
+                Text("Unlinked reimbursements will count as income")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            } else {
+                Text("Linked reimbursements reduce the original expense value")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+        }
+    }
+    
+    /// Expenses that can be linked to for reimbursement
+    private var linkableExpenses: [TransactionView] {
+        transactionViewModel.transactions.filter { $0.transactionType == .expense }
+    }
+    
     // MARK: - Helper Methods
+    
+    private func switchTransactionType(to newType: TransactionType) {
+        let oldType = transactionType
+        transactionType = newType
+        
+        // Clear type-specific fields when switching types
+        if oldType != newType {
+            // Clear expense-specific fields
+            if oldType == .expense {
+                categoryId = nil
+                splitType = .equal
+                splitMemberId = nil
+                showCustomSplitEditor = false
+                paidByType = .single
+                showCustomPaidByEditor = false
+            }
+            
+            // Clear settlement-specific fields
+            if oldType == .settlement {
+                paidToMemberId = nil
+            }
+            
+            // Clear reimbursement-specific fields
+            if oldType == .reimbursement {
+                reimbursesTransactionId = nil
+            }
+            
+            // Reset paid by to current user when switching to a type that uses it
+            if newType == .expense || newType == .settlement || newType == .reimbursement || newType == .income {
+                paidByMemberId = authViewModel.currentMember?.id
+                paidByType = .single
+            }
+            
+            // Re-initialize member splits for expenses
+            if newType == .expense {
+                initializeMemberSplits()
+                updateMemberSplitsForAmount()
+            }
+        }
+    }
     
     private func initializeMemberSplits() {
         memberSplits = approvedMembers.map { member in
@@ -605,22 +700,35 @@ struct AddTransactionView: View {
                     ? memberSplits
                     : nil
                 
+                // Determine paid by member ID based on transaction type
+                let effectivePaidByMemberId: UUID? = {
+                    switch transactionType {
+                    case .expense:
+                        return paidByType == .single ? paidByMemberId : nil
+                    case .income:
+                        return paidByMemberId // Always include for income (received by)
+                    case .settlement, .reimbursement:
+                        return paidByMemberId
+                    }
+                }()
+                
                 try await transactionViewModel.createTransaction(
                     householdId: householdId,
                     date: date,
                     description: description.trimmingCharacters(in: .whitespaces),
                     amount: parsedAmount,
                     transactionType: transactionType,
-                    paidByMemberId: paidByType == .single ? paidByMemberId : nil,
+                    paidByMemberId: effectivePaidByMemberId,
                     paidToMemberId: paidToMemberId,
-                    categoryId: categoryId,
-                    splitType: splitType,
-                    paidByType: paidByType,
-                    splitMemberId: splitMemberId,
+                    categoryId: transactionType == .expense ? categoryId : nil,
+                    splitType: transactionType == .expense ? splitType : .equal,
+                    paidByType: transactionType == .expense ? paidByType : .single,
+                    splitMemberId: transactionType == .expense ? splitMemberId : nil,
+                    reimbursesTransactionId: transactionType == .reimbursement ? reimbursesTransactionId : nil,
                     excludedFromBudget: excludedFromBudget,
                     notes: notes.isEmpty ? nil : notes,
                     createdByUserId: authViewModel.currentUser?.id,
-                    splits: splitsToSend
+                    splits: transactionType == .expense ? splitsToSend : nil
                 )
                 
                 await MainActor.run {
@@ -647,6 +755,7 @@ struct AddTransactionView: View {
         splitType = .equal
         paidByType = .single
         splitMemberId = nil
+        reimbursesTransactionId = nil
         notes = ""
         showNotes = false
         excludedFromBudget = false
@@ -996,6 +1105,91 @@ struct MemberSplitRow: View {
             } else if !isAmountFocused && !isPercentageFocused {
                 amountText = ""
                 percentageText = ""
+            }
+        }
+    }
+}
+
+struct ExpensePicker: View {
+    let expenses: [TransactionView]
+    @Binding var selectedId: UUID?
+    
+    private var sortedExpenses: [TransactionView] {
+        expenses.sorted { $0.date > $1.date }
+    }
+    
+    var body: some View {
+        VStack(spacing: Theme.Spacing.sm) {
+            // "None" option
+            Button {
+                selectedId = nil
+            } label: {
+                HStack {
+                    Text("None (counts as income)")
+                        .font(.subheadline)
+                        .foregroundStyle(selectedId == nil ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
+                    Spacer()
+                    if selectedId == nil {
+                        Image(systemName: "checkmark")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textInverse)
+                    }
+                }
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.vertical, Theme.Spacing.sm)
+                .background(selectedId == nil ? Theme.Colors.accent : Theme.Colors.backgroundCard)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+            }
+            
+            if !sortedExpenses.isEmpty {
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.xs) {
+                        ForEach(sortedExpenses.prefix(20)) { expense in
+                            Button {
+                                selectedId = expense.id
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(expense.description)
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(selectedId == expense.id ? Theme.Colors.textInverse : Theme.Colors.textPrimary)
+                                            .lineLimit(1)
+                                        
+                                        HStack(spacing: Theme.Spacing.xs) {
+                                            Text(expense.amount.doubleValue.formattedAsMoney())
+                                                .font(.caption)
+                                            Text("•")
+                                                .font(.caption)
+                                            Text(expense.date.formatted(as: .dayMonth))
+                                                .font(.caption)
+                                            if let categoryName = expense.categoryName {
+                                                Text("•")
+                                                    .font(.caption)
+                                                Text(categoryName)
+                                                    .font(.caption)
+                                            }
+                                        }
+                                        .foregroundStyle(selectedId == expense.id ? Theme.Colors.textInverse.opacity(0.8) : Theme.Colors.textSecondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    if selectedId == expense.id {
+                                        Image(systemName: "checkmark")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.textInverse)
+                                    }
+                                }
+                                .padding(.horizontal, Theme.Spacing.md)
+                                .padding(.vertical, Theme.Spacing.sm)
+                                .background(selectedId == expense.id ? Theme.Colors.accent : Theme.Colors.backgroundCard)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 200)
             }
         }
     }

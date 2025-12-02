@@ -429,6 +429,7 @@ struct CreateTransactionWithSplitsRequest: Encodable, Sendable {
     let pSplitType: String
     let pPaidByType: String
     let pSplitMemberId: UUID?
+    let pReimbursesTransactionId: UUID?
     let pExcludedFromBudget: Bool
     let pNotes: String?
     let pCreatedByUserId: UUID?
@@ -471,6 +472,7 @@ struct CreateTransactionWithSplitsRequest: Encodable, Sendable {
         case pSplitType = "p_split_type"
         case pPaidByType = "p_paid_by_type"
         case pSplitMemberId = "p_split_member_id"
+        case pReimbursesTransactionId = "p_reimburses_transaction_id"
         case pExcludedFromBudget = "p_excluded_from_budget"
         case pNotes = "p_notes"
         case pCreatedByUserId = "p_created_by_user_id"
@@ -491,6 +493,7 @@ struct CreateTransactionWithSplitsRequest: Encodable, Sendable {
         try container.encode(pSplitType, forKey: .pSplitType)
         try container.encode(pPaidByType, forKey: .pPaidByType)
         try container.encode(pSplitMemberId, forKey: .pSplitMemberId)
+        try container.encode(pReimbursesTransactionId, forKey: .pReimbursesTransactionId)
         try container.encode(pExcludedFromBudget, forKey: .pExcludedFromBudget)
         try container.encode(pNotes, forKey: .pNotes)
         try container.encode(pCreatedByUserId, forKey: .pCreatedByUserId)
@@ -509,6 +512,7 @@ struct CreateTransactionWithSplitsRequest: Encodable, Sendable {
         splitType: SplitType,
         paidByType: PaidByType,
         splitMemberId: UUID?,
+        reimbursesTransactionId: UUID?,
         excludedFromBudget: Bool,
         notes: String?,
         createdByUserId: UUID?,
@@ -530,6 +534,7 @@ struct CreateTransactionWithSplitsRequest: Encodable, Sendable {
         self.pSplitType = splitType.rawValue
         self.pPaidByType = paidByType.rawValue
         self.pSplitMemberId = splitMemberId
+        self.pReimbursesTransactionId = reimbursesTransactionId
         self.pExcludedFromBudget = excludedFromBudget
         self.pNotes = notes
         self.pCreatedByUserId = createdByUserId
@@ -565,6 +570,7 @@ struct UpdateTransactionWithSplitsRequest: Encodable, Sendable {
     let pSplitType: String
     let pPaidByType: String
     let pSplitMemberId: UUID?
+    let pReimbursesTransactionId: UUID?
     let pExcludedFromBudget: Bool
     let pNotes: String?
     let pSplits: [CreateTransactionWithSplitsRequest.SplitInput]?
@@ -581,6 +587,7 @@ struct UpdateTransactionWithSplitsRequest: Encodable, Sendable {
         case pSplitType = "p_split_type"
         case pPaidByType = "p_paid_by_type"
         case pSplitMemberId = "p_split_member_id"
+        case pReimbursesTransactionId = "p_reimburses_transaction_id"
         case pExcludedFromBudget = "p_excluded_from_budget"
         case pNotes = "p_notes"
         case pSplits = "p_splits"
@@ -600,6 +607,7 @@ struct UpdateTransactionWithSplitsRequest: Encodable, Sendable {
         try container.encode(pSplitType, forKey: .pSplitType)
         try container.encode(pPaidByType, forKey: .pPaidByType)
         try container.encode(pSplitMemberId, forKey: .pSplitMemberId)
+        try container.encode(pReimbursesTransactionId, forKey: .pReimbursesTransactionId)
         try container.encode(pExcludedFromBudget, forKey: .pExcludedFromBudget)
         try container.encode(pNotes, forKey: .pNotes)
         try container.encode(pSplits, forKey: .pSplits)
@@ -617,6 +625,7 @@ struct UpdateTransactionWithSplitsRequest: Encodable, Sendable {
         splitType: SplitType,
         paidByType: PaidByType,
         splitMemberId: UUID?,
+        reimbursesTransactionId: UUID?,
         excludedFromBudget: Bool,
         notes: String?,
         splits: [MemberSplit]?
@@ -637,6 +646,7 @@ struct UpdateTransactionWithSplitsRequest: Encodable, Sendable {
         self.pSplitType = splitType.rawValue
         self.pPaidByType = paidByType.rawValue
         self.pSplitMemberId = splitMemberId
+        self.pReimbursesTransactionId = reimbursesTransactionId
         self.pExcludedFromBudget = excludedFromBudget
         self.pNotes = notes
         
