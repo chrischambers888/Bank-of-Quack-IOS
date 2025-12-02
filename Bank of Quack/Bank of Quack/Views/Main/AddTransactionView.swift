@@ -27,6 +27,11 @@ struct AddTransactionView: View {
     @State private var paidByValidationError: String?
     
     @State private var showDatePicker = false
+    @State private var showCategoryPicker = false
+    @State private var showPaidByPicker = false
+    @State private var showReceivedByPicker = false
+    @State private var showPaidToPicker = false
+    @State private var showSplitMemberPicker = false
     @State private var showNotes = false
     @State private var isSubmitting = false
     @State private var showError = false
@@ -140,19 +145,52 @@ struct AddTransactionView: View {
                                     .focused($focusedField, equals: .description)
                             }
                             
-                            // Date
-                            FormField(label: "Date") {
-                                Button {
-                                    showDatePicker.toggle()
-                                } label: {
-                                    HStack {
-                                        Text(date.formatted(as: .weekdayDayMonth))
-                                            .foregroundStyle(Theme.Colors.textPrimary)
-                                        Spacer()
-                                        Image(systemName: "calendar")
-                                            .foregroundStyle(Theme.Colors.textSecondary)
+                            // Date + Category Row (side by side for expenses)
+                            if transactionType == .expense {
+                                HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                                    // Date (left side)
+                                    FormField(label: "Date") {
+                                        Button {
+                                            showDatePicker.toggle()
+                                        } label: {
+                                            HStack {
+                                                Text(date.formatted(as: .dayMonth))
+                                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                                Spacer()
+                                                Image(systemName: "calendar")
+                                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                            }
+                                            .inputFieldStyle()
+                                        }
                                     }
-                                    .inputFieldStyle()
+                                    .frame(maxWidth: .infinity)
+                                    
+                                    // Category (right side)
+                                    FormField(label: "Category") {
+                                        CategoryPickerButton(
+                                            categories: authViewModel.categories,
+                                            selectedId: categoryId
+                                        ) {
+                                            showCategoryPicker = true
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                }
+                            } else {
+                                // Date only for non-expense types
+                                FormField(label: "Date") {
+                                    Button {
+                                        showDatePicker.toggle()
+                                    } label: {
+                                        HStack {
+                                            Text(date.formatted(as: .weekdayDayMonth))
+                                                .foregroundStyle(Theme.Colors.textPrimary)
+                                            Spacer()
+                                            Image(systemName: "calendar")
+                                                .foregroundStyle(Theme.Colors.textSecondary)
+                                        }
+                                        .inputFieldStyle()
+                                    }
                                 }
                             }
                             
@@ -180,11 +218,30 @@ struct AddTransactionView: View {
                             // Received By (for income and reimbursement)
                             if transactionType == .income || transactionType == .reimbursement {
                                 FormField(label: "Received By") {
-                                    MemberSelector(
+                                    if approvedMembers.count > 5 {
+                                        MemberPickerButton(
+                                            members: approvedMembers,
+                                            selectedId: paidByMemberId,
+                                            excludeId: nil
+                                        ) {
+                                            showReceivedByPicker = true
+                                        }
+                                    } else {
+                                        MemberSelector(
+                                            members: approvedMembers,
+                                            selectedId: $paidByMemberId,
+                                            excludeId: nil
+                                        )
+                                    }
+                                }
+                                .sheet(isPresented: $showReceivedByPicker) {
+                                    MemberPickerSheet(
                                         members: approvedMembers,
-                                        selectedId: $paidByMemberId,
-                                        excludeId: nil
+                                        excludeId: nil,
+                                        title: "Received By",
+                                        selectedId: $paidByMemberId
                                     )
+                                    .presentationDetents([.medium])
                                 }
                             }
                             
@@ -196,24 +253,35 @@ struct AddTransactionView: View {
                             // Paid To (for settlement)
                             if transactionType == .settlement {
                                 FormField(label: "Paid To") {
-                                    MemberSelector(
+                                    if approvedMembers.count > 5 {
+                                        MemberPickerButton(
+                                            members: approvedMembers,
+                                            selectedId: paidToMemberId,
+                                            excludeId: paidByMemberId
+                                        ) {
+                                            showPaidToPicker = true
+                                        }
+                                    } else {
+                                        MemberSelector(
+                                            members: approvedMembers,
+                                            selectedId: $paidToMemberId,
+                                            excludeId: paidByMemberId
+                                        )
+                                    }
+                                }
+                                .sheet(isPresented: $showPaidToPicker) {
+                                    MemberPickerSheet(
                                         members: approvedMembers,
-                                        selectedId: $paidToMemberId,
-                                        excludeId: paidByMemberId
+                                        excludeId: paidByMemberId,
+                                        title: "Paid To",
+                                        selectedId: $paidToMemberId
                                     )
+                                    .presentationDetents([.medium])
                                 }
                             }
                             
-                            // Category and Split (for expense only)
+                            // Split Type Section (for expense only, moved category to date row)
                             if transactionType == .expense {
-                                FormField(label: "Category") {
-                                    CategorySelector(
-                                        categories: authViewModel.categories,
-                                        selectedId: $categoryId
-                                    )
-                                }
-                                
-                                // Split Type Section
                                 if approvedMembers.count > 1 {
                                     splitSection
                                 }
@@ -275,14 +343,6 @@ struct AddTransactionView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        focusedField = nil
-                    }
-                }
-            }
         }
         .onAppear {
             initializeMemberSplits()
@@ -303,6 +363,15 @@ struct AddTransactionView: View {
         } message: {
             Text("Transaction added successfully!")
         }
+        .sheet(isPresented: $showCategoryPicker) {
+            CategoryPickerSheet(
+                categories: authViewModel.categories,
+                sectors: authViewModel.sectors,
+                sectorCategories: authViewModel.sectorCategories,
+                selectedId: $categoryId
+            )
+            .presentationDetents([.medium, .large])
+        }
     }
     
     // MARK: - Paid By Section
@@ -315,56 +384,113 @@ struct AddTransactionView: View {
             
             // For settlements and reimbursements, only allow single member selection
             if transactionType == .settlement || transactionType == .reimbursement {
-                MemberSelector(
-                    members: approvedMembers,
-                    selectedId: $paidByMemberId,
-                    excludeId: transactionType == .settlement ? paidToMemberId : nil
-                )
+                if approvedMembers.count > 5 {
+                    // Use sheet picker for 6+ members
+                    MemberPickerButton(
+                        members: approvedMembers,
+                        selectedId: paidByMemberId,
+                        excludeId: transactionType == .settlement ? paidToMemberId : nil
+                    ) {
+                        showPaidByPicker = true
+                    }
+                } else {
+                    MemberSelector(
+                        members: approvedMembers,
+                        selectedId: $paidByMemberId,
+                        excludeId: transactionType == .settlement ? paidToMemberId : nil
+                    )
+                }
             } else if approvedMembers.count > 1 {
                 // Paid By Type Picker (for expenses with multiple members)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: Theme.Spacing.sm) {
-                        // Shared Equally option
-                        PaidByOptionButton(
-                            title: "Shared",
-                            isSelected: paidByType == .shared,
-                            action: {
-                                withAnimation {
-                                    paidByType = .shared
-                                    showCustomPaidByEditor = false
-                                    updateMemberSplitsForPaidByType()
-                                }
-                            }
-                        )
-                        
-                        // Individual member options
-                        ForEach(approvedMembers) { member in
+                if approvedMembers.count > 5 {
+                    // Compact layout for 6+ members
+                    VStack(spacing: Theme.Spacing.sm) {
+                        // Type selector row
+                        HStack(spacing: Theme.Spacing.sm) {
                             PaidByOptionButton(
-                                title: member.displayName,
-                                isSelected: paidByType == .single && paidByMemberId == member.id,
+                                title: "Shared",
+                                isSelected: paidByType == .shared,
                                 action: {
                                     withAnimation {
-                                        paidByType = .single
-                                        paidByMemberId = member.id
+                                        paidByType = .shared
                                         showCustomPaidByEditor = false
                                         updateMemberSplitsForPaidByType()
                                     }
                                 }
                             )
+                            
+                            PaidByOptionButton(
+                                title: "Custom",
+                                isSelected: paidByType == .custom,
+                                action: {
+                                    withAnimation {
+                                        paidByType = .custom
+                                        showCustomPaidByEditor = true
+                                        clearCustomPaidByAmounts()
+                                    }
+                                }
+                            )
+                            
+                            Spacer()
                         }
                         
-                        // Custom option
-                        PaidByOptionButton(
-                            title: "Custom",
-                            isSelected: paidByType == .custom,
-                            action: {
-                                withAnimation {
-                                    paidByType = .custom
-                                    showCustomPaidByEditor = true
-                                    clearCustomPaidByAmounts()
-                                }
+                        // Member picker button (only show when not shared/custom)
+                        if paidByType == .single || (paidByType != .shared && paidByType != .custom) {
+                            MemberPickerButton(
+                                members: approvedMembers,
+                                selectedId: paidByMemberId,
+                                excludeId: nil
+                            ) {
+                                showPaidByPicker = true
                             }
-                        )
+                        }
+                    }
+                } else {
+                    // Standard horizontal scroll for 5 or fewer members
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: Theme.Spacing.sm) {
+                            // Shared Equally option
+                            PaidByOptionButton(
+                                title: "Shared",
+                                isSelected: paidByType == .shared,
+                                action: {
+                                    withAnimation {
+                                        paidByType = .shared
+                                        showCustomPaidByEditor = false
+                                        updateMemberSplitsForPaidByType()
+                                    }
+                                }
+                            )
+                            
+                            // Individual member options
+                            ForEach(approvedMembers) { member in
+                                PaidByOptionButton(
+                                    title: member.displayName,
+                                    isSelected: paidByType == .single && paidByMemberId == member.id,
+                                    action: {
+                                        withAnimation {
+                                            paidByType = .single
+                                            paidByMemberId = member.id
+                                            showCustomPaidByEditor = false
+                                            updateMemberSplitsForPaidByType()
+                                        }
+                                    }
+                                )
+                            }
+                            
+                            // Custom option
+                            PaidByOptionButton(
+                                title: "Custom",
+                                isSelected: paidByType == .custom,
+                                action: {
+                                    withAnimation {
+                                        paidByType = .custom
+                                        showCustomPaidByEditor = true
+                                        clearCustomPaidByAmounts()
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
                 
@@ -387,6 +513,21 @@ struct AddTransactionView: View {
                 )
             }
         }
+        .sheet(isPresented: $showPaidByPicker) {
+            MemberPickerSheet(
+                members: approvedMembers,
+                excludeId: transactionType == .settlement ? paidToMemberId : nil,
+                title: "Who Paid?",
+                selectedId: $paidByMemberId
+            )
+            .presentationDetents([.medium])
+            .onDisappear {
+                if paidByMemberId != nil && paidByType != .shared && paidByType != .custom {
+                    paidByType = .single
+                    updateMemberSplitsForPaidByType()
+                }
+            }
+        }
     }
     
     // MARK: - Split Section (Expense For)
@@ -398,51 +539,115 @@ struct AddTransactionView: View {
                 .foregroundStyle(Theme.Colors.textSecondary)
             
             // Split Type Picker
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.Spacing.sm) {
-                    // Split Equally option
-                    SplitOptionButton(
-                        title: "Everyone",
-                        isSelected: splitType == .equal,
-                        action: {
-                            withAnimation {
-                                splitType = .equal
-                                splitMemberId = nil
-                                showCustomSplitEditor = false
-                                updateMemberSplitsForSplitType()
-                            }
-                        }
-                    )
-                    
-                    // Individual member only options
-                    ForEach(approvedMembers) { member in
+            if approvedMembers.count > 5 {
+                // Compact layout for 6+ members
+                VStack(spacing: Theme.Spacing.sm) {
+                    // Type selector row
+                    HStack(spacing: Theme.Spacing.sm) {
                         SplitOptionButton(
-                            title: member.displayName,
-                            isSelected: splitType == .memberOnly && splitMemberId == member.id,
+                            title: "Everyone",
+                            isSelected: splitType == .equal,
                             action: {
                                 withAnimation {
-                                    splitType = .memberOnly
-                                    splitMemberId = member.id
+                                    splitType = .equal
+                                    splitMemberId = nil
                                     showCustomSplitEditor = false
                                     updateMemberSplitsForSplitType()
                                 }
                             }
                         )
+                        
+                        SplitOptionButton(
+                            title: "Custom",
+                            isSelected: splitType == .custom,
+                            action: {
+                                withAnimation {
+                                    splitType = .custom
+                                    splitMemberId = nil
+                                    showCustomSplitEditor = true
+                                    clearCustomSplitAmounts()
+                                }
+                            }
+                        )
+                        
+                        Spacer()
                     }
                     
-                    // Custom option
-                    SplitOptionButton(
-                        title: "Custom",
-                        isSelected: splitType == .custom,
-                        action: {
-                            withAnimation {
-                                splitType = .custom
-                                splitMemberId = nil
-                                showCustomSplitEditor = true
-                                clearCustomSplitAmounts()
-                            }
+                    // Member picker button (for single member selection)
+                    if splitType == .memberOnly || (splitType != .equal && splitType != .custom) {
+                        MemberPickerButton(
+                            members: approvedMembers,
+                            selectedId: splitMemberId,
+                            excludeId: nil
+                        ) {
+                            showSplitMemberPicker = true
                         }
-                    )
+                    } else if splitType != .equal && splitType != .custom {
+                        // Show picker option for selecting a single member
+                        Button {
+                            showSplitMemberPicker = true
+                        } label: {
+                            HStack {
+                                Text("Select one person")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                Spacer()
+                                Image(systemName: "chevron.down")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                            .inputFieldStyle()
+                        }
+                    }
+                }
+            } else {
+                // Standard horizontal scroll for 5 or fewer members
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Theme.Spacing.sm) {
+                        // Split Equally option
+                        SplitOptionButton(
+                            title: "Everyone",
+                            isSelected: splitType == .equal,
+                            action: {
+                                withAnimation {
+                                    splitType = .equal
+                                    splitMemberId = nil
+                                    showCustomSplitEditor = false
+                                    updateMemberSplitsForSplitType()
+                                }
+                            }
+                        )
+                        
+                        // Individual member only options
+                        ForEach(approvedMembers) { member in
+                            SplitOptionButton(
+                                title: member.displayName,
+                                isSelected: splitType == .memberOnly && splitMemberId == member.id,
+                                action: {
+                                    withAnimation {
+                                        splitType = .memberOnly
+                                        splitMemberId = member.id
+                                        showCustomSplitEditor = false
+                                        updateMemberSplitsForSplitType()
+                                    }
+                                }
+                            )
+                        }
+                        
+                        // Custom option
+                        SplitOptionButton(
+                            title: "Custom",
+                            isSelected: splitType == .custom,
+                            action: {
+                                withAnimation {
+                                    splitType = .custom
+                                    splitMemberId = nil
+                                    showCustomSplitEditor = true
+                                    clearCustomSplitAmounts()
+                                }
+                            }
+                        )
+                    }
                 }
             }
             
@@ -455,6 +660,21 @@ struct AddTransactionView: View {
                     editingPaidAmount: false,
                     validationError: $splitValidationError
                 )
+            }
+        }
+        .sheet(isPresented: $showSplitMemberPicker) {
+            MemberPickerSheet(
+                members: approvedMembers,
+                excludeId: nil,
+                title: "Expense For",
+                selectedId: $splitMemberId
+            )
+            .presentationDetents([.medium])
+            .onDisappear {
+                if splitMemberId != nil {
+                    splitType = .memberOnly
+                    updateMemberSplitsForSplitType()
+                }
             }
         }
     }
@@ -667,7 +887,7 @@ struct AddTransactionView: View {
         if splitType == .custom {
             let totalOwed = memberSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
             if abs(totalOwed - total) > 0.01 {
-                splitValidationError = "Split amounts must equal $\(total.doubleValue.formattedAsMoney(showSign: false))"
+                splitValidationError = "Split amounts must equal \(total.doubleValue.formattedAsMoney(showSign: false))"
             } else {
                 splitValidationError = nil
             }
@@ -679,7 +899,7 @@ struct AddTransactionView: View {
         if paidByType == .custom {
             let totalPaid = memberSplits.reduce(Decimal(0)) { $0 + $1.paidAmount }
             if abs(totalPaid - total) > 0.01 {
-                paidByValidationError = "Paid amounts must equal $\(total.doubleValue.formattedAsMoney(showSign: false))"
+                paidByValidationError = "Paid amounts must equal \(total.doubleValue.formattedAsMoney(showSign: false))"
             } else {
                 paidByValidationError = nil
             }
@@ -835,32 +1055,371 @@ struct MemberSelector: View {
     }
 }
 
-struct CategorySelector: View {
-    let categories: [Category]
-    @Binding var selectedId: UUID?
+struct MemberPickerButton: View {
+    let members: [HouseholdMember]
+    let selectedId: UUID?
+    let excludeId: UUID?
+    let action: () -> Void
+    
+    private var selectedMember: HouseholdMember? {
+        members.first { $0.id == selectedId }
+    }
     
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Theme.Spacing.sm) {
-                ForEach(categories) { category in
-                    Button {
-                        selectedId = category.id
-                    } label: {
-                        HStack(spacing: Theme.Spacing.xs) {
-                            if let icon = category.icon {
-                                Text(icon)
+        Button(action: action) {
+            HStack {
+                if let member = selectedMember {
+                    Text(member.displayName)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                } else {
+                    Text("Select")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            .foregroundStyle(Theme.Colors.textPrimary)
+            .inputFieldStyle()
+        }
+    }
+}
+
+struct MemberPickerSheet: View {
+    let members: [HouseholdMember]
+    let excludeId: UUID?
+    let title: String
+    @Binding var selectedId: UUID?
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var searchText = ""
+    
+    private var availableMembers: [HouseholdMember] {
+        members.filter { $0.id != excludeId }
+    }
+    
+    private var filteredMembers: [HouseholdMember] {
+        if searchText.isEmpty {
+            return availableMembers
+        }
+        return availableMembers.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                        // Search bar (only show if many members)
+                        if availableMembers.count > 6 {
+                            HStack {
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                TextField("Search members...", text: $searchText)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
                             }
-                            Text(category.name)
-                                .font(.subheadline)
+                            .padding(Theme.Spacing.sm)
+                            .background(Theme.Colors.backgroundCard)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            .padding(.horizontal, Theme.Spacing.md)
+                            .padding(.top, Theme.Spacing.sm)
+                        }
+                        
+                        // Member list
+                        VStack(spacing: 0) {
+                            ForEach(filteredMembers) { member in
+                                MemberPickerRow(
+                                    member: member,
+                                    isSelected: selectedId == member.id
+                                ) {
+                                    selectedId = member.id
+                                    dismiss()
+                                }
+                                
+                                if member.id != filteredMembers.last?.id {
+                                    Divider()
+                                        .background(Theme.Colors.borderLight)
+                                }
+                            }
                         }
                         .padding(.horizontal, Theme.Spacing.md)
-                        .padding(.vertical, Theme.Spacing.sm)
-                        .background(selectedId == category.id ? Theme.Colors.accent : Theme.Colors.backgroundCard)
-                        .foregroundStyle(selectedId == category.id ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
-                        .clipShape(Capsule())
+                        .padding(.top, Theme.Spacing.sm)
+                        
+                        // Empty state
+                        if filteredMembers.isEmpty {
+                            VStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "person.slash")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                Text("No members found")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Spacing.xl)
+                        }
+                        
+                        Spacer(minLength: 50)
                     }
                 }
             }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            }
+        }
+    }
+}
+
+struct MemberPickerRow: View {
+    let member: HouseholdMember
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Theme.Spacing.sm) {
+                // Avatar circle with initial
+                Text(String(member.displayName.prefix(1)).uppercased())
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.Colors.textInverse)
+                    .frame(width: 32, height: 32)
+                    .background(Theme.Colors.accent)
+                    .clipShape(Circle())
+                
+                Text(member.displayName)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Spacer()
+                
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            .padding(.vertical, Theme.Spacing.sm)
+            .background(isSelected ? Theme.Colors.accent.opacity(0.15) : Color.clear)
+        }
+    }
+}
+
+struct CategoryPickerButton: View {
+    let categories: [Category]
+    let selectedId: UUID?
+    let action: () -> Void
+    
+    private var selectedCategory: Category? {
+        categories.first { $0.id == selectedId }
+    }
+    
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                if let category = selectedCategory {
+                    if let icon = category.icon {
+                        Text(icon)
+                    }
+                    Text(category.name)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                } else {
+                    Text("Select")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            .foregroundStyle(Theme.Colors.textPrimary)
+            .inputFieldStyle()
+        }
+    }
+}
+
+struct CategoryPickerSheet: View {
+    let categories: [Category]
+    let sectors: [Sector]
+    let sectorCategories: [UUID: [UUID]]
+    @Binding var selectedId: UUID?
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var searchText = ""
+    
+    private var filteredCategories: [Category] {
+        if searchText.isEmpty {
+            return categories
+        }
+        return categories.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+    
+    private var categoriesInSectors: Set<UUID> {
+        var ids = Set<UUID>()
+        for categoryIds in sectorCategories.values {
+            ids.formUnion(categoryIds)
+        }
+        return ids
+    }
+    
+    private var uncategorizedCategories: [Category] {
+        filteredCategories.filter { !categoriesInSectors.contains($0.id) }
+    }
+    
+    private func categoriesForSector(_ sector: Sector) -> [Category] {
+        guard let categoryIds = sectorCategories[sector.id] else { return [] }
+        return filteredCategories.filter { categoryIds.contains($0.id) }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                        // Search bar
+                        HStack {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            TextField("Search categories...", text: $searchText)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                        }
+                        .padding(Theme.Spacing.sm)
+                        .background(Theme.Colors.backgroundCard)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.top, Theme.Spacing.sm)
+                        
+                        // Sectors with their categories
+                        ForEach(sectors) { sector in
+                            let sectorCats = categoriesForSector(sector)
+                            if !sectorCats.isEmpty {
+                                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                                    Text(sector.name)
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(sector.swiftUIColor)
+                                        .padding(.horizontal, Theme.Spacing.md)
+                                        .padding(.top, Theme.Spacing.sm)
+                                    
+                                    ForEach(sectorCats) { category in
+                                        CategoryPickerRow(
+                                            category: category,
+                                            isSelected: selectedId == category.id
+                                        ) {
+                                            selectedId = category.id
+                                            dismiss()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Uncategorized categories
+                        if !uncategorizedCategories.isEmpty {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                                Text("Other")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                    .padding(.top, Theme.Spacing.sm)
+                                
+                                ForEach(uncategorizedCategories) { category in
+                                    CategoryPickerRow(
+                                        category: category,
+                                        isSelected: selectedId == category.id
+                                    ) {
+                                        selectedId = category.id
+                                        dismiss()
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Empty state
+                        if filteredCategories.isEmpty {
+                            VStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                Text("No categories found")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Spacing.xl)
+                        }
+                        
+                        Spacer(minLength: 50)
+                    }
+                }
+            }
+            .navigationTitle("Select Category")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            }
+        }
+    }
+}
+
+struct CategoryPickerRow: View {
+    let category: Category
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Theme.Spacing.sm) {
+                if let icon = category.icon {
+                    Text(icon)
+                        .font(.title3)
+                }
+                
+                Text(category.name)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Spacer()
+                
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            .padding(.horizontal, Theme.Spacing.md)
+            .padding(.vertical, Theme.Spacing.sm)
+            .background(isSelected ? Theme.Colors.accent.opacity(0.15) : Color.clear)
         }
     }
 }
@@ -915,6 +1474,18 @@ struct CustomSplitEditor: View {
                 .fontWeight(.medium)
                 .foregroundStyle(Theme.Colors.textPrimary)
             
+            // Warning if total amount is 0
+            if totalAmount == 0 {
+                HStack(spacing: Theme.Spacing.xs) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.Colors.warning)
+                    Text("Enter an amount above first")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.warning)
+                }
+                .padding(.vertical, Theme.Spacing.xs)
+            }
+            
             ForEach($memberSplits) { $split in
                 MemberSplitRow(
                     split: $split,
@@ -965,7 +1536,7 @@ struct CustomSplitEditor: View {
             : memberSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
         
         if abs(total - totalAmount) > 0.01 {
-            validationError = "Amounts must equal $\(totalAmount.doubleValue.formattedAsMoney(showSign: false))"
+            validationError = "Amounts must equal \(totalAmount.doubleValue.formattedAsMoney(showSign: false))"
         } else {
             validationError = nil
         }
@@ -991,6 +1562,10 @@ struct MemberSplitRow: View {
         editingPaidAmount ? split.paidPercentage : split.owedPercentage
     }
     
+    private var isEditing: Bool {
+        isAmountFocused || isPercentageFocused
+    }
+    
     var body: some View {
         HStack(spacing: Theme.Spacing.sm) {
             // Member name
@@ -1014,18 +1589,19 @@ struct MemberSplitRow: View {
                     .multilineTextAlignment(.trailing)
                     .focused($isAmountFocused)
                     .onChange(of: amountText) { _, newValue in
+                        // Only process if this field is focused (user is typing)
+                        guard isAmountFocused else { return }
+                        
                         if let value = Decimal(string: newValue), value > 0 {
                             if editingPaidAmount {
                                 split.paidAmount = value
                                 if totalAmount > 0 {
                                     split.paidPercentage = (value / totalAmount) * 100
-                                    percentageText = String(format: "%.1f", (split.paidPercentage as NSDecimalNumber).doubleValue)
                                 }
                             } else {
                                 split.owedAmount = value
                                 if totalAmount > 0 {
                                     split.owedPercentage = (value / totalAmount) * 100
-                                    percentageText = String(format: "%.1f", (split.owedPercentage as NSDecimalNumber).doubleValue)
                                 }
                             }
                             onAmountChanged()
@@ -1037,8 +1613,13 @@ struct MemberSplitRow: View {
                                 split.owedAmount = 0
                                 split.owedPercentage = 0
                             }
-                            percentageText = ""
                             onAmountChanged()
+                        }
+                    }
+                    .onChange(of: isAmountFocused) { _, focused in
+                        if !focused {
+                            // User finished editing - sync display
+                            syncDisplayFromModel()
                         }
                     }
             }
@@ -1056,16 +1637,17 @@ struct MemberSplitRow: View {
                     .multilineTextAlignment(.trailing)
                     .focused($isPercentageFocused)
                     .onChange(of: percentageText) { _, newValue in
+                        // Only process if this field is focused (user is typing)
+                        guard isPercentageFocused else { return }
+                        
                         if let value = Decimal(string: newValue), value > 0 {
                             let newAmount = (value / 100) * totalAmount
                             if editingPaidAmount {
                                 split.paidPercentage = value
                                 split.paidAmount = newAmount
-                                amountText = String(format: "%.2f", (newAmount as NSDecimalNumber).doubleValue)
                             } else {
                                 split.owedPercentage = value
                                 split.owedAmount = newAmount
-                                amountText = String(format: "%.2f", (newAmount as NSDecimalNumber).doubleValue)
                             }
                             onAmountChanged()
                         } else if newValue.isEmpty {
@@ -1076,8 +1658,13 @@ struct MemberSplitRow: View {
                                 split.owedAmount = 0
                                 split.owedPercentage = 0
                             }
-                            amountText = ""
                             onAmountChanged()
+                        }
+                    }
+                    .onChange(of: isPercentageFocused) { _, focused in
+                        if !focused {
+                            // User finished editing - sync display
+                            syncDisplayFromModel()
                         }
                     }
                 
@@ -1091,21 +1678,23 @@ struct MemberSplitRow: View {
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
         }
         .onAppear {
-            // Start empty if amount is 0, otherwise show current value
-            if currentAmount > 0 {
-                amountText = String(format: "%.2f", (currentAmount as NSDecimalNumber).doubleValue)
-                percentageText = String(format: "%.1f", (currentPercentage as NSDecimalNumber).doubleValue)
+            syncDisplayFromModel()
+        }
+        .onChange(of: currentAmount) { _, _ in
+            // Only update text when NOT actively editing
+            if !isEditing {
+                syncDisplayFromModel()
             }
         }
-        .onChange(of: currentAmount) { _, newValue in
-            // Update text when the model changes externally
-            if newValue > 0 {
-                amountText = String(format: "%.2f", (newValue as NSDecimalNumber).doubleValue)
-                percentageText = String(format: "%.1f", (currentPercentage as NSDecimalNumber).doubleValue)
-            } else if !isAmountFocused && !isPercentageFocused {
-                amountText = ""
-                percentageText = ""
-            }
+    }
+    
+    private func syncDisplayFromModel() {
+        if currentAmount > 0 {
+            amountText = String(format: "%.2f", (currentAmount as NSDecimalNumber).doubleValue)
+            percentageText = String(format: "%.1f", (currentPercentage as NSDecimalNumber).doubleValue)
+        } else {
+            amountText = ""
+            percentageText = ""
         }
     }
 }

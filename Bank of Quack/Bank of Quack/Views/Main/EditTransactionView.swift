@@ -29,6 +29,11 @@ struct EditTransactionView: View {
     @State private var paidByValidationError: String?
     
     @State private var showDatePicker = false
+    @State private var showCategoryPicker = false
+    @State private var showPaidByPicker = false
+    @State private var showReceivedByPicker = false
+    @State private var showPaidToPicker = false
+    @State private var showSplitMemberPicker = false
     @State private var showNotes: Bool
     @State private var isSubmitting = false
     @State private var showError = false
@@ -156,19 +161,52 @@ struct EditTransactionView: View {
                                     .focused($focusedField, equals: .description)
                             }
                             
-                            // Date
-                            FormField(label: "Date") {
-                                Button {
-                                    showDatePicker.toggle()
-                                } label: {
-                                    HStack {
-                                        Text(date.formatted(as: .weekdayDayMonth))
-                                            .foregroundStyle(Theme.Colors.textPrimary)
-                                        Spacer()
-                                        Image(systemName: "calendar")
-                                            .foregroundStyle(Theme.Colors.textSecondary)
+                            // Date + Category Row (side by side for expenses)
+                            if transactionType == .expense {
+                                HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                                    // Date (left side)
+                                    FormField(label: "Date") {
+                                        Button {
+                                            showDatePicker.toggle()
+                                        } label: {
+                                            HStack {
+                                                Text(date.formatted(as: .dayMonth))
+                                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                                Spacer()
+                                                Image(systemName: "calendar")
+                                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                            }
+                                            .inputFieldStyle()
+                                        }
                                     }
-                                    .inputFieldStyle()
+                                    .frame(maxWidth: .infinity)
+                                    
+                                    // Category (right side)
+                                    FormField(label: "Category") {
+                                        CategoryPickerButton(
+                                            categories: authViewModel.categories,
+                                            selectedId: categoryId
+                                        ) {
+                                            showCategoryPicker = true
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                }
+                            } else {
+                                // Date only for non-expense types
+                                FormField(label: "Date") {
+                                    Button {
+                                        showDatePicker.toggle()
+                                    } label: {
+                                        HStack {
+                                            Text(date.formatted(as: .weekdayDayMonth))
+                                                .foregroundStyle(Theme.Colors.textPrimary)
+                                            Spacer()
+                                            Image(systemName: "calendar")
+                                                .foregroundStyle(Theme.Colors.textSecondary)
+                                        }
+                                        .inputFieldStyle()
+                                    }
                                 }
                             }
                             
@@ -196,11 +234,30 @@ struct EditTransactionView: View {
                             // Received By (for income and reimbursement)
                             if transactionType == .income || transactionType == .reimbursement {
                                 FormField(label: "Received By") {
-                                    MemberSelector(
+                                    if approvedMembers.count > 5 {
+                                        MemberPickerButton(
+                                            members: approvedMembers,
+                                            selectedId: paidByMemberId,
+                                            excludeId: nil
+                                        ) {
+                                            showReceivedByPicker = true
+                                        }
+                                    } else {
+                                        MemberSelector(
+                                            members: approvedMembers,
+                                            selectedId: $paidByMemberId,
+                                            excludeId: nil
+                                        )
+                                    }
+                                }
+                                .sheet(isPresented: $showReceivedByPicker) {
+                                    MemberPickerSheet(
                                         members: approvedMembers,
-                                        selectedId: $paidByMemberId,
-                                        excludeId: nil
+                                        excludeId: nil,
+                                        title: "Received By",
+                                        selectedId: $paidByMemberId
                                     )
+                                    .presentationDetents([.medium])
                                 }
                             }
                             
@@ -212,24 +269,35 @@ struct EditTransactionView: View {
                             // Paid To (for settlement)
                             if transactionType == .settlement {
                                 FormField(label: "Paid To") {
-                                    MemberSelector(
+                                    if approvedMembers.count > 5 {
+                                        MemberPickerButton(
+                                            members: approvedMembers,
+                                            selectedId: paidToMemberId,
+                                            excludeId: paidByMemberId
+                                        ) {
+                                            showPaidToPicker = true
+                                        }
+                                    } else {
+                                        MemberSelector(
+                                            members: approvedMembers,
+                                            selectedId: $paidToMemberId,
+                                            excludeId: paidByMemberId
+                                        )
+                                    }
+                                }
+                                .sheet(isPresented: $showPaidToPicker) {
+                                    MemberPickerSheet(
                                         members: approvedMembers,
-                                        selectedId: $paidToMemberId,
-                                        excludeId: paidByMemberId
+                                        excludeId: paidByMemberId,
+                                        title: "Paid To",
+                                        selectedId: $paidToMemberId
                                     )
+                                    .presentationDetents([.medium])
                                 }
                             }
                             
-                            // Category and Split (for expense only)
+                            // Split Type Section (for expense only, moved category to date row)
                             if transactionType == .expense {
-                                FormField(label: "Category") {
-                                    CategorySelector(
-                                        categories: authViewModel.categories,
-                                        selectedId: $categoryId
-                                    )
-                                }
-                                
-                                // Split Type Section
                                 if approvedMembers.count > 1 {
                                     splitSection
                                 }
@@ -315,13 +383,6 @@ struct EditTransactionView: View {
                     }
                     .foregroundStyle(Theme.Colors.textSecondary)
                 }
-                
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        focusedField = nil
-                    }
-                }
             }
         }
         .onAppear {
@@ -348,6 +409,15 @@ struct EditTransactionView: View {
         } message: {
             Text("Are you sure you want to delete this transaction? This action cannot be undone.")
         }
+        .sheet(isPresented: $showCategoryPicker) {
+            CategoryPickerSheet(
+                categories: authViewModel.categories,
+                sectors: authViewModel.sectors,
+                sectorCategories: authViewModel.sectorCategories,
+                selectedId: $categoryId
+            )
+            .presentationDetents([.medium, .large])
+        }
     }
     
     // MARK: - Paid By Section
@@ -360,53 +430,110 @@ struct EditTransactionView: View {
             
             // For settlements and reimbursements, only allow single member selection
             if transactionType == .settlement || transactionType == .reimbursement {
-                MemberSelector(
-                    members: approvedMembers,
-                    selectedId: $paidByMemberId,
-                    excludeId: transactionType == .settlement ? paidToMemberId : nil
-                )
+                if approvedMembers.count > 5 {
+                    // Use sheet picker for 6+ members
+                    MemberPickerButton(
+                        members: approvedMembers,
+                        selectedId: paidByMemberId,
+                        excludeId: transactionType == .settlement ? paidToMemberId : nil
+                    ) {
+                        showPaidByPicker = true
+                    }
+                } else {
+                    MemberSelector(
+                        members: approvedMembers,
+                        selectedId: $paidByMemberId,
+                        excludeId: transactionType == .settlement ? paidToMemberId : nil
+                    )
+                }
             } else if approvedMembers.count > 1 {
                 // Paid By Type Picker (for expenses with multiple members)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: Theme.Spacing.sm) {
-                        PaidByOptionButton(
-                            title: "Shared",
-                            isSelected: paidByType == .shared,
-                            action: {
-                                withAnimation {
-                                    paidByType = .shared
-                                    showCustomPaidByEditor = false
-                                    updateMemberSplitsForPaidByType()
-                                }
-                            }
-                        )
-                        
-                        ForEach(approvedMembers) { member in
+                if approvedMembers.count > 5 {
+                    // Compact layout for 6+ members
+                    VStack(spacing: Theme.Spacing.sm) {
+                        // Type selector row
+                        HStack(spacing: Theme.Spacing.sm) {
                             PaidByOptionButton(
-                                title: member.displayName,
-                                isSelected: paidByType == .single && paidByMemberId == member.id,
+                                title: "Shared",
+                                isSelected: paidByType == .shared,
                                 action: {
                                     withAnimation {
-                                        paidByType = .single
-                                        paidByMemberId = member.id
+                                        paidByType = .shared
                                         showCustomPaidByEditor = false
                                         updateMemberSplitsForPaidByType()
                                     }
                                 }
                             )
+                            
+                            PaidByOptionButton(
+                                title: "Custom",
+                                isSelected: paidByType == .custom,
+                                action: {
+                                    withAnimation {
+                                        paidByType = .custom
+                                        showCustomPaidByEditor = true
+                                        clearCustomPaidByAmounts()
+                                    }
+                                }
+                            )
+                            
+                            Spacer()
                         }
                         
-                        PaidByOptionButton(
-                            title: "Custom",
-                            isSelected: paidByType == .custom,
-                            action: {
-                                withAnimation {
-                                    paidByType = .custom
-                                    showCustomPaidByEditor = true
-                                    clearCustomPaidByAmounts()
-                                }
+                        // Member picker button (only show when not shared/custom)
+                        if paidByType == .single || (paidByType != .shared && paidByType != .custom) {
+                            MemberPickerButton(
+                                members: approvedMembers,
+                                selectedId: paidByMemberId,
+                                excludeId: nil
+                            ) {
+                                showPaidByPicker = true
                             }
-                        )
+                        }
+                    }
+                } else {
+                    // Standard horizontal scroll for 5 or fewer members
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: Theme.Spacing.sm) {
+                            PaidByOptionButton(
+                                title: "Shared",
+                                isSelected: paidByType == .shared,
+                                action: {
+                                    withAnimation {
+                                        paidByType = .shared
+                                        showCustomPaidByEditor = false
+                                        updateMemberSplitsForPaidByType()
+                                    }
+                                }
+                            )
+                            
+                            ForEach(approvedMembers) { member in
+                                PaidByOptionButton(
+                                    title: member.displayName,
+                                    isSelected: paidByType == .single && paidByMemberId == member.id,
+                                    action: {
+                                        withAnimation {
+                                            paidByType = .single
+                                            paidByMemberId = member.id
+                                            showCustomPaidByEditor = false
+                                            updateMemberSplitsForPaidByType()
+                                        }
+                                    }
+                                )
+                            }
+                            
+                            PaidByOptionButton(
+                                title: "Custom",
+                                isSelected: paidByType == .custom,
+                                action: {
+                                    withAnimation {
+                                        paidByType = .custom
+                                        showCustomPaidByEditor = true
+                                        clearCustomPaidByAmounts()
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
                 
@@ -427,6 +554,21 @@ struct EditTransactionView: View {
                 )
             }
         }
+        .sheet(isPresented: $showPaidByPicker) {
+            MemberPickerSheet(
+                members: approvedMembers,
+                excludeId: transactionType == .settlement ? paidToMemberId : nil,
+                title: "Who Paid?",
+                selectedId: $paidByMemberId
+            )
+            .presentationDetents([.medium])
+            .onDisappear {
+                if paidByMemberId != nil && paidByType != .shared && paidByType != .custom {
+                    paidByType = .single
+                    updateMemberSplitsForPaidByType()
+                }
+            }
+        }
     }
     
     // MARK: - Split Section
@@ -437,48 +579,113 @@ struct EditTransactionView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
             
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.Spacing.sm) {
-                    SplitOptionButton(
-                        title: "Everyone",
-                        isSelected: splitType == .equal,
-                        action: {
-                            withAnimation {
-                                splitType = .equal
-                                splitMemberId = nil
-                                showCustomSplitEditor = false
-                                updateMemberSplitsForSplitType()
-                            }
-                        }
-                    )
-                    
-                    ForEach(approvedMembers) { member in
+            // Split Type Picker
+            if approvedMembers.count > 5 {
+                // Compact layout for 6+ members
+                VStack(spacing: Theme.Spacing.sm) {
+                    // Type selector row
+                    HStack(spacing: Theme.Spacing.sm) {
                         SplitOptionButton(
-                            title: member.displayName,
-                            isSelected: splitType == .memberOnly && splitMemberId == member.id,
+                            title: "Everyone",
+                            isSelected: splitType == .equal,
                             action: {
                                 withAnimation {
-                                    splitType = .memberOnly
-                                    splitMemberId = member.id
+                                    splitType = .equal
+                                    splitMemberId = nil
                                     showCustomSplitEditor = false
                                     updateMemberSplitsForSplitType()
                                 }
                             }
                         )
+                        
+                        SplitOptionButton(
+                            title: "Custom",
+                            isSelected: splitType == .custom,
+                            action: {
+                                withAnimation {
+                                    splitType = .custom
+                                    splitMemberId = nil
+                                    showCustomSplitEditor = true
+                                    clearCustomSplitAmounts()
+                                }
+                            }
+                        )
+                        
+                        Spacer()
                     }
                     
-                    SplitOptionButton(
-                        title: "Custom",
-                        isSelected: splitType == .custom,
-                        action: {
-                            withAnimation {
-                                splitType = .custom
-                                splitMemberId = nil
-                                showCustomSplitEditor = true
-                                clearCustomSplitAmounts()
-                            }
+                    // Member picker button (for single member selection)
+                    if splitType == .memberOnly || (splitType != .equal && splitType != .custom) {
+                        MemberPickerButton(
+                            members: approvedMembers,
+                            selectedId: splitMemberId,
+                            excludeId: nil
+                        ) {
+                            showSplitMemberPicker = true
                         }
-                    )
+                    } else if splitType != .equal && splitType != .custom {
+                        // Show picker option for selecting a single member
+                        Button {
+                            showSplitMemberPicker = true
+                        } label: {
+                            HStack {
+                                Text("Select one person")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                Spacer()
+                                Image(systemName: "chevron.down")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                            .inputFieldStyle()
+                        }
+                    }
+                }
+            } else {
+                // Standard horizontal scroll for 5 or fewer members
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Theme.Spacing.sm) {
+                        SplitOptionButton(
+                            title: "Everyone",
+                            isSelected: splitType == .equal,
+                            action: {
+                                withAnimation {
+                                    splitType = .equal
+                                    splitMemberId = nil
+                                    showCustomSplitEditor = false
+                                    updateMemberSplitsForSplitType()
+                                }
+                            }
+                        )
+                        
+                        ForEach(approvedMembers) { member in
+                            SplitOptionButton(
+                                title: member.displayName,
+                                isSelected: splitType == .memberOnly && splitMemberId == member.id,
+                                action: {
+                                    withAnimation {
+                                        splitType = .memberOnly
+                                        splitMemberId = member.id
+                                        showCustomSplitEditor = false
+                                        updateMemberSplitsForSplitType()
+                                    }
+                                }
+                            )
+                        }
+                        
+                        SplitOptionButton(
+                            title: "Custom",
+                            isSelected: splitType == .custom,
+                            action: {
+                                withAnimation {
+                                    splitType = .custom
+                                    splitMemberId = nil
+                                    showCustomSplitEditor = true
+                                    clearCustomSplitAmounts()
+                                }
+                            }
+                        )
+                    }
                 }
             }
             
@@ -490,6 +697,21 @@ struct EditTransactionView: View {
                     editingPaidAmount: false,
                     validationError: $splitValidationError
                 )
+            }
+        }
+        .sheet(isPresented: $showSplitMemberPicker) {
+            MemberPickerSheet(
+                members: approvedMembers,
+                excludeId: nil,
+                title: "Expense For",
+                selectedId: $splitMemberId
+            )
+            .presentationDetents([.medium])
+            .onDisappear {
+                if splitMemberId != nil {
+                    splitType = .memberOnly
+                    updateMemberSplitsForSplitType()
+                }
             }
         }
     }
@@ -721,7 +943,7 @@ struct EditTransactionView: View {
         if splitType == .custom {
             let totalOwed = memberSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
             if abs(totalOwed - total) > 0.01 {
-                splitValidationError = "Split amounts must equal $\(total.doubleValue.formattedAsMoney(showSign: false))"
+                splitValidationError = "Split amounts must equal \(total.doubleValue.formattedAsMoney(showSign: false))"
             } else {
                 splitValidationError = nil
             }
@@ -732,7 +954,7 @@ struct EditTransactionView: View {
         if paidByType == .custom {
             let totalPaid = memberSplits.reduce(Decimal(0)) { $0 + $1.paidAmount }
             if abs(totalPaid - total) > 0.01 {
-                paidByValidationError = "Paid amounts must equal $\(total.doubleValue.formattedAsMoney(showSign: false))"
+                paidByValidationError = "Paid amounts must equal \(total.doubleValue.formattedAsMoney(showSign: false))"
             } else {
                 paidByValidationError = nil
             }
