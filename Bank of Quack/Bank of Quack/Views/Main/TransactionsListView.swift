@@ -127,6 +127,37 @@ struct TransactionDetailView: View {
     let transaction: TransactionView
     
     @State private var showDeleteConfirm = false
+    @State private var showEditSheet = false
+    
+    private var splitDisplayText: String {
+        switch transaction.splitType {
+        case .equal:
+            return "Split Equally"
+        case .memberOnly:
+            if let memberName = transaction.splitMemberName {
+                return "\(memberName) Only"
+            }
+            return "Member Only"
+        case .custom:
+            return "Custom Split"
+        case .payerOnly:
+            if let paidByName = transaction.paidByName {
+                return "\(paidByName) Only"
+            }
+            return "Payer Only"
+        }
+    }
+    
+    private var paidByDisplayText: String {
+        switch transaction.paidByType {
+        case .single:
+            return transaction.paidByName ?? "Single Member"
+        case .shared:
+            return "Shared Equally"
+        case .custom:
+            return "Custom Split"
+        }
+    }
     
     var body: some View {
         NavigationStack {
@@ -162,19 +193,22 @@ struct TransactionDetailView: View {
                                 )
                             }
                             
-                            if let paidByName = transaction.paidByName {
+                            if transaction.transactionType == .expense {
                                 Divider().background(Theme.Colors.borderLight)
-                                DetailRow(label: "Paid By", value: paidByName)
+                                DetailRow(label: "Paid By", value: paidByDisplayText)
+                                
+                                Divider().background(Theme.Colors.borderLight)
+                                DetailRow(label: "Split", value: splitDisplayText)
+                            } else {
+                                if let paidByName = transaction.paidByName {
+                                    Divider().background(Theme.Colors.borderLight)
+                                    DetailRow(label: "Paid By", value: paidByName)
+                                }
                             }
                             
                             if let paidToName = transaction.paidToName {
                                 Divider().background(Theme.Colors.borderLight)
                                 DetailRow(label: "Paid To", value: paidToName)
-                            }
-                            
-                            if transaction.transactionType == .expense {
-                                Divider().background(Theme.Colors.borderLight)
-                                DetailRow(label: "Split", value: transaction.splitType.displayName)
                             }
                             
                             if let notes = transaction.notes, !notes.isEmpty {
@@ -186,14 +220,40 @@ struct TransactionDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
                         .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Delete Button
-                        Button(role: .destructive) {
-                            showDeleteConfirm = true
-                        } label: {
-                            Label("Delete Transaction", systemImage: "trash")
+                        // Action Buttons
+                        VStack(spacing: Theme.Spacing.sm) {
+                            // Edit Button
+                            Button {
+                                showEditSheet = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "pencil")
+                                    Text("Edit Transaction")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.md)
+                                .background(Theme.Colors.accent)
+                                .foregroundStyle(Theme.Colors.textInverse)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            }
+                            
+                            // Delete Button
+                            Button(role: .destructive) {
+                                showDeleteConfirm = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "trash")
+                                    Text("Delete Transaction")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.md)
+                                .background(Theme.Colors.error.opacity(0.1))
                                 .foregroundStyle(Theme.Colors.error)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            }
                         }
-                        .padding(.top, Theme.Spacing.lg)
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.top, Theme.Spacing.md)
                         
                         Spacer()
                     }
@@ -209,6 +269,9 @@ struct TransactionDetailView: View {
                     .foregroundStyle(Theme.Colors.accent)
                 }
             }
+        }
+        .fullScreenCover(isPresented: $showEditSheet) {
+            EditTransactionView(transaction: transaction)
         }
         .alert("Delete Transaction?", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) { }

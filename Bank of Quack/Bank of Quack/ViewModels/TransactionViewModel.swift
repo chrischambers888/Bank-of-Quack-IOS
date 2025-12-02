@@ -6,6 +6,7 @@ final class TransactionViewModel {
     // MARK: - State
     
     var transactions: [TransactionView] = []
+    var transactionSplits: [UUID: [TransactionSplit]] = [:] // Keyed by transaction ID
     var isLoading = false
     var error: String?
     
@@ -27,7 +28,7 @@ final class TransactionViewModel {
         
         do {
             transactions = try await dataService.fetchTransactions(householdId: householdId)
-            calculateMonthlyTotals()
+            calculateTotals()
         } catch {
             self.error = error.localizedDescription
         }
@@ -50,12 +51,22 @@ final class TransactionViewModel {
                 startDate: startOfMonth,
                 endDate: endOfMonth
             )
-            calculateMonthlyTotals()
+            calculateTotals()
         } catch {
             self.error = error.localizedDescription
         }
         
         isLoading = false
+    }
+    
+    @MainActor
+    func fetchTransactionSplits(transactionId: UUID) async {
+        do {
+            let splits = try await dataService.fetchTransactionSplits(transactionId: transactionId)
+            transactionSplits[transactionId] = splits
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
     
     // MARK: - Create Transaction
@@ -71,11 +82,14 @@ final class TransactionViewModel {
         paidToMemberId: UUID? = nil,
         categoryId: UUID? = nil,
         splitType: SplitType = .equal,
+        paidByType: PaidByType = .single,
+        splitMemberId: UUID? = nil,
         excludedFromBudget: Bool = false,
         notes: String? = nil,
-        createdByUserId: UUID?
+        createdByUserId: UUID?,
+        splits: [MemberSplit]? = nil
     ) async throws {
-        let dto = CreateTransactionDTO(
+        _ = try await dataService.createTransactionWithSplits(
             householdId: householdId,
             date: date,
             description: description,
@@ -85,13 +99,57 @@ final class TransactionViewModel {
             paidToMemberId: paidToMemberId,
             categoryId: categoryId,
             splitType: splitType,
-            reimbursesTransactionId: nil,
+            paidByType: paidByType,
+            splitMemberId: splitMemberId,
             excludedFromBudget: excludedFromBudget,
             notes: notes,
-            createdByUserId: createdByUserId
+            createdByUserId: createdByUserId,
+            splits: splits
         )
         
-        try await dataService.createTransaction(dto)
+        // Refresh transactions
+        await fetchTransactions(householdId: householdId)
+    }
+    
+    // MARK: - Update Transaction
+    
+    @MainActor
+    func updateTransaction(
+        transactionId: UUID,
+        householdId: UUID,
+        date: Date,
+        description: String,
+        amount: Decimal,
+        transactionType: TransactionType,
+        paidByMemberId: UUID?,
+        paidToMemberId: UUID? = nil,
+        categoryId: UUID? = nil,
+        splitType: SplitType = .equal,
+        paidByType: PaidByType = .single,
+        splitMemberId: UUID? = nil,
+        excludedFromBudget: Bool = false,
+        notes: String? = nil,
+        splits: [MemberSplit]? = nil
+    ) async throws {
+        try await dataService.updateTransactionWithSplits(
+            transactionId: transactionId,
+            date: date,
+            description: description,
+            amount: amount,
+            transactionType: transactionType,
+            paidByMemberId: paidByMemberId,
+            paidToMemberId: paidToMemberId,
+            categoryId: categoryId,
+            splitType: splitType,
+            paidByType: paidByType,
+            splitMemberId: splitMemberId,
+            excludedFromBudget: excludedFromBudget,
+            notes: notes,
+            splits: splits
+        )
+        
+        // Clear cached splits for this transaction
+        transactionSplits.removeValue(forKey: transactionId)
         
         // Refresh transactions
         await fetchTransactions(householdId: householdId)
@@ -104,7 +162,8 @@ final class TransactionViewModel {
         do {
             try await dataService.deleteTransaction(id: id)
             transactions.removeAll { $0.id == id }
-            calculateMonthlyTotals()
+            transactionSplits.removeValue(forKey: id)
+            calculateTotals()
         } catch {
             self.error = error.localizedDescription
         }
@@ -112,24 +171,11 @@ final class TransactionViewModel {
     
     // MARK: - Calculations
     
-    private func calculateMonthlyTotals() {
-        let calendar = Calendar.current
-        let now = Date()
-        let currentMonth = calendar.component(.month, from: now)
-        let currentYear = calendar.component(.year, from: now)
-        
-        // Filter transactions by matching month/year components (avoids timezone issues)
-        let monthTransactions = transactions.filter { t in
-            let transactionMonth = calendar.component(.month, from: t.date)
-            let transactionYear = calendar.component(.year, from: t.date)
-            return transactionMonth == currentMonth && transactionYear == currentYear
-        }
-        
-        // Calculate totals directly
+    private func calculateTotals() {
         var expenses: Decimal = 0
         var income: Decimal = 0
         
-        for transaction in monthTransactions {
+        for transaction in transactions {
             switch transaction.transactionType {
             case .expense:
                 expenses += transaction.amount
@@ -160,4 +206,3 @@ final class TransactionViewModel {
         error = nil
     }
 }
-

@@ -42,7 +42,7 @@ struct NetBalanceCard: View {
     
     var body: some View {
         VStack(spacing: Theme.Spacing.xs) {
-            Text("Net This Month")
+            Text("Net Balance")
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
             

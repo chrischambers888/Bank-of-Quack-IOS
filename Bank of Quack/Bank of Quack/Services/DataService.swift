@@ -326,12 +326,124 @@ actor DataService {
             .execute()
     }
     
+    /// Creates a transaction with member splits using the RPC function.
+    /// This properly snapshots members at transaction time.
+    func createTransactionWithSplits(
+        householdId: UUID,
+        date: Date,
+        description: String,
+        amount: Decimal,
+        transactionType: TransactionType,
+        paidByMemberId: UUID?,
+        paidToMemberId: UUID?,
+        categoryId: UUID?,
+        splitType: SplitType,
+        paidByType: PaidByType,
+        splitMemberId: UUID?,
+        excludedFromBudget: Bool,
+        notes: String?,
+        createdByUserId: UUID?,
+        splits: [MemberSplit]?
+    ) async throws -> UUID {
+        let request = CreateTransactionWithSplitsRequest(
+            householdId: householdId,
+            date: date,
+            description: description,
+            amount: amount,
+            transactionType: transactionType,
+            paidByMemberId: paidByMemberId,
+            paidToMemberId: paidToMemberId,
+            categoryId: categoryId,
+            splitType: splitType,
+            paidByType: paidByType,
+            splitMemberId: splitMemberId,
+            excludedFromBudget: excludedFromBudget,
+            notes: notes,
+            createdByUserId: createdByUserId,
+            splits: splits
+        )
+        
+        let transactionId: UUID = try await supabase.client
+            .rpc(RPCFunction.createTransactionWithSplits.rawValue, params: request)
+            .execute()
+            .value
+        
+        return transactionId
+    }
+    
     func deleteTransaction(id: UUID) async throws {
         try await supabase
             .from(.transactions)
             .delete()
             .eq("id", value: id.uuidString)
             .execute()
+    }
+    
+    /// Updates a transaction with member splits using the RPC function.
+    /// This replaces existing splits with new ones based on current settings.
+    func updateTransactionWithSplits(
+        transactionId: UUID,
+        date: Date,
+        description: String,
+        amount: Decimal,
+        transactionType: TransactionType,
+        paidByMemberId: UUID?,
+        paidToMemberId: UUID?,
+        categoryId: UUID?,
+        splitType: SplitType,
+        paidByType: PaidByType,
+        splitMemberId: UUID?,
+        excludedFromBudget: Bool,
+        notes: String?,
+        splits: [MemberSplit]?
+    ) async throws {
+        let request = UpdateTransactionWithSplitsRequest(
+            transactionId: transactionId,
+            date: date,
+            description: description,
+            amount: amount,
+            transactionType: transactionType,
+            paidByMemberId: paidByMemberId,
+            paidToMemberId: paidToMemberId,
+            categoryId: categoryId,
+            splitType: splitType,
+            paidByType: paidByType,
+            splitMemberId: splitMemberId,
+            excludedFromBudget: excludedFromBudget,
+            notes: notes,
+            splits: splits
+        )
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.updateTransactionWithSplits.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    // MARK: - Transaction Splits
+    
+    func fetchTransactionSplits(transactionId: UUID) async throws -> [TransactionSplit] {
+        try await supabase
+            .from(.transactionSplits)
+            .select()
+            .eq("transaction_id", value: transactionId.uuidString)
+            .execute()
+            .value
+    }
+    
+    func fetchAllSplitsForHousehold(householdId: UUID) async throws -> [TransactionSplit] {
+        // First get all transaction IDs for this household
+        let transactions: [TransactionView] = try await fetchTransactions(householdId: householdId)
+        let transactionIds = transactions.map { $0.id.uuidString }
+        
+        guard !transactionIds.isEmpty else { return [] }
+        
+        return try await supabase
+            .from(.transactionSplits)
+            .select()
+            .in("transaction_id", values: transactionIds)
+            .execute()
+            .value
     }
     
     // MARK: - Transaction Totals

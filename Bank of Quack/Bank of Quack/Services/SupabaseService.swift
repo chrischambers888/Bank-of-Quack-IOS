@@ -69,5 +69,7 @@ enum RPCFunction: String {
     case getPendingMembers = "get_pending_members"
     case getMyPendingHouseholds = "get_my_pending_households"
     case deleteHousehold = "delete_household"
+    case createTransactionWithSplits = "create_transaction_with_splits"
+    case updateTransactionWithSplits = "update_transaction_with_splits"
 }
 

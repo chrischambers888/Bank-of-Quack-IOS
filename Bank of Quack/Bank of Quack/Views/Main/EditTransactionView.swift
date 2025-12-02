@@ -1,22 +1,24 @@
 import SwiftUI
-import Auth
 
-struct AddTransactionView: View {
+struct EditTransactionView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(TransactionViewModel.self) private var transactionViewModel
+    @Environment(\.dismiss) private var dismiss
     
-    @State private var transactionType: TransactionType = .expense
-    @State private var amount = ""
-    @State private var description = ""
-    @State private var date = Date()
+    let transaction: TransactionView
+    
+    @State private var transactionType: TransactionType
+    @State private var amount: String
+    @State private var description: String
+    @State private var date: Date
     @State private var paidByMemberId: UUID?
     @State private var paidToMemberId: UUID?
     @State private var categoryId: UUID?
-    @State private var splitType: SplitType = .equal
-    @State private var paidByType: PaidByType = .single
+    @State private var splitType: SplitType
+    @State private var paidByType: PaidByType
     @State private var splitMemberId: UUID?
-    @State private var notes = ""
-    @State private var excludedFromBudget = false
+    @State private var notes: String
+    @State private var excludedFromBudget: Bool
     
     // Custom split state
     @State private var memberSplits: [MemberSplit] = []
@@ -26,11 +28,11 @@ struct AddTransactionView: View {
     @State private var paidByValidationError: String?
     
     @State private var showDatePicker = false
-    @State private var showNotes = false
+    @State private var showNotes: Bool
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
-    @State private var showSuccess = false
+    @State private var showDeleteConfirmation = false
     
     @FocusState private var focusedField: Field?
     
@@ -42,6 +44,23 @@ struct AddTransactionView: View {
         case splitPercentage(UUID)
         case paidAmount(UUID)
         case paidPercentage(UUID)
+    }
+    
+    init(transaction: TransactionView) {
+        self.transaction = transaction
+        _transactionType = State(initialValue: transaction.transactionType)
+        _amount = State(initialValue: String(format: "%.2f", (transaction.amount as NSDecimalNumber).doubleValue))
+        _description = State(initialValue: transaction.description)
+        _date = State(initialValue: transaction.date)
+        _paidByMemberId = State(initialValue: transaction.paidByMemberId)
+        _paidToMemberId = State(initialValue: transaction.paidToMemberId)
+        _categoryId = State(initialValue: transaction.categoryId)
+        _splitType = State(initialValue: transaction.splitType)
+        _paidByType = State(initialValue: transaction.paidByType)
+        _splitMemberId = State(initialValue: transaction.splitMemberId)
+        _notes = State(initialValue: transaction.notes ?? "")
+        _excludedFromBudget = State(initialValue: transaction.excludedFromBudget)
+        _showNotes = State(initialValue: transaction.notes != nil && !transaction.notes!.isEmpty)
     }
     
     private var parsedAmount: Decimal {
@@ -58,14 +77,10 @@ struct AddTransactionView: View {
         
         switch transactionType {
         case .expense:
-            // Validate paid by
             if paidByType == .single && paidByMemberId == nil { return false }
             if paidByType == .custom && paidByValidationError != nil { return false }
-            
-            // Validate split
             if splitType == .memberOnly && splitMemberId == nil { return false }
             if splitType == .custom && splitValidationError != nil { return false }
-            
             return categoryId != nil
         case .income:
             return true
@@ -203,7 +218,7 @@ struct AddTransactionView: View {
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Notes (expandable, shown above buttons)
+                        // Notes (expandable)
                         if showNotes {
                             FormField(label: "Notes") {
                                 TextField("Add any notes...", text: $notes, axis: .vertical)
@@ -214,35 +229,52 @@ struct AddTransactionView: View {
                             .padding(.horizontal, Theme.Spacing.md)
                         }
                         
-                        // Submit Button + Notes Icon
-                        HStack(spacing: Theme.Spacing.sm) {
-                            // Add Transaction Button (80%)
-                            Button {
-                                submitTransaction()
-                            } label: {
-                                if isSubmitting {
-                                    ProgressView()
-                                        .tint(Theme.Colors.textInverse)
-                                } else {
-                                    Text("Add Transaction")
+                        // Action Buttons
+                        VStack(spacing: Theme.Spacing.sm) {
+                            // Save Button
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Button {
+                                    saveTransaction()
+                                } label: {
+                                    if isSubmitting {
+                                        ProgressView()
+                                            .tint(Theme.Colors.textInverse)
+                                    } else {
+                                        Text("Save Changes")
+                                    }
+                                }
+                                .buttonStyle(PrimaryButtonStyle())
+                                .disabled(!isFormValid || isSubmitting)
+                                .frame(maxWidth: .infinity)
+                                
+                                // Notes Icon Button
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        showNotes.toggle()
+                                    }
+                                } label: {
+                                    Image(systemName: showNotes ? "note.text" : "note.text.badge.plus")
+                                        .font(.title2)
+                                        .foregroundStyle(showNotes ? Theme.Colors.accent : Theme.Colors.textSecondary)
+                                        .frame(width: 56, height: 56)
+                                        .background(showNotes ? Theme.Colors.accent.opacity(0.2) : Theme.Colors.backgroundCard)
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
                                 }
                             }
-                            .buttonStyle(PrimaryButtonStyle())
-                            .disabled(!isFormValid || isSubmitting)
-                            .frame(maxWidth: .infinity)
                             
-                            // Notes Icon Button (20%)
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    showNotes.toggle()
-                                }
+                            // Delete Button
+                            Button(role: .destructive) {
+                                showDeleteConfirmation = true
                             } label: {
-                                Image(systemName: showNotes ? "note.text" : "note.text.badge.plus")
-                                    .font(.title2)
-                                    .foregroundStyle(showNotes ? Theme.Colors.accent : Theme.Colors.textSecondary)
-                                    .frame(width: 56, height: 56)
-                                    .background(showNotes ? Theme.Colors.accent.opacity(0.2) : Theme.Colors.backgroundCard)
-                                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                                HStack {
+                                    Image(systemName: "trash")
+                                    Text("Delete Transaction")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.md)
+                                .background(Theme.Colors.error.opacity(0.1))
+                                .foregroundStyle(Theme.Colors.error)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
                             }
                         }
                         .padding(.horizontal, Theme.Spacing.md)
@@ -253,11 +285,18 @@ struct AddTransactionView: View {
                 }
                 .scrollDismissesKeyboard(.immediately)
             }
-            .navigationTitle("Add Transaction")
+            .navigationTitle("Edit Transaction")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+                
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("Done") {
@@ -268,22 +307,27 @@ struct AddTransactionView: View {
         }
         .onAppear {
             initializeMemberSplits()
-            // Set default paid by to current member
-            if paidByMemberId == nil {
-                paidByMemberId = authViewModel.currentMember?.id
-            }
+        }
+        .task {
+            // Load existing splits if available
+            await loadExistingSplits()
         }
         .alert("Error", isPresented: $showError) {
             Button("OK") { }
         } message: {
             Text(errorMessage)
         }
-        .alert("Success", isPresented: $showSuccess) {
-            Button("OK") {
-                resetForm()
+        .confirmationDialog(
+            "Delete Transaction",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                deleteTransaction()
             }
+            Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Transaction added successfully!")
+            Text("Are you sure you want to delete this transaction? This action cannot be undone.")
         }
     }
     
@@ -296,10 +340,8 @@ struct AddTransactionView: View {
                 .foregroundStyle(Theme.Colors.textSecondary)
             
             if approvedMembers.count > 1 {
-                // Paid By Type Picker
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Theme.Spacing.sm) {
-                        // Shared Equally option
                         PaidByOptionButton(
                             title: "Shared",
                             isSelected: paidByType == .shared,
@@ -312,7 +354,6 @@ struct AddTransactionView: View {
                             }
                         )
                         
-                        // Individual member options
                         ForEach(approvedMembers) { member in
                             PaidByOptionButton(
                                 title: member.displayName,
@@ -328,7 +369,6 @@ struct AddTransactionView: View {
                             )
                         }
                         
-                        // Custom option
                         PaidByOptionButton(
                             title: "Custom",
                             isSelected: paidByType == .custom,
@@ -343,7 +383,6 @@ struct AddTransactionView: View {
                     }
                 }
                 
-                // Custom Paid By Editor
                 if showCustomPaidByEditor && paidByType == .custom {
                     CustomSplitEditor(
                         title: "Who paid how much?",
@@ -354,7 +393,6 @@ struct AddTransactionView: View {
                     )
                 }
             } else {
-                // Single member household - just show who paid
                 MemberSelector(
                     members: approvedMembers,
                     selectedId: $paidByMemberId,
@@ -364,7 +402,7 @@ struct AddTransactionView: View {
         }
     }
     
-    // MARK: - Split Section (Expense For)
+    // MARK: - Split Section
     
     private var splitSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -372,10 +410,8 @@ struct AddTransactionView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
             
-            // Split Type Picker
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Theme.Spacing.sm) {
-                    // Split Equally option
                     SplitOptionButton(
                         title: "Everyone",
                         isSelected: splitType == .equal,
@@ -389,7 +425,6 @@ struct AddTransactionView: View {
                         }
                     )
                     
-                    // Individual member only options
                     ForEach(approvedMembers) { member in
                         SplitOptionButton(
                             title: member.displayName,
@@ -405,7 +440,6 @@ struct AddTransactionView: View {
                         )
                     }
                     
-                    // Custom option
                     SplitOptionButton(
                         title: "Custom",
                         isSelected: splitType == .custom,
@@ -421,7 +455,6 @@ struct AddTransactionView: View {
                 }
             }
             
-            // Custom Split Editor
             if showCustomSplitEditor && splitType == .custom {
                 CustomSplitEditor(
                     title: "Who owes how much?",
@@ -440,6 +473,30 @@ struct AddTransactionView: View {
         memberSplits = approvedMembers.map { member in
             MemberSplit(member: member, totalAmount: parsedAmount, memberCount: approvedMembers.count)
         }
+        
+        // Set up UI state based on transaction
+        if splitType == .custom {
+            showCustomSplitEditor = true
+        }
+        if paidByType == .custom {
+            showCustomPaidByEditor = true
+        }
+    }
+    
+    private func loadExistingSplits() async {
+        await transactionViewModel.fetchTransactionSplits(transactionId: transaction.id)
+        
+        if let existingSplits = transactionViewModel.transactionSplits[transaction.id], !existingSplits.isEmpty {
+            // Map existing splits to memberSplits
+            for i in memberSplits.indices {
+                if let existingSplit = existingSplits.first(where: { $0.memberId == memberSplits[i].memberId }) {
+                    memberSplits[i].owedAmount = existingSplit.owedAmount
+                    memberSplits[i].owedPercentage = existingSplit.owedPercentage ?? 0
+                    memberSplits[i].paidAmount = existingSplit.paidAmount
+                    memberSplits[i].paidPercentage = existingSplit.paidPercentage ?? 0
+                }
+            }
+        }
     }
     
     private func updateMemberSplitsForAmount() {
@@ -451,7 +508,6 @@ struct AddTransactionView: View {
         let equalPercentage: Decimal = 100 / Decimal(memberCount)
         
         for i in memberSplits.indices {
-            // Update owed amounts based on split type
             switch splitType {
             case .equal:
                 memberSplits[i].owedAmount = equalShare
@@ -465,11 +521,9 @@ struct AddTransactionView: View {
                     memberSplits[i].owedPercentage = 0
                 }
             case .custom, .payerOnly:
-                // Keep percentages, recalculate amounts
                 memberSplits[i].owedAmount = total * memberSplits[i].owedPercentage / 100
             }
             
-            // Update paid amounts based on paid by type
             switch paidByType {
             case .single:
                 if memberSplits[i].memberId == paidByMemberId {
@@ -483,7 +537,6 @@ struct AddTransactionView: View {
                 memberSplits[i].paidAmount = equalShare
                 memberSplits[i].paidPercentage = equalPercentage
             case .custom:
-                // Keep percentages, recalculate amounts
                 memberSplits[i].paidAmount = total * memberSplits[i].paidPercentage / 100
             }
         }
@@ -513,7 +566,7 @@ struct AddTransactionView: View {
                     memberSplits[i].owedPercentage = 0
                 }
             case .custom, .payerOnly:
-                break // Keep existing values
+                break
             }
         }
         
@@ -542,7 +595,7 @@ struct AddTransactionView: View {
                 memberSplits[i].paidAmount = equalShare
                 memberSplits[i].paidPercentage = equalPercentage
             case .custom:
-                break // Keep existing values
+                break
             }
         }
         
@@ -568,7 +621,6 @@ struct AddTransactionView: View {
     private func validateSplits() {
         let total = parsedAmount
         
-        // Validate owed amounts for custom split
         if splitType == .custom {
             let totalOwed = memberSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
             if abs(totalOwed - total) > 0.01 {
@@ -580,7 +632,6 @@ struct AddTransactionView: View {
             splitValidationError = nil
         }
         
-        // Validate paid amounts for custom paid by
         if paidByType == .custom {
             let totalPaid = memberSplits.reduce(Decimal(0)) { $0 + $1.paidAmount }
             if abs(totalPaid - total) > 0.01 {
@@ -593,20 +644,18 @@ struct AddTransactionView: View {
         }
     }
     
-    private func submitTransaction() {
-        guard let householdId = authViewModel.currentHousehold?.id else { return }
-        
+    private func saveTransaction() {
         isSubmitting = true
         
         Task {
             do {
-                // Prepare splits for custom types
                 let splitsToSend: [MemberSplit]? = (splitType == .custom || paidByType == .custom || paidByType == .shared || splitType == .equal)
                     ? memberSplits
                     : nil
                 
-                try await transactionViewModel.createTransaction(
-                    householdId: householdId,
+                try await transactionViewModel.updateTransaction(
+                    transactionId: transaction.id,
+                    householdId: transaction.householdId,
                     date: date,
                     description: description.trimmingCharacters(in: .whitespaces),
                     amount: parsedAmount,
@@ -619,13 +668,12 @@ struct AddTransactionView: View {
                     splitMemberId: splitMemberId,
                     excludedFromBudget: excludedFromBudget,
                     notes: notes.isEmpty ? nil : notes,
-                    createdByUserId: authViewModel.currentUser?.id,
                     splits: splitsToSend
                 )
                 
                 await MainActor.run {
                     isSubmitting = false
-                    showSuccess = true
+                    dismiss()
                 }
             } catch {
                 await MainActor.run {
@@ -637,372 +685,42 @@ struct AddTransactionView: View {
         }
     }
     
-    private func resetForm() {
-        amount = ""
-        description = ""
-        date = Date()
-        paidByMemberId = authViewModel.currentMember?.id
-        paidToMemberId = nil
-        categoryId = nil
-        splitType = .equal
-        paidByType = .single
-        splitMemberId = nil
-        notes = ""
-        showNotes = false
-        excludedFromBudget = false
-        showCustomSplitEditor = false
-        showCustomPaidByEditor = false
-        initializeMemberSplits()
-    }
-}
-
-// MARK: - Supporting Views
-
-struct FormField<Content: View>: View {
-    let label: String
-    @ViewBuilder let content: Content
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(Theme.Colors.textSecondary)
-            
-            content
-        }
-    }
-}
-
-struct TransactionTypeButton: View {
-    let type: TransactionType
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: Theme.Spacing.xs) {
-                Image(systemName: type.icon)
-                    .font(.title3)
-                
-                Text(type.displayName)
-                    .font(.caption2)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Theme.Spacing.sm)
-            .background(isSelected ? Theme.Colors.accent : Theme.Colors.backgroundCard)
-            .foregroundStyle(isSelected ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
-        }
-    }
-}
-
-struct MemberSelector: View {
-    let members: [HouseholdMember]
-    @Binding var selectedId: UUID?
-    var excludeId: UUID? = nil
-    
-    private var availableMembers: [HouseholdMember] {
-        members.filter { $0.id != excludeId }
-    }
-    
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Theme.Spacing.sm) {
-                ForEach(availableMembers) { member in
-                    Button {
-                        selectedId = member.id
-                    } label: {
-                        Text(member.displayName)
-                            .font(.subheadline)
-                            .padding(.horizontal, Theme.Spacing.md)
-                            .padding(.vertical, Theme.Spacing.sm)
-                            .background(selectedId == member.id ? Theme.Colors.accent : Theme.Colors.backgroundCard)
-                            .foregroundStyle(selectedId == member.id ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
-                            .clipShape(Capsule())
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct CategorySelector: View {
-    let categories: [Category]
-    @Binding var selectedId: UUID?
-    
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Theme.Spacing.sm) {
-                ForEach(categories) { category in
-                    Button {
-                        selectedId = category.id
-                    } label: {
-                        HStack(spacing: Theme.Spacing.xs) {
-                            if let icon = category.icon {
-                                Text(icon)
-                            }
-                            Text(category.name)
-                                .font(.subheadline)
-                        }
-                        .padding(.horizontal, Theme.Spacing.md)
-                        .padding(.vertical, Theme.Spacing.sm)
-                        .background(selectedId == category.id ? Theme.Colors.accent : Theme.Colors.backgroundCard)
-                        .foregroundStyle(selectedId == category.id ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
-                        .clipShape(Capsule())
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct SplitOptionButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline)
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.vertical, Theme.Spacing.sm)
-                .background(isSelected ? Theme.Colors.accent : Theme.Colors.backgroundCard)
-                .foregroundStyle(isSelected ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
-                .clipShape(Capsule())
-        }
-    }
-}
-
-struct PaidByOptionButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline)
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.vertical, Theme.Spacing.sm)
-                .background(isSelected ? Theme.Colors.accent : Theme.Colors.backgroundCard)
-                .foregroundStyle(isSelected ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
-                .clipShape(Capsule())
-        }
-    }
-}
-
-struct CustomSplitEditor: View {
-    let title: String
-    @Binding var memberSplits: [MemberSplit]
-    let totalAmount: Decimal
-    let editingPaidAmount: Bool // true = editing paid amounts, false = editing owed amounts
-    @Binding var validationError: String?
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundStyle(Theme.Colors.textPrimary)
-            
-            ForEach($memberSplits) { $split in
-                MemberSplitRow(
-                    split: $split,
-                    totalAmount: totalAmount,
-                    editingPaidAmount: editingPaidAmount,
-                    onAmountChanged: { validateTotals() }
-                )
-            }
-            
-            // Total and validation
-            HStack {
-                Text("Total")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                
-                Spacer()
-                
-                let currentTotal = editingPaidAmount
-                    ? memberSplits.reduce(Decimal(0)) { $0 + $1.paidAmount }
-                    : memberSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
-                
-                Text(currentTotal.doubleValue.formattedAsMoney())
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .foregroundStyle(abs(currentTotal - totalAmount) > 0.01 ? Theme.Colors.error : Theme.Colors.success)
-                
-                Text("/ \(totalAmount.doubleValue.formattedAsMoney())")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Colors.textSecondary)
-            }
-            .padding(.top, Theme.Spacing.xs)
-            
-            if let error = validationError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(Theme.Colors.error)
-            }
-        }
-        .padding(Theme.Spacing.md)
-        .background(Theme.Colors.backgroundCard)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
-    }
-    
-    private func validateTotals() {
-        let total = editingPaidAmount
-            ? memberSplits.reduce(Decimal(0)) { $0 + $1.paidAmount }
-            : memberSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
-        
-        if abs(total - totalAmount) > 0.01 {
-            validationError = "Amounts must equal $\(totalAmount.doubleValue.formattedAsMoney(showSign: false))"
-        } else {
-            validationError = nil
-        }
-    }
-}
-
-struct MemberSplitRow: View {
-    @Binding var split: MemberSplit
-    let totalAmount: Decimal
-    let editingPaidAmount: Bool
-    let onAmountChanged: () -> Void
-    
-    @State private var amountText: String = ""
-    @State private var percentageText: String = ""
-    @FocusState private var isAmountFocused: Bool
-    @FocusState private var isPercentageFocused: Bool
-    
-    private var currentAmount: Decimal {
-        editingPaidAmount ? split.paidAmount : split.owedAmount
-    }
-    
-    private var currentPercentage: Decimal {
-        editingPaidAmount ? split.paidPercentage : split.owedPercentage
-    }
-    
-    var body: some View {
-        HStack(spacing: Theme.Spacing.sm) {
-            // Member name
-            Text(split.displayName)
-                .font(.subheadline)
-                .foregroundStyle(Theme.Colors.textPrimary)
-                .frame(minWidth: 60, alignment: .leading)
-            
-            Spacer()
-            
-            // Amount field
-            HStack(spacing: 2) {
-                Text("$")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Colors.textSecondary)
-                
-                TextField("0.00", text: $amountText)
-                    .font(.subheadline)
-                    .keyboardType(.decimalPad)
-                    .frame(width: 60)
-                    .multilineTextAlignment(.trailing)
-                    .focused($isAmountFocused)
-                    .onChange(of: amountText) { _, newValue in
-                        if let value = Decimal(string: newValue), value > 0 {
-                            if editingPaidAmount {
-                                split.paidAmount = value
-                                if totalAmount > 0 {
-                                    split.paidPercentage = (value / totalAmount) * 100
-                                    percentageText = String(format: "%.1f", (split.paidPercentage as NSDecimalNumber).doubleValue)
-                                }
-                            } else {
-                                split.owedAmount = value
-                                if totalAmount > 0 {
-                                    split.owedPercentage = (value / totalAmount) * 100
-                                    percentageText = String(format: "%.1f", (split.owedPercentage as NSDecimalNumber).doubleValue)
-                                }
-                            }
-                            onAmountChanged()
-                        } else if newValue.isEmpty {
-                            if editingPaidAmount {
-                                split.paidAmount = 0
-                                split.paidPercentage = 0
-                            } else {
-                                split.owedAmount = 0
-                                split.owedPercentage = 0
-                            }
-                            percentageText = ""
-                            onAmountChanged()
-                        }
-                    }
-            }
-            .padding(.horizontal, Theme.Spacing.sm)
-            .padding(.vertical, Theme.Spacing.xs)
-            .background(Theme.Colors.backgroundPrimary)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
-            
-            // Percentage field
-            HStack(spacing: 2) {
-                TextField("0", text: $percentageText)
-                    .font(.subheadline)
-                    .keyboardType(.decimalPad)
-                    .frame(width: 40)
-                    .multilineTextAlignment(.trailing)
-                    .focused($isPercentageFocused)
-                    .onChange(of: percentageText) { _, newValue in
-                        if let value = Decimal(string: newValue), value > 0 {
-                            let newAmount = (value / 100) * totalAmount
-                            if editingPaidAmount {
-                                split.paidPercentage = value
-                                split.paidAmount = newAmount
-                                amountText = String(format: "%.2f", (newAmount as NSDecimalNumber).doubleValue)
-                            } else {
-                                split.owedPercentage = value
-                                split.owedAmount = newAmount
-                                amountText = String(format: "%.2f", (newAmount as NSDecimalNumber).doubleValue)
-                            }
-                            onAmountChanged()
-                        } else if newValue.isEmpty {
-                            if editingPaidAmount {
-                                split.paidAmount = 0
-                                split.paidPercentage = 0
-                            } else {
-                                split.owedAmount = 0
-                                split.owedPercentage = 0
-                            }
-                            amountText = ""
-                            onAmountChanged()
-                        }
-                    }
-                
-                Text("%")
-                    .font(.caption)
-                    .foregroundStyle(Theme.Colors.textSecondary)
-            }
-            .padding(.horizontal, Theme.Spacing.sm)
-            .padding(.vertical, Theme.Spacing.xs)
-            .background(Theme.Colors.backgroundPrimary)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
-        }
-        .onAppear {
-            // Start empty if amount is 0, otherwise show current value
-            if currentAmount > 0 {
-                amountText = String(format: "%.2f", (currentAmount as NSDecimalNumber).doubleValue)
-                percentageText = String(format: "%.1f", (currentPercentage as NSDecimalNumber).doubleValue)
-            }
-        }
-        .onChange(of: currentAmount) { _, newValue in
-            // Update text when the model changes externally
-            if newValue > 0 {
-                amountText = String(format: "%.2f", (newValue as NSDecimalNumber).doubleValue)
-                percentageText = String(format: "%.1f", (currentPercentage as NSDecimalNumber).doubleValue)
-            } else if !isAmountFocused && !isPercentageFocused {
-                amountText = ""
-                percentageText = ""
+    private func deleteTransaction() {
+        Task {
+            await transactionViewModel.deleteTransaction(
+                id: transaction.id,
+                householdId: transaction.householdId
+            )
+            await MainActor.run {
+                dismiss()
             }
         }
     }
 }
 
 #Preview {
-    AddTransactionView()
+    // Create a sample transaction for preview
+    let sampleTransaction = try! JSONDecoder().decode(
+        TransactionView.self,
+        from: """
+        {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "household_id": "00000000-0000-0000-0000-000000000002",
+            "date": "2025-12-01",
+            "description": "Groceries",
+            "amount": 150.00,
+            "transaction_type": "expense",
+            "split_type": "equal",
+            "paid_by_type": "single",
+            "excluded_from_budget": false,
+            "created_at": "2025-12-01T12:00:00Z",
+            "updated_at": "2025-12-01T12:00:00Z"
+        }
+        """.data(using: .utf8)!
+    )
+    
+    return EditTransactionView(transaction: sampleTransaction)
         .environment(AuthViewModel())
         .environment(TransactionViewModel())
 }
+

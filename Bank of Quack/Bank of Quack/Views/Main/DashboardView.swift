@@ -4,7 +4,63 @@ struct DashboardView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(TransactionViewModel.self) private var transactionViewModel
     
-    @State private var memberBalance: Decimal = 0
+    @State private var memberBalances: [MemberBalance] = []
+    @State private var allSplits: [UUID: [TransactionSplit]] = [:] // Keyed by transaction ID
+    @State private var isLoadingBalances = false
+    @State private var showBalanceDetails = false
+    
+    private let dataService = DataService()
+    
+    private var currentMemberBalance: Decimal {
+        guard let memberId = authViewModel.currentMember?.id else { return 0 }
+        return memberBalances.first { $0.memberId == memberId }?.balance ?? 0
+    }
+    
+    /// Returns transactions that impact member balances (expenses where paid != owed for at least one member)
+    private var balanceImpactingTransactions: [TransactionView] {
+        transactionViewModel.transactions.filter { transaction in
+            // Only expenses affect balances (income doesn't)
+            guard transaction.transactionType == .expense else { return false }
+            
+            // payer_only never impacts balance (payer pays 100% and owes 100%)
+            if transaction.splitType == .payerOnly {
+                return false
+            }
+            
+            // member_only impacts balance only when payer is different from the split member
+            if transaction.splitType == .memberOnly {
+                // For single payer: check if payer == split member
+                if transaction.paidByType == .single {
+                    if let splitMemberId = transaction.splitMemberId {
+                        return transaction.paidByMemberId != splitMemberId
+                    }
+                    return false
+                }
+                // For shared/custom payment with member_only split, need to check splits
+            }
+            
+            // Equal split with shared payment = everyone pays and owes equally = no impact
+            if transaction.splitType == .equal && transaction.paidByType == .shared {
+                return false
+            }
+            
+            // Equal split with single payer impacts balance (one person paid for everyone)
+            if transaction.splitType == .equal && transaction.paidByType == .single {
+                return authViewModel.members.filter { $0.isApproved }.count > 1
+            }
+            
+            // For custom splits or other combinations, check the actual split data
+            if let splits = allSplits[transaction.id] {
+                // A transaction impacts balance if ANY member has paid != owed
+                return splits.contains { split in
+                    abs(split.paidAmount - split.owedAmount) > 0.001
+                }
+            }
+            
+            // If we don't have split data yet, include it to be safe (will be filtered when data loads)
+            return true
+        }
+    }
     
     var body: some View {
         NavigationStack {
@@ -49,10 +105,11 @@ struct DashboardView: View {
                         .padding(.horizontal, Theme.Spacing.md)
                         
                         // Member Balance (only show if multiple members)
-                        if authViewModel.members.count > 1 {
-                            MemberBalanceCard(
-                                balance: memberBalance,
-                                memberCount: authViewModel.members.count
+                        if authViewModel.members.filter({ $0.isApproved }).count > 1 {
+                            MemberBalanceCardWithInfo(
+                                balance: currentMemberBalance,
+                                memberCount: authViewModel.members.filter { $0.isApproved }.count,
+                                onInfoTapped: { showBalanceDetails = true }
                             )
                             .padding(.horizontal, Theme.Spacing.md)
                         }
@@ -72,6 +129,15 @@ struct DashboardView: View {
                 }
             }
             .navigationBarHidden(true)
+            .sheet(isPresented: $showBalanceDetails) {
+                BalanceDetailsSheet(
+                    memberBalances: memberBalances,
+                    transactions: balanceImpactingTransactions,
+                    transactionSplits: allSplits,
+                    members: authViewModel.members,
+                    currentMemberId: authViewModel.currentMember?.id
+                )
+            }
         }
         .task {
             await refreshData()
@@ -114,44 +180,303 @@ struct DashboardView: View {
     private func refreshData() async {
         guard let householdId = authViewModel.currentHousehold?.id else { return }
         
+        // Fetch transactions
         await transactionViewModel.fetchTransactions(householdId: householdId)
         
-        // Calculate member balance
-        if let memberId = authViewModel.currentMember?.id {
-            memberBalance = calculateMemberBalance(memberId: memberId)
+        // Fetch member balances and all splits from database
+        do {
+            async let balancesTask = dataService.fetchMemberBalances(householdId: householdId)
+            async let splitsTask = dataService.fetchAllSplitsForHousehold(householdId: householdId)
+            
+            let (balances, splits) = try await (balancesTask, splitsTask)
+            memberBalances = balances
+            
+            // Group splits by transaction ID
+            allSplits = Dictionary(grouping: splits, by: { $0.transactionId })
+        } catch {
+            print("Failed to fetch data: \(error)")
         }
     }
+}
+
+// MARK: - Member Balance Card with Info Button
+
+struct MemberBalanceCardWithInfo: View {
+    let balance: Decimal
+    let memberCount: Int
+    let onInfoTapped: () -> Void
     
-    private func calculateMemberBalance(memberId: UUID) -> Decimal {
-        let memberCount = authViewModel.members.count
-        guard memberCount > 0 else { return 0 }
-        
-        var totalPaid: Decimal = 0
-        var totalShare: Decimal = 0
-        
-        for transaction in transactionViewModel.transactions {
-            guard transaction.transactionType == .expense else { continue }
-            
-            // What this member paid
-            if transaction.paidByMemberId == memberId {
-                totalPaid += transaction.amount
+    private var isPositive: Bool {
+        balance >= 0
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            HStack {
+                Text("Your Balance")
+                    .font(.headline)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Spacer()
+                
+                Button(action: onInfoTapped) {
+                    Image(systemName: "info.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(Theme.Colors.accent)
+                }
             }
             
-            // What this member owes (their share)
-            switch transaction.splitType {
-            case .equal:
-                totalShare += transaction.amount / Decimal(memberCount)
-            case .payerOnly:
-                if transaction.paidByMemberId == memberId {
-                    totalShare += transaction.amount
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.xs) {
+                Text(isPositive ? "+\(abs(balance.doubleValue).formattedAsMoney())" : "-\(abs(balance.doubleValue).formattedAsMoney())")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+                
+                Text(isPositive ? "owed to you" : "you owe")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+            
+            Text("Between \(memberCount) household members")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textMuted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+}
+
+// MARK: - Balance Details Sheet
+
+struct BalanceDetailsSheet: View {
+    let memberBalances: [MemberBalance]
+    let transactions: [TransactionView]
+    let transactionSplits: [UUID: [TransactionSplit]]
+    let members: [HouseholdMember]
+    let currentMemberId: UUID?
+    
+    @Environment(\.dismiss) private var dismiss
+    
+    private func memberName(for memberId: UUID) -> String {
+        members.first { $0.id == memberId }?.displayName ?? "Unknown"
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.lg) {
+                        // Household Balances Section
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Label("Household Balances", systemImage: "person.2.fill")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            if memberBalances.isEmpty {
+                                Text("No balance data available")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.vertical, Theme.Spacing.md)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(memberBalances, id: \.memberId) { balance in
+                                        MemberBalanceRow(
+                                            balance: balance,
+                                            isCurrentMember: balance.memberId == currentMemberId
+                                        )
+                                        
+                                        if balance.memberId != memberBalances.last?.memberId {
+                                            Divider()
+                                                .background(Theme.Colors.textMuted.opacity(0.3))
+                                        }
+                                    }
+                                }
+                                .cardStyle()
+                            }
+                        }
+                        
+                        // Explanation
+                        HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                            Image(systemName: "lightbulb.fill")
+                                .foregroundStyle(Theme.Colors.warning)
+                            
+                            Text("A positive balance means you've paid more than your share. Negative means you owe others.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                        .padding(Theme.Spacing.md)
+                        .background(Theme.Colors.warning.opacity(0.1))
+                        .cornerRadius(Theme.CornerRadius.md)
+                        
+                        // Transactions that affected balances
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Label("Transactions Affecting Balance", systemImage: "arrow.left.arrow.right")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            if transactions.isEmpty {
+                                Text("No transactions have affected balances yet")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.vertical, Theme.Spacing.md)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(transactions.prefix(20)) { transaction in
+                                        BalanceTransactionRow(
+                                            transaction: transaction,
+                                            splits: transactionSplits[transaction.id] ?? [],
+                                            memberName: memberName
+                                        )
+                                        
+                                        if transaction.id != transactions.prefix(20).last?.id {
+                                            Divider()
+                                                .background(Theme.Colors.textMuted.opacity(0.3))
+                                        }
+                                    }
+                                    
+                                    if transactions.count > 20 {
+                                        Text("And \(transactions.count - 20) more transactions...")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.textMuted)
+                                            .padding(.top, Theme.Spacing.sm)
+                                    }
+                                }
+                                .cardStyle()
+                            }
+                        }
+                        
+                        Spacer(minLength: 40)
+                    }
+                    .padding(Theme.Spacing.md)
                 }
-            case .custom:
-                // Would need to fetch splits - for now assume equal
-                totalShare += transaction.amount / Decimal(memberCount)
+            }
+            .navigationTitle("Balance Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
             }
         }
-        
-        return totalPaid - totalShare
+    }
+}
+
+// MARK: - Member Balance Row
+
+struct MemberBalanceRow: View {
+    let balance: MemberBalance
+    var isCurrentMember: Bool = false
+    
+    private var isPositive: Bool {
+        balance.balance >= 0
+    }
+    
+    var body: some View {
+        HStack {
+            HStack(spacing: Theme.Spacing.xs) {
+                Text(balance.displayName)
+                    .font(.subheadline)
+                    .fontWeight(isCurrentMember ? .semibold : .regular)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                if isCurrentMember {
+                    Text("(You)")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            
+            Spacer()
+            
+            HStack(spacing: Theme.Spacing.xs) {
+                Text(isPositive ? "+\(abs(balance.balance.doubleValue).formattedAsMoney())" : "-\(abs(balance.balance.doubleValue).formattedAsMoney())")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+                
+                Text(isPositive ? "owed" : "owes")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+        }
+        .padding(.vertical, Theme.Spacing.sm)
+        .background(isCurrentMember ? Theme.Colors.accent.opacity(0.05) : Color.clear)
+    }
+}
+
+// MARK: - Balance Transaction Row
+
+struct BalanceTransactionRow: View {
+    let transaction: TransactionView
+    let splits: [TransactionSplit]
+    let memberName: (UUID) -> String
+    
+    /// Each member's net balance impact (paid - owed)
+    private var balanceImpacts: [(name: String, net: Decimal)] {
+        splits.compactMap { split in
+            let net = split.paidAmount - split.owedAmount
+            // Only include if there's a meaningful impact
+            if abs(net) > 0.001 {
+                return (memberName(split.memberId), net)
+            }
+            return nil
+        }.sorted { abs($0.net) > abs($1.net) } // Sort by largest impact first
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            // Transaction header
+            HStack {
+                Text(transaction.description)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .lineLimit(1)
+                
+                Spacer()
+                
+                Text(transaction.amount.doubleValue.formattedAsMoney())
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.expense)
+            }
+            
+            // Date
+            Text(transaction.date.formatted(date: .abbreviated, time: .omitted))
+                .font(.caption2)
+                .foregroundStyle(Theme.Colors.textMuted)
+            
+            // Balance impact details - who owes/is owed what
+            if !balanceImpacts.isEmpty {
+                HStack(spacing: Theme.Spacing.md) {
+                    ForEach(balanceImpacts, id: \.name) { impact in
+                        HStack(spacing: 2) {
+                            Text(impact.name)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            Text(impact.net > 0 ? "+\(impact.net.doubleValue.formattedAsMoney())" : "-\(abs(impact.net).doubleValue.formattedAsMoney())")
+                                .fontWeight(.medium)
+                                .foregroundStyle(impact.net > 0 ? Theme.Colors.success : Theme.Colors.error)
+                        }
+                        .font(.caption)
+                    }
+                }
+                .padding(.top, 2)
+            } else if splits.isEmpty {
+                // Fallback for when we don't have split data
+                if let paidByName = transaction.paidByName {
+                    Text("Paid by \(paidByName)")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+            }
+        }
+        .padding(.vertical, Theme.Spacing.sm)
     }
 }
 
@@ -160,4 +485,3 @@ struct DashboardView: View {
         .environment(AuthViewModel())
         .environment(TransactionViewModel())
 }
-
