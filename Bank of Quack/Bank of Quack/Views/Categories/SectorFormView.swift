@@ -166,9 +166,6 @@ struct SectorFormView: View {
                     .padding(.top, Theme.Spacing.lg)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .onTapGesture {
-                    isNameFocused = false
-                }
             }
             .navigationTitle(mode.title)
             .navigationBarTitleDisplayMode(.inline)

@@ -132,6 +132,15 @@ struct MemberBalance: Codable, Sendable {
         case balance
     }
     
+    init(householdId: UUID, memberId: UUID, displayName: String, totalPaid: Decimal, totalShare: Decimal, balance: Decimal) {
+        self.householdId = householdId
+        self.memberId = memberId
+        self.displayName = displayName
+        self.totalPaid = totalPaid
+        self.totalShare = totalShare
+        self.balance = balance
+    }
+    
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         householdId = try container.decode(UUID.self, forKey: .householdId)

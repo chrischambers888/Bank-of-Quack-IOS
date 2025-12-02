@@ -8,6 +8,10 @@ struct DashboardView: View {
     @State private var allSplits: [UUID: [TransactionSplit]] = [:] // Keyed by transaction ID
     @State private var isLoadingBalances = false
     @State private var showBalanceDetails = false
+    @State private var showFilterSheet = false
+    
+    // Filter state
+    @State private var filterManager = DashboardFilterManager()
     
     // Sector breakdown data
     @State private var sectors: [Sector] = []
@@ -21,6 +25,97 @@ struct DashboardView: View {
         return memberBalances.first { $0.memberId == memberId }?.balance ?? 0
     }
     
+    /// Filtered member balances calculated from filtered transactions
+    private var filteredMemberBalances: [MemberBalance] {
+        var balancesByMember: [UUID: (paid: Decimal, owed: Decimal, name: String)] = [:]
+        
+        // Initialize all members
+        for member in authViewModel.members {
+            balancesByMember[member.id] = (paid: 0, owed: 0, name: member.displayName)
+        }
+        
+        // Process filtered transactions
+        for transaction in filteredTransactions {
+            switch transaction.transactionType {
+            case .expense:
+                // Use splits to determine paid and owed amounts
+                if let splits = allSplits[transaction.id] {
+                    for split in splits {
+                        if var memberData = balancesByMember[split.memberId] {
+                            memberData.paid += split.paidAmount
+                            memberData.owed += split.owedAmount
+                            balancesByMember[split.memberId] = memberData
+                        }
+                    }
+                }
+                
+            case .settlement:
+                // Settlement: payer's balance increases, recipient's decreases
+                if let payerId = transaction.paidByMemberId,
+                   let recipientId = transaction.paidToMemberId {
+                    if var payerData = balancesByMember[payerId] {
+                        payerData.paid += transaction.amount
+                        balancesByMember[payerId] = payerData
+                    }
+                    if var recipientData = balancesByMember[recipientId] {
+                        recipientData.owed -= transaction.amount // Reduces what they're owed
+                        balancesByMember[recipientId] = recipientData
+                    }
+                }
+                
+            case .reimbursement:
+                // Linked reimbursements affect balances inversely
+                if let linkedExpenseId = transaction.reimbursesTransactionId,
+                   let linkedSplits = allSplits[linkedExpenseId],
+                   let recipientId = transaction.paidByMemberId {
+                    let reimbursementAmount = transaction.amount
+                    
+                    for split in linkedSplits {
+                        guard let owedPct = split.owedPercentage else { continue }
+                        let owedPercentage = owedPct / 100
+                        let owedReduction = reimbursementAmount * owedPercentage
+                        
+                        if var memberData = balancesByMember[split.memberId] {
+                            if split.memberId == recipientId {
+                                // Recipient: paid goes down, owed goes down
+                                memberData.paid -= reimbursementAmount
+                                memberData.owed -= owedReduction
+                            } else {
+                                // Others: only owed goes down
+                                memberData.owed -= owedReduction
+                            }
+                            balancesByMember[split.memberId] = memberData
+                        }
+                    }
+                }
+                
+            case .income:
+                // Income doesn't affect member balances
+                break
+            }
+        }
+        
+        // Convert to MemberBalance array
+        guard let householdId = authViewModel.currentHousehold?.id else { return [] }
+        
+        return balancesByMember.map { memberId, data in
+            MemberBalance(
+                householdId: householdId,
+                memberId: memberId,
+                displayName: data.name,
+                totalPaid: data.paid,
+                totalShare: data.owed,
+                balance: data.paid - data.owed
+            )
+        }.sorted { $0.displayName < $1.displayName }
+    }
+    
+    /// Current member's filtered balance
+    private var filteredCurrentMemberBalance: Decimal {
+        guard let memberId = authViewModel.currentMember?.id else { return 0 }
+        return filteredMemberBalances.first { $0.memberId == memberId }?.balance ?? 0
+    }
+    
     /// Member lookup for expense breakdown (includes inactive members for historical data)
     private var memberLookup: [UUID: HouseholdMember] {
         Dictionary(uniqueKeysWithValues: authViewModel.members.map { ($0.id, $0) })
@@ -31,10 +126,185 @@ struct DashboardView: View {
         authViewModel.members.filter { $0.isActive }
     }
     
-    /// Builds the sector expense breakdown for the donut chart
+    /// Count of members with non-zero balances (for display in balance card)
+    private var membersWithNonZeroBalance: Int {
+        filteredMemberBalances.filter { abs($0.balance.doubleValue) >= 0.01 }.count
+    }
+    
+    /// Get all category IDs within selected sectors
+    private var categoriesInSelectedSectors: Set<UUID> {
+        guard !filterManager.filter.selectedSectorIds.isEmpty else { return [] }
+        var categoryIds = Set<UUID>()
+        for sectorId in filterManager.filter.selectedSectorIds {
+            if let cats = sectorCategories[sectorId] {
+                categoryIds.formUnion(cats)
+            }
+        }
+        return categoryIds
+    }
+    
+    /// Filtered transactions based on current filter state
+    private var filteredTransactions: [TransactionView] {
+        let filter = filterManager.filter
+        
+        return transactionViewModel.transactions.filter { transaction in
+            // 1. Date filter
+            if let dateRange = filter.dateRange {
+                guard transaction.date >= dateRange.start && transaction.date <= dateRange.end else {
+                    return false
+                }
+            }
+            
+            // 2. Transaction type filter
+            guard filter.selectedTransactionTypes.contains(transaction.transactionType.rawValue) else {
+                return false
+            }
+            
+            // 3. Category/Sector filter (only applies to transactions with categories)
+            if !filter.selectedCategoryIds.isEmpty || !filter.selectedSectorIds.isEmpty {
+                // Get all valid category IDs (directly selected + those in selected sectors)
+                var validCategoryIds = filter.selectedCategoryIds
+                validCategoryIds.formUnion(categoriesInSelectedSectors)
+                
+                // If we have category filters, check the transaction's category
+                if !validCategoryIds.isEmpty {
+                    // Transactions without categories don't match category filters
+                    guard let categoryId = transaction.categoryId,
+                          validCategoryIds.contains(categoryId) else {
+                        return false
+                    }
+                }
+            }
+            
+            // 4. Member filter
+            if filter.sharedOnly && filter.selectedMemberIds.isEmpty {
+                // Shared only mode: show only expenses that are shared between multiple people
+                guard transactionIsShared(transaction) else { return false }
+            } else if !filter.selectedMemberIds.isEmpty {
+                let matchesMember = transactionMatchesMemberFilter(transaction, filter: filter)
+                guard matchesMember else { return false }
+            }
+            
+            // 5. Text search
+            if !filter.searchText.isEmpty {
+                let searchLower = filter.searchText.lowercased()
+                let descriptionMatch = transaction.description.lowercased().contains(searchLower)
+                let notesMatch = transaction.notes?.lowercased().contains(searchLower) ?? false
+                guard descriptionMatch || notesMatch else { return false }
+            }
+            
+            return true
+        }
+    }
+    
+    /// Check if a transaction is shared between multiple people
+    private func transactionIsShared(_ transaction: TransactionView) -> Bool {
+        // Only expenses can be shared
+        guard transaction.transactionType == .expense else { return false }
+        
+        // Check if the expense has splits with more than one person owing money
+        if let splits = allSplits[transaction.id] {
+            let membersWithOwedAmount = splits.filter { $0.owedAmount > 0 }.count
+            return membersWithOwedAmount > 1
+        }
+        
+        // Fallback based on split type
+        switch transaction.splitType {
+        case .equal:
+            // Equal split among all members is shared if there are multiple active members
+            return authViewModel.members.filter { $0.isActive }.count > 1
+        case .custom:
+            // Custom splits are assumed shared (would need splits data to confirm)
+            return true
+        case .memberOnly, .payerOnly:
+            // Single person expenses are not shared
+            return false
+        }
+    }
+    
+    /// Check if a transaction matches the member filter
+    private func transactionMatchesMemberFilter(_ transaction: TransactionView, filter: DashboardFilter) -> Bool {
+        let selectedMembers = filter.selectedMemberIds
+        
+        switch transaction.transactionType {
+        case .expense:
+            if filter.includeShared {
+                // Include if any selected member has an owed amount in splits
+                if let splits = allSplits[transaction.id] {
+                    return splits.contains { split in
+                        split.owedAmount > 0 && selectedMembers.contains(split.memberId)
+                    }
+                }
+                // Fallback: check if expense is for a selected member
+                if let splitMemberId = transaction.splitMemberId {
+                    return selectedMembers.contains(splitMemberId)
+                }
+                // For equal splits, all members are involved
+                if transaction.splitType == .equal {
+                    return true
+                }
+                return selectedMembers.contains(transaction.paidByMemberId ?? UUID())
+            } else {
+                // Only show if expense is for a single selected member (not shared)
+                guard transaction.splitType == .memberOnly,
+                      let splitMemberId = transaction.splitMemberId else {
+                    return false
+                }
+                return selectedMembers.contains(splitMemberId)
+            }
+            
+        case .income:
+            // Income: check received by (paidByMemberId stores the recipient)
+            if let receivedBy = transaction.paidByMemberId {
+                return selectedMembers.contains(receivedBy)
+            }
+            return false
+            
+        case .settlement:
+            // Settlement: show if paid by OR paid to is selected
+            let paidByMatch = transaction.paidByMemberId.map { selectedMembers.contains($0) } ?? false
+            let paidToMatch = transaction.paidToMemberId.map { selectedMembers.contains($0) } ?? false
+            return paidByMatch || paidToMatch
+            
+        case .reimbursement:
+            // Reimbursement: check received by
+            if let receivedBy = transaction.paidByMemberId {
+                return selectedMembers.contains(receivedBy)
+            }
+            return false
+        }
+    }
+    
+    /// Filtered totals for expenses
+    private var filteredTotalExpenses: Decimal {
+        // Build reimbursement map for filtered transactions
+        var reimbursementsByExpense: [UUID: Decimal] = [:]
+        for transaction in filteredTransactions {
+            if transaction.transactionType == .reimbursement,
+               let linkedExpenseId = transaction.reimbursesTransactionId {
+                reimbursementsByExpense[linkedExpenseId, default: 0] += transaction.amount
+            }
+        }
+        
+        var total: Decimal = 0
+        for transaction in filteredTransactions where transaction.transactionType == .expense {
+            let reimbursedAmount = reimbursementsByExpense[transaction.id] ?? 0
+            total += max(transaction.amount - reimbursedAmount, 0)
+        }
+        return total
+    }
+    
+    /// Filtered totals for income
+    private var filteredTotalIncome: Decimal {
+        filteredTransactions
+            .filter { $0.transactionType == .income || ($0.transactionType == .reimbursement && $0.reimbursesTransactionId == nil) }
+            .reduce(Decimal(0)) { $0 + $1.amount }
+    }
+    
+    /// Builds the sector expense breakdown for the donut chart (uses filtered transactions)
     private var sectorExpenses: [SectorExpense] {
-        // Get only expense transactions
-        let expenses = transactionViewModel.transactions.filter { $0.transactionType == .expense }
+        // Get only expense transactions from filtered set
+        let expenses = filteredTransactions.filter { $0.transactionType == .expense }
         
         // Group expenses by categoryId
         var expensesByCategory: [UUID: Decimal] = [:]
@@ -213,9 +483,9 @@ struct DashboardView: View {
         }.sorted { $0.amount > $1.amount }
     }
     
-    /// Returns transactions that impact member balances (expenses where paid != owed, settlements, and linked reimbursements)
+    /// Returns filtered transactions that impact member balances (expenses where paid != owed, settlements, and linked reimbursements)
     private var balanceImpactingTransactions: [TransactionView] {
-        transactionViewModel.transactions.filter { transaction in
+        filteredTransactions.filter { transaction in
             // Settlements always impact balances - they transfer money between members
             if transaction.transactionType == .settlement {
                 return true
@@ -287,42 +557,42 @@ struct DashboardView: View {
                         headerSection
                             .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Balance Cards
+                        // Balance Cards (using filtered totals)
                         HStack(spacing: Theme.Spacing.md) {
                             BalanceCard(
                                 title: "Total Expenses",
-                                amount: transactionViewModel.totalExpenses,
+                                amount: filteredTotalExpenses,
                                 icon: "arrow.down.circle.fill",
                                 color: Theme.Colors.expense
                             )
                             
                             BalanceCard(
                                 title: "Total Income",
-                                amount: transactionViewModel.totalIncome,
+                                amount: filteredTotalIncome,
                                 icon: "arrow.up.circle.fill",
                                 color: Theme.Colors.income
                             )
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Net Balance
+                        // Net Balance (using filtered totals)
                         NetBalanceCard(
-                            income: transactionViewModel.totalIncome,
-                            expenses: transactionViewModel.totalExpenses
+                            income: filteredTotalIncome,
+                            expenses: filteredTotalExpenses
                         )
                         .padding(.horizontal, Theme.Spacing.md)
                         
                         // Member Balance (only show if multiple members have balance history)
                         if authViewModel.members.count > 1 {
                             MemberBalanceCardWithInfo(
-                                balance: currentMemberBalance,
-                                memberCount: authViewModel.members.count,
+                                balance: filteredCurrentMemberBalance,
+                                memberCount: membersWithNonZeroBalance,
                                 onInfoTapped: { showBalanceDetails = true }
                             )
                             .padding(.horizontal, Theme.Spacing.md)
                         }
                         
-                        // Expense Breakdown by Sector
+                        // Expense Breakdown by Sector (using filtered data)
                         if sectorExpenses.isEmpty {
                             ExpenseDonutEmptyState()
                                 .padding(.horizontal, Theme.Spacing.md)
@@ -335,7 +605,7 @@ struct DashboardView: View {
                                 
                                 ExpenseDonutChart(
                                     sectors: sectorExpenses,
-                                    totalExpenses: transactionViewModel.totalExpenses
+                                    totalExpenses: filteredTotalExpenses
                                 )
                                 .padding(.horizontal, Theme.Spacing.md)
                             }
@@ -352,11 +622,20 @@ struct DashboardView: View {
             .navigationBarHidden(true)
             .sheet(isPresented: $showBalanceDetails) {
                 BalanceDetailsSheet(
-                    memberBalances: memberBalances,
+                    memberBalances: filteredMemberBalances,
                     transactions: balanceImpactingTransactions,
                     transactionSplits: allSplits,
                     members: authViewModel.members,
                     currentMemberId: authViewModel.currentMember?.id
+                )
+            }
+            .sheet(isPresented: $showFilterSheet) {
+                DashboardFilterSheet(
+                    filter: $filterManager.filter,
+                    members: authViewModel.members,
+                    sectors: sectors,
+                    categories: categories,
+                    sectorCategories: sectorCategories
                 )
             }
         }
@@ -373,32 +652,60 @@ struct DashboardView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(Theme.Colors.textPrimary)
                 
-                Text(authViewModel.currentHousehold?.name ?? "Your Household")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.Colors.textSecondary)
+                // Show filter summary or household name
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(authViewModel.currentHousehold?.name ?? "Your Household")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    
+                    if filterManager.filter.isFiltered {
+                        Text(filterManager.filter.summary)
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.accent)
+                            .lineLimit(2)
+                    } else {
+                        Text("Showing \(filterManager.filter.datePreset.displayName.lowercased())")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                }
             }
             
             Spacer()
             
-            // Avatar
-            ZStack {
-                Circle()
-                    .fill(authViewModel.currentMember?.swiftUIColor ?? Theme.Colors.accent)
-                    .frame(width: 44, height: 44)
-                    .overlay(
+            // Filter Button
+            Button {
+                showFilterSheet = true
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    ZStack {
                         Circle()
-                            .stroke(Theme.Colors.accent, lineWidth: 2)
-                    )
-                
-                if let emoji = authViewModel.currentMember?.avatarUrl, !emoji.isEmpty {
-                    Text(emoji)
-                        .font(.system(size: 24))
-                } else {
-                    Text(authViewModel.currentMember?.initials ?? "?")
-                        .font(.headline)
-                        .foregroundStyle(Theme.Colors.textInverse)
+                            .fill(filterManager.filter.isFiltered ? Theme.Colors.accent : Theme.Colors.backgroundCard)
+                            .frame(width: 44, height: 44)
+                            .overlay(
+                                Circle()
+                                    .stroke(filterManager.filter.isFiltered ? Theme.Colors.accent : Theme.Colors.borderDefault, lineWidth: 2)
+                            )
+                        
+                        Image(systemName: filterManager.filter.isFiltered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(filterManager.filter.isFiltered ? Theme.Colors.textInverse : Theme.Colors.textPrimary)
+                    }
+                    
+                    // Badge showing active filter count
+                    if filterManager.filter.activeFilterCount > 0 {
+                        Text("\(filterManager.filter.activeFilterCount)")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundStyle(Theme.Colors.textInverse)
+                            .frame(width: 18, height: 18)
+                            .background(Theme.Colors.error)
+                            .clipShape(Circle())
+                            .offset(x: 4, y: -4)
+                    }
                 }
             }
+            .buttonStyle(.plain)
         }
         .padding(.top, Theme.Spacing.lg)
     }
@@ -516,6 +823,39 @@ struct BalanceDetailsSheet: View {
         members.first { $0.id == memberId }
     }
     
+    /// Sorted and filtered member balances:
+    /// - Hide inactive members with zero balance
+    /// - Sort inactive members to the bottom
+    /// - Sort by name within active/inactive groups
+    private var sortedMemberBalances: [MemberBalance] {
+        memberBalances
+            .filter { balance in
+                let memberInfo = member(for: balance.memberId)
+                let isInactive = memberInfo?.isInactive ?? false
+                let hasZeroBalance = abs(balance.balance.doubleValue) < 0.01
+                
+                // Hide inactive members with zero balance
+                if isInactive && hasZeroBalance {
+                    return false
+                }
+                return true
+            }
+            .sorted { balance1, balance2 in
+                let member1 = member(for: balance1.memberId)
+                let member2 = member(for: balance2.memberId)
+                let isInactive1 = member1?.isInactive ?? false
+                let isInactive2 = member2?.isInactive ?? false
+                
+                // Sort inactive members to the bottom
+                if isInactive1 != isInactive2 {
+                    return !isInactive1 // Active members come first
+                }
+                
+                // Within same status, sort by name
+                return balance1.displayName < balance2.displayName
+            }
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -530,21 +870,21 @@ struct BalanceDetailsSheet: View {
                                 .font(.headline)
                                 .foregroundStyle(Theme.Colors.textPrimary)
                             
-                            if memberBalances.isEmpty {
+                            if sortedMemberBalances.isEmpty {
                                 Text("No balance data available")
                                     .font(.subheadline)
                                     .foregroundStyle(Theme.Colors.textMuted)
                                     .padding(.vertical, Theme.Spacing.md)
                             } else {
                                 VStack(spacing: 0) {
-                                    ForEach(memberBalances, id: \.memberId) { balance in
+                                    ForEach(sortedMemberBalances, id: \.memberId) { balance in
                                         MemberBalanceRow(
                                             balance: balance,
                                             isCurrentMember: balance.memberId == currentMemberId,
                                             isInactive: member(for: balance.memberId)?.isInactive ?? false
                                         )
                                         
-                                        if balance.memberId != memberBalances.last?.memberId {
+                                        if balance.memberId != sortedMemberBalances.last?.memberId {
                                             Divider()
                                                 .background(Theme.Colors.textMuted.opacity(0.3))
                                         }
@@ -707,6 +1047,8 @@ struct BalanceTransactionRow: View {
     let allSplits: [UUID: [TransactionSplit]] // All splits, keyed by transaction ID
     let memberName: (UUID) -> String
     
+    @State private var isExpanded = false
+    
     /// Each member's net balance impact (paid - owed) for expenses
     private var balanceImpacts: [(name: String, net: Decimal)] {
         splits.compactMap { split in
@@ -769,6 +1111,42 @@ struct BalanceTransactionRow: View {
         return Theme.Colors.expense
     }
     
+    /// Summary text for collapsed state
+    private var collapsedSummary: String {
+        if isSettlement {
+            if let paidByName = transaction.paidByName, let paidToName = transaction.paidToName {
+                return "\(paidByName) → \(paidToName)"
+            }
+            return "Settlement"
+        } else if isReimbursement {
+            let count = reimbursementBalanceImpacts.count
+            if count == 0, let receivedByName = transaction.paidByName {
+                return "Received by \(receivedByName)"
+            }
+            return "\(count) member\(count == 1 ? "" : "s") affected"
+        } else {
+            let count = balanceImpacts.count
+            if count == 0 {
+                if let paidByName = transaction.paidByName {
+                    return "Paid by \(paidByName)"
+                }
+                return ""
+            }
+            return "\(count) member\(count == 1 ? "" : "s") affected"
+        }
+    }
+    
+    /// Whether this row has expandable details
+    private var hasExpandableDetails: Bool {
+        if isSettlement {
+            return transaction.paidByName != nil && transaction.paidToName != nil
+        } else if isReimbursement {
+            return !reimbursementBalanceImpacts.isEmpty
+        } else {
+            return !balanceImpacts.isEmpty
+        }
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
             // Transaction header
@@ -803,88 +1181,109 @@ struct BalanceTransactionRow: View {
                 .font(.caption2)
                 .foregroundStyle(Theme.Colors.textMuted)
             
-            // Settlement details - show who paid whom
-            if isSettlement {
-                if let paidByName = transaction.paidByName, let paidToName = transaction.paidToName {
+            // Expandable summary row
+            if hasExpandableDetails {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
                     HStack(spacing: Theme.Spacing.xs) {
-                        Text(paidByName)
-                            .foregroundStyle(Theme.Colors.textSecondary)
-                        Image(systemName: "arrow.right")
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .font(.caption2)
                             .foregroundStyle(Theme.Colors.textMuted)
-                        Text(paidToName)
+                            .frame(width: 10)
+                        
+                        Text(collapsedSummary)
+                            .font(.caption)
                             .foregroundStyle(Theme.Colors.textSecondary)
                         
                         Spacer()
-                        
-                        // Show impact on each party
-                        HStack(spacing: Theme.Spacing.sm) {
-                            Text("\(paidByName) +\(transaction.amount.doubleValue.formattedAsMoney())")
-                                .foregroundStyle(Theme.Colors.success)
-                            Text("\(paidToName) -\(transaction.amount.doubleValue.formattedAsMoney())")
-                                .foregroundStyle(Theme.Colors.error)
-                        }
-                    }
-                    .font(.caption)
-                    .padding(.top, 2)
-                }
-            }
-            // Reimbursement details - show balance impact for each member
-            else if isReimbursement {
-                if !reimbursementBalanceImpacts.isEmpty {
-                    VStack(alignment: .leading, spacing: 2) {
-                        if let receivedByName = transaction.paidByName {
-                            Text("Received by \(receivedByName)")
-                                .font(.caption2)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                        }
-                        HStack(spacing: Theme.Spacing.md) {
-                            ForEach(reimbursementBalanceImpacts, id: \.name) { impact in
-                                HStack(spacing: 2) {
-                                    Text(impact.name)
-                                        .foregroundStyle(Theme.Colors.textSecondary)
-                                    Text(impact.net > 0 ? "+\(impact.net.doubleValue.formattedAsMoney())" : "\(impact.net.doubleValue.formattedAsMoney())")
-                                        .fontWeight(.medium)
-                                        .foregroundStyle(impact.net > 0 ? Theme.Colors.success : Theme.Colors.error)
-                                }
-                                .font(.caption)
-                            }
-                        }
-                    }
-                    .padding(.top, 2)
-                } else if let receivedByName = transaction.paidByName {
-                    // Fallback if we don't have linked expense splits
-                    Text("Received by \(receivedByName)")
-                        .font(.caption)
-                        .foregroundStyle(Theme.Colors.textMuted)
-                        .padding(.top, 2)
-                }
-            }
-            // Balance impact details for expenses - who owes/is owed what
-            else if !balanceImpacts.isEmpty {
-                HStack(spacing: Theme.Spacing.md) {
-                    ForEach(balanceImpacts, id: \.name) { impact in
-                        HStack(spacing: 2) {
-                            Text(impact.name)
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                            Text(impact.net > 0 ? "+\(impact.net.doubleValue.formattedAsMoney())" : "-\(abs(impact.net).doubleValue.formattedAsMoney())")
-                                .fontWeight(.medium)
-                                .foregroundStyle(impact.net > 0 ? Theme.Colors.success : Theme.Colors.error)
-                        }
-                        .font(.caption)
                     }
                 }
+                .buttonStyle(.plain)
                 .padding(.top, 2)
-            } else if splits.isEmpty {
-                // Fallback for when we don't have split data
-                if let paidByName = transaction.paidByName {
-                    Text("Paid by \(paidByName)")
-                        .font(.caption)
-                        .foregroundStyle(Theme.Colors.textMuted)
+                
+                // Expanded details
+                if isExpanded {
+                    expandedDetailsView
+                        .padding(.leading, 18)
+                        .padding(.top, 4)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
+            } else if !collapsedSummary.isEmpty {
+                // Non-expandable summary (e.g., no split data)
+                Text(collapsedSummary)
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textMuted)
+                    .padding(.top, 2)
             }
         }
         .padding(.vertical, Theme.Spacing.sm)
+    }
+    
+    @ViewBuilder
+    private var expandedDetailsView: some View {
+        if isSettlement {
+            // Settlement: show who paid whom with impacts
+            if let paidByName = transaction.paidByName, let paidToName = transaction.paidToName {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(paidByName)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        Spacer()
+                        Text("+\(transaction.amount.doubleValue.formattedAsMoney())")
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.Colors.success)
+                    }
+                    HStack {
+                        Text(paidToName)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        Spacer()
+                        Text("-\(transaction.amount.doubleValue.formattedAsMoney())")
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.Colors.error)
+                    }
+                }
+                .font(.caption)
+            }
+        } else if isReimbursement {
+            // Reimbursement: show balance impact for each member
+            VStack(alignment: .leading, spacing: 6) {
+                if let receivedByName = transaction.paidByName {
+                    Text("Received by \(receivedByName)")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                        .padding(.bottom, 2)
+                }
+                ForEach(reimbursementBalanceImpacts, id: \.name) { impact in
+                    HStack {
+                        Text(impact.name)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        Spacer()
+                        Text(impact.net > 0 ? "+\(impact.net.doubleValue.formattedAsMoney())" : "\(impact.net.doubleValue.formattedAsMoney())")
+                            .fontWeight(.medium)
+                            .foregroundStyle(impact.net > 0 ? Theme.Colors.success : Theme.Colors.error)
+                    }
+                    .font(.caption)
+                }
+            }
+        } else {
+            // Expense: show balance impact for each member
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(balanceImpacts, id: \.name) { impact in
+                    HStack {
+                        Text(impact.name)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        Spacer()
+                        Text(impact.net > 0 ? "+\(impact.net.doubleValue.formattedAsMoney())" : "-\(abs(impact.net).doubleValue.formattedAsMoney())")
+                            .fontWeight(.medium)
+                            .foregroundStyle(impact.net > 0 ? Theme.Colors.success : Theme.Colors.error)
+                    }
+                    .font(.caption)
+                }
+            }
+        }
     }
 }
 

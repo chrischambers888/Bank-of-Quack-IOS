@@ -121,9 +121,6 @@ struct EditTransactionView: View {
             ZStack {
                 Theme.Colors.backgroundPrimary
                     .ignoresSafeArea()
-                    .onTapGesture {
-                        focusedField = nil
-                    }
                 
                 ScrollView {
                     VStack(spacing: Theme.Spacing.lg) {
@@ -166,6 +163,10 @@ struct EditTransactionView: View {
                                     }
                             }
                             .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                focusedField = .amount
+                            }
                         }
                         .padding(.vertical, Theme.Spacing.md)
                         
@@ -408,6 +409,15 @@ struct EditTransactionView: View {
         .task {
             // Load existing splits if available
             await loadExistingSplits()
+        }
+        .onChange(of: approvedMembers.map { $0.id }) { _, newMemberIds in
+            // Re-initialize splits when active members change (e.g., member becomes inactive)
+            let currentMemberIds = Set(memberSplits.map { $0.memberId })
+            let newMemberIdSet = Set(newMemberIds)
+            if currentMemberIds != newMemberIdSet {
+                initializeMemberSplits()
+                updateMemberSplitsForAmount()
+            }
         }
         .alert("Error", isPresented: $showError) {
             Button("OK") { }

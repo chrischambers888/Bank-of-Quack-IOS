@@ -147,9 +147,6 @@ struct CategoryFormView: View {
                     .padding(.top, Theme.Spacing.lg)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .onTapGesture {
-                    focusedField = nil
-                }
             }
             .navigationTitle(mode.title)
             .navigationBarTitleDisplayMode(.inline)
