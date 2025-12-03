@@ -33,6 +33,14 @@ struct CategoryExpense: Identifiable {
     var memberBreakdown: [MemberExpenseBreakdown] = [] // Member breakdown for this category
 }
 
+/// Wrapper for presenting category popup with all required data
+struct CategoryPopupData: Identifiable {
+    let id: UUID
+    let category: CategoryExpense
+    let sectorColor: Color
+    let transactions: [TransactionView]
+}
+
 // MARK: - Donut Chart View
 
 struct ExpenseDonutChart: View {
@@ -42,8 +50,7 @@ struct ExpenseDonutChart: View {
     var sectorCategories: [UUID: [UUID]] = [:] // sectorId -> [categoryId]
     
     @State private var selectedSectorId: UUID?
-    @State private var selectedCategoryId: UUID?
-    @State private var showingCategoryPopup = false
+    @State private var categoryPopupData: CategoryPopupData?
     @State private var showingSectorPopup = false
     @State private var hasAnimated = false
     @State private var sliceAnimations: [UUID: Double] = [:]
@@ -56,11 +63,6 @@ struct ExpenseDonutChart: View {
     
     private var selectedSector: SectorExpense? {
         sectors.first { $0.id == selectedSectorId }
-    }
-    
-    private var selectedCategory: CategoryExpense? {
-        guard let sector = selectedSector else { return nil }
-        return sector.categories.first { $0.id == selectedCategoryId }
     }
     
     var body: some View {
@@ -101,10 +103,8 @@ struct ExpenseDonutChart: View {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                             if selectedSectorId == sector.id {
                                 selectedSectorId = nil
-                                selectedCategoryId = nil
                             } else {
                                 selectedSectorId = sector.id
-                                selectedCategoryId = nil
                             }
                         }
                     }
@@ -185,9 +185,15 @@ struct ExpenseDonutChart: View {
             SectorAccordionList(
                 sectors: sectors,
                 selectedId: $selectedSectorId,
-                onCategoryTapped: { category in
-                    selectedCategoryId = category.id
-                    showingCategoryPopup = true
+                onCategoryTapped: { category, sectorColor in
+                    // Create the popup data immediately with all required info
+                    let categoryTransactions = filteredTransactions.filter { $0.categoryId == category.id && $0.transactionType == .expense }
+                    categoryPopupData = CategoryPopupData(
+                        id: category.id,
+                        category: category,
+                        sectorColor: sectorColor,
+                        transactions: categoryTransactions
+                    )
                 },
                 onSectorDetailsTapped: { sector in
                     selectedSectorId = sector.id
@@ -215,21 +221,17 @@ struct ExpenseDonutChart: View {
                 }
             }
         }
-        .sheet(isPresented: $showingCategoryPopup) {
-            if let category = selectedCategory, let sector = selectedSector {
-                let categoryTransactions = filteredTransactions.filter { $0.categoryId == category.id && $0.transactionType == .expense }
-                CategoryMemberPopup(
-                    category: category,
-                    sectorColor: sector.color,
-                    transactions: categoryTransactions,
-                    onDismiss: {
-                        showingCategoryPopup = false
-                        selectedCategoryId = nil
-                    }
-                )
-                .presentationDetents([.fraction(0.85), .large])
-                .presentationDragIndicator(.visible)
-            }
+        .sheet(item: $categoryPopupData) { data in
+            CategoryMemberPopup(
+                category: data.category,
+                sectorColor: data.sectorColor,
+                transactions: data.transactions,
+                onDismiss: {
+                    categoryPopupData = nil
+                }
+            )
+            .presentationDetents([.fraction(0.85), .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showingSectorPopup) {
             if let sector = selectedSector {
@@ -396,7 +398,7 @@ struct DonutSliceView: View {
 struct SectorAccordionList: View {
     let sectors: [SectorExpense]
     @Binding var selectedId: UUID?
-    var onCategoryTapped: ((CategoryExpense) -> Void)?
+    var onCategoryTapped: ((CategoryExpense, Color) -> Void)? // Now passes sector color too
     var onSectorDetailsTapped: ((SectorExpense) -> Void)?
     
     var body: some View {
@@ -414,7 +416,9 @@ struct SectorAccordionList: View {
                             }
                         }
                     },
-                    onCategoryTapped: onCategoryTapped,
+                    onCategoryTapped: { category in
+                        onCategoryTapped?(category, sector.color)
+                    },
                     onDetailsTapped: { onSectorDetailsTapped?(sector) }
                 )
             }
