@@ -577,9 +577,34 @@ struct DashboardView: View {
                 
                 ScrollView {
                     VStack(spacing: Theme.Spacing.md) {
-                        // Header
-                        headerSection
-                            .padding(.horizontal, Theme.Spacing.md)
+                        // Header with Mascot Background
+                        ZStack(alignment: .bottom) {
+                            // Mascot background image
+                            Image("QuackMascot")
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(height: 180)
+                                .clipped()
+                                .overlay(
+                                    // Gradient overlay for text readability
+                                    LinearGradient(
+                                        colors: [
+                                            Theme.Colors.gradientEnd.opacity(0.3),
+                                            Theme.Colors.gradientEnd.opacity(0.7),
+                                            Theme.Colors.gradientEnd
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                            
+                            // Header content overlaid on mascot
+                            headerSection
+                                .padding(.horizontal, Theme.Spacing.md)
+                                .padding(.bottom, Theme.Spacing.md)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                        .padding(.horizontal, Theme.Spacing.md)
                         
                         // Balance Cards (using filtered totals)
                         HStack(spacing: Theme.Spacing.md) {
