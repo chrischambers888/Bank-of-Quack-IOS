@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 struct DashboardView: View {
     @Environment(AuthViewModel.self) private var authViewModel
@@ -10,6 +11,9 @@ struct DashboardView: View {
     @State private var isLoadingBalances = false
     @State private var showBalanceDetails = false
     @State private var showFilterSheet = false
+    @State private var showExpensesDetail = false
+    @State private var showIncomeDetail = false
+    @State private var showNetBalanceDetail = false
     
     // Filter state
     @State private var filterManager = DashboardFilterManager()
@@ -601,17 +605,14 @@ struct DashboardView: View {
     
     /// Returns filtered transactions that impact member balances (expenses where paid != owed, and settlements)
     private var balanceImpactingTransactions: [TransactionView] {
-        // First, get the set of expense IDs that are showing (after filters)
-        let showingExpenseIds = Set(filteredTransactions.filter { $0.transactionType == .expense }.map { $0.id })
-        
-        // Get expenses and settlements from filtered transactions
+        // Get expenses and settlements that impact balances from filtered transactions
         var result = filteredTransactions.filter { transaction in
             // Settlements always impact balances - they transfer money between members
             if transaction.transactionType == .settlement {
                 return true
             }
             
-            // Skip reimbursements here - we'll add them separately based on linked expense visibility
+            // Skip reimbursements here - we'll add them separately based on linked expense
             if transaction.transactionType == .reimbursement {
                 return false
             }
@@ -658,14 +659,18 @@ struct DashboardView: View {
             return true
         }
         
-        // Now add reimbursements that are linked to showing expenses (from ALL transactions, not filtered)
+        // Get the set of expense IDs that actually impact balances
+        let balanceImpactingExpenseIds = Set(result.filter { $0.transactionType == .expense }.map { $0.id })
+        
+        // Add reimbursements only if their linked expense impacts balances
+        // (if linked expense has no balance impact, neither does the reimbursement)
         let linkedReimbursements = transactionViewModel.transactions.filter { transaction in
             guard transaction.transactionType == .reimbursement,
                   let linkedExpenseId = transaction.reimbursesTransactionId else {
                 return false
             }
-            // Only include if the linked expense is showing
-            return showingExpenseIds.contains(linkedExpenseId)
+            // Only include if the linked expense actually impacts balances
+            return balanceImpactingExpenseIds.contains(linkedExpenseId)
         }
         
         result.append(contentsOf: linkedReimbursements)
@@ -716,27 +721,42 @@ struct DashboardView: View {
                         
                         // Balance Cards (using filtered totals)
                         HStack(spacing: Theme.Spacing.md) {
-                            BalanceCard(
-                                title: "Total Expenses",
-                                amount: filteredTotalExpenses,
-                                icon: "arrow.down.circle.fill",
-                                color: Theme.Colors.expense
-                            )
+                            Button {
+                                showExpensesDetail = true
+                            } label: {
+                                BalanceCard(
+                                    title: "Total Expenses",
+                                    amount: filteredTotalExpenses,
+                                    icon: "arrow.down.circle.fill",
+                                    color: Theme.Colors.expense
+                                )
+                            }
+                            .buttonStyle(.plain)
                             
-                            BalanceCard(
-                                title: "Total Income",
-                                amount: filteredTotalIncome,
-                                icon: "arrow.up.circle.fill",
-                                color: Theme.Colors.income
-                            )
+                            Button {
+                                showIncomeDetail = true
+                            } label: {
+                                BalanceCard(
+                                    title: "Total Income",
+                                    amount: filteredTotalIncome,
+                                    icon: "arrow.up.circle.fill",
+                                    color: Theme.Colors.income
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
                         // Net Balance (using filtered totals)
-                        NetBalanceCard(
-                            income: filteredTotalIncome,
-                            expenses: filteredTotalExpenses
-                        )
+                        Button {
+                            showNetBalanceDetail = true
+                        } label: {
+                            NetBalanceCard(
+                                income: filteredTotalIncome,
+                                expenses: filteredTotalExpenses
+                            )
+                        }
+                        .buttonStyle(.plain)
                         .padding(.horizontal, Theme.Spacing.md)
                         
                         // Member Balance (only show if multiple members have balance history)
@@ -796,6 +816,32 @@ struct DashboardView: View {
                     sectors: sectors,
                     categories: categories,
                     sectorCategories: sectorCategories
+                )
+            }
+            .sheet(isPresented: $showExpensesDetail) {
+                TotalExpensesDetailSheet(
+                    totalExpenses: filteredTotalExpenses,
+                    filteredTransactions: filteredTransactions,
+                    allTransactions: transactionViewModel.transactions,
+                    allSplits: allSplits,
+                    members: authViewModel.members
+                )
+            }
+            .sheet(isPresented: $showIncomeDetail) {
+                TotalIncomeDetailSheet(
+                    totalIncome: filteredTotalIncome,
+                    filteredTransactions: filteredTransactions,
+                    members: authViewModel.members
+                )
+            }
+            .sheet(isPresented: $showNetBalanceDetail) {
+                NetBalanceDetailSheet(
+                    totalIncome: filteredTotalIncome,
+                    totalExpenses: filteredTotalExpenses,
+                    filteredTransactions: filteredTransactions,
+                    allTransactions: transactionViewModel.transactions,
+                    allSplits: allSplits,
+                    members: authViewModel.members
                 )
             }
         }
@@ -1452,6 +1498,2196 @@ struct BalanceTransactionRow: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Total Expenses Detail Sheet
+
+struct TotalExpensesDetailSheet: View {
+    let totalExpenses: Decimal
+    let filteredTransactions: [TransactionView]
+    let allTransactions: [TransactionView]
+    let allSplits: [UUID: [TransactionSplit]]
+    let members: [HouseholdMember]
+    
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedTransaction: TransactionView?
+    
+    /// Expense transactions only, sorted by date
+    private var expenseTransactions: [TransactionView] {
+        filteredTransactions
+            .filter { $0.transactionType == .expense }
+            .sorted { $0.date < $1.date }
+    }
+    
+    /// Active members only (for the chart)
+    private var activeMembers: [HouseholdMember] {
+        members.filter { $0.isActive }
+    }
+    
+    /// Reimbursements by expense ID (includes ALL reimbursements linked to visible expenses)
+    private var reimbursementsByExpense: [UUID: Decimal] {
+        let visibleExpenseIds = Set(expenseTransactions.map { $0.id })
+        var result: [UUID: Decimal] = [:]
+        for transaction in allTransactions where transaction.transactionType == .reimbursement {
+            if let linkedExpenseId = transaction.reimbursesTransactionId,
+               visibleExpenseIds.contains(linkedExpenseId) {
+                result[linkedExpenseId, default: 0] += transaction.amount
+            }
+        }
+        return result
+    }
+    
+    /// Combined chart data including total and per-member lines
+    private var multiLineChartData: MultiLineExpenseData {
+        guard !expenseTransactions.isEmpty else {
+            return MultiLineExpenseData(totalLine: [], memberLines: [])
+        }
+        
+        // Track expenses by date for total and per member
+        var totalByDate: [Date: Decimal] = [:]
+        var memberExpensesByDate: [UUID: [Date: Decimal]] = [:]
+        
+        // Initialize member tracking
+        for member in activeMembers {
+            memberExpensesByDate[member.id] = [:]
+        }
+        
+        for expense in expenseTransactions {
+            let dateKey = Calendar.current.startOfDay(for: expense.date)
+            let reimbursedAmount = reimbursementsByExpense[expense.id] ?? 0
+            let effectiveAmount = max(expense.amount - reimbursedAmount, 0)
+            
+            // Skip fully reimbursed expenses
+            guard effectiveAmount > 0 else { continue }
+            
+            // Add to total
+            totalByDate[dateKey, default: 0] += effectiveAmount
+            
+            // Calculate reimbursement ratio to apply to member splits
+            let reimbursementRatio = expense.amount > 0 ? effectiveAmount / expense.amount : 1
+            
+            // Add to member amounts based on owed (expense for)
+            if let splits = allSplits[expense.id] {
+                for split in splits where split.owedAmount > 0 {
+                    let adjustedOwed = split.owedAmount * reimbursementRatio
+                    memberExpensesByDate[split.memberId, default: [:]][dateKey, default: 0] += adjustedOwed
+                }
+            }
+        }
+        
+        // Get all unique dates and sort them
+        let allDates = totalByDate.keys.sorted()
+        
+        // Build total line with cumulative values
+        var totalLine: [ExpenseChartPoint] = []
+        var totalCumulative: Decimal = 0
+        for date in allDates {
+            let dailyAmount = totalByDate[date] ?? 0
+            totalCumulative += dailyAmount
+            totalLine.append(ExpenseChartPoint(
+                date: date,
+                dailyAmount: dailyAmount,
+                cumulativeAmount: totalCumulative
+            ))
+        }
+        
+        // Build member lines with cumulative values
+        var memberLines: [MemberExpenseLine] = []
+        for member in activeMembers {
+            var points: [ExpenseChartPoint] = []
+            var cumulative: Decimal = 0
+            let memberDates = memberExpensesByDate[member.id] ?? [:]
+            
+            for date in allDates {
+                let dailyAmount = memberDates[date] ?? 0
+                cumulative += dailyAmount
+                points.append(ExpenseChartPoint(
+                    date: date,
+                    dailyAmount: dailyAmount,
+                    cumulativeAmount: cumulative
+                ))
+            }
+            
+            // Only include members who have some expenses
+            if cumulative > 0 {
+                memberLines.append(MemberExpenseLine(
+                    memberId: member.id,
+                    memberName: member.displayName,
+                    color: member.swiftUIColor,
+                    emoji: member.avatarUrl,
+                    points: points,
+                    total: cumulative
+                ))
+            }
+        }
+        
+        // Sort member lines by total (highest first)
+        memberLines.sort { $0.total > $1.total }
+        
+        return MultiLineExpenseData(totalLine: totalLine, memberLines: memberLines)
+    }
+    
+    /// Expenses sorted by date descending for the list
+    private var sortedExpenses: [TransactionView] {
+        expenseTransactions.sorted { $0.date > $1.date }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.lg) {
+                        // Total header
+                        VStack(spacing: Theme.Spacing.sm) {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.system(size: 44))
+                                .foregroundStyle(Theme.Colors.expense)
+                            
+                            Text("Total Expenses")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            
+                            Text(totalExpenses.doubleValue.formattedAsMoney())
+                                .font(.system(size: 36, weight: .bold))
+                                .foregroundStyle(Theme.Colors.expense)
+                            
+                            Text("\(expenseTransactions.count) expenses")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                        .padding(.top, Theme.Spacing.md)
+                        
+                        // Chart section
+                        if multiLineChartData.totalLine.count >= 2 {
+                            MultiLineExpenseChart(data: multiLineChartData)
+                                .padding(.horizontal, Theme.Spacing.md)
+                        } else if multiLineChartData.totalLine.count == 1 {
+                            // Single data point - show as simple stat
+                            VStack(spacing: Theme.Spacing.sm) {
+                                Text("Expense on \(multiLineChartData.totalLine[0].date.formatted(date: .abbreviated, time: .omitted))")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                
+                                Text(multiLineChartData.totalLine[0].dailyAmount.doubleValue.formattedAsMoney())
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(Theme.Colors.expense)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .cardStyle()
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Expenses list
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack {
+                                Text("All Expenses")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                
+                                Spacer()
+                                
+                                Text("\(sortedExpenses.count)")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Theme.Colors.backgroundCard)
+                                    .clipShape(Capsule())
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
+                            
+                            if sortedExpenses.isEmpty {
+                                VStack(spacing: Theme.Spacing.sm) {
+                                    Image(systemName: "tray")
+                                        .font(.title)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                    
+                                    Text("No expenses found")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.xl)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(sortedExpenses) { expense in
+                                        Button {
+                                            selectedTransaction = expense
+                                        } label: {
+                                            ExpenseDetailRow(
+                                                transaction: expense,
+                                                reimbursedAmount: reimbursementsByExpense[expense.id] ?? 0
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                        
+                                        if expense.id != sortedExpenses.last?.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                                .padding(.leading, 56)
+                                        }
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .cornerRadius(Theme.CornerRadius.md)
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
+                        }
+                        
+                        Spacer(minLength: 40)
+                    }
+                }
+            }
+            .navigationTitle("Expenses")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+            .sheet(item: $selectedTransaction) { transaction in
+                TransactionDetailView(transaction: transaction)
+            }
+        }
+    }
+}
+
+// MARK: - Expense Chart Data Structures
+
+struct ExpenseChartPoint: Identifiable {
+    let id = UUID()
+    let date: Date
+    let dailyAmount: Decimal
+    let cumulativeAmount: Decimal
+}
+
+struct MemberExpenseLine: Identifiable {
+    let id: UUID
+    let memberId: UUID
+    let memberName: String
+    let color: Color
+    let emoji: String?
+    let points: [ExpenseChartPoint]
+    let total: Decimal
+    
+    init(memberId: UUID, memberName: String, color: Color, emoji: String?, points: [ExpenseChartPoint], total: Decimal) {
+        self.id = memberId
+        self.memberId = memberId
+        self.memberName = memberName
+        self.color = color
+        self.emoji = emoji
+        self.points = points
+        self.total = total
+    }
+}
+
+struct MultiLineExpenseData {
+    let totalLine: [ExpenseChartPoint]
+    let memberLines: [MemberExpenseLine]
+}
+
+// MARK: - Multi-Line Expense Chart
+
+struct MultiLineExpenseChart: View {
+    let data: MultiLineExpenseData
+    
+    @State private var selectedDate: Date?
+    @State private var showMemberBreakdown = false
+    
+    private var maxAmount: Double {
+        data.totalLine.map { $0.cumulativeAmount.doubleValue }.max() ?? 0
+    }
+    
+    /// Get values at selected date
+    private var selectedValues: (total: ExpenseChartPoint?, members: [(MemberExpenseLine, ExpenseChartPoint)])? {
+        guard let date = selectedDate else { return nil }
+        
+        let totalPoint = data.totalLine.min { point1, point2 in
+            abs(point1.date.timeIntervalSince(date)) < abs(point2.date.timeIntervalSince(date))
+        }
+        
+        let memberPoints: [(MemberExpenseLine, ExpenseChartPoint)] = data.memberLines.compactMap { line in
+            guard let point = line.points.min(by: { point1, point2 in
+                abs(point1.date.timeIntervalSince(date)) < abs(point2.date.timeIntervalSince(date))
+            }) else { return nil }
+            return (line, point)
+        }
+        
+        return (totalPoint, memberPoints)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            // Header with member breakdown toggle
+            HStack {
+                Text("Expenses Over Time")
+                    .font(.headline)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Spacer()
+                
+                if !data.memberLines.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showMemberBreakdown.toggle()
+                        }
+                    } label: {
+                        Image(systemName: showMemberBreakdown ? "person.2.fill" : "person.2")
+                            .font(.title3)
+                            .foregroundStyle(showMemberBreakdown ? Theme.Colors.accent : Theme.Colors.textMuted)
+                    }
+                }
+            }
+            
+            // Selected point info
+            if let selected = selectedValues, let totalPoint = selected.total {
+                VStack(spacing: Theme.Spacing.xs) {
+                    // Date and total
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(totalPoint.date.formatted(date: .abbreviated, time: .omitted))
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                            
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(Theme.Colors.expense)
+                                    .frame(width: 8, height: 8)
+                                Text("Total: \(totalPoint.cumulativeAmount.doubleValue.formattedAsMoney())")
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(Theme.Colors.expense)
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("That day")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                            
+                            Text("+\(totalPoint.dailyAmount.doubleValue.formattedAsMoney())")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.expense.opacity(0.8))
+                        }
+                    }
+                    
+                    // Member breakdown for selected date (only when member breakdown is enabled)
+                    if showMemberBreakdown && !selected.members.isEmpty {
+                        HStack(spacing: Theme.Spacing.md) {
+                            ForEach(selected.members.prefix(4), id: \.0.id) { (line, point) in
+                                HStack(spacing: 4) {
+                                    if let emoji = line.emoji, !emoji.isEmpty {
+                                        Text(emoji)
+                                            .font(.caption2)
+                                    } else {
+                                        Circle()
+                                            .fill(line.color)
+                                            .frame(width: 6, height: 6)
+                                    }
+                                    Text(point.cumulativeAmount.doubleValue.formattedAsMoney())
+                                        .font(.caption2)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(line.color)
+                                }
+                            }
+                            
+                            if selected.members.count > 4 {
+                                Text("+\(selected.members.count - 4)")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, Theme.Spacing.xs)
+                .transition(.opacity)
+            }
+            
+            // Chart
+            Chart {
+                // Member lines (render first so total line is on top) - only when toggled on
+                if showMemberBreakdown {
+                    ForEach(data.memberLines) { memberLine in
+                        ForEach(memberLine.points) { point in
+                            LineMark(
+                                x: .value("Date", point.date, unit: .day),
+                                y: .value("Amount", point.cumulativeAmount.doubleValue),
+                                series: .value("Member", memberLine.memberName)
+                            )
+                            .foregroundStyle(memberLine.color.opacity(0.7))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                            .interpolationMethod(.catmullRom)
+                        }
+                    }
+                }
+                
+                // Total line (area fill)
+                ForEach(data.totalLine) { point in
+                    AreaMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Total", point.cumulativeAmount.doubleValue)
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Theme.Colors.expense.opacity(0.15), Theme.Colors.expense.opacity(0.02)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .interpolationMethod(.catmullRom)
+                }
+                
+                // Total line
+                ForEach(data.totalLine) { point in
+                    LineMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Total", point.cumulativeAmount.doubleValue),
+                        series: .value("Member", "Total")
+                    )
+                    .foregroundStyle(Theme.Colors.expense)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .interpolationMethod(.catmullRom)
+                }
+                
+                // Selection rule line
+                if let date = selectedDate {
+                    RuleMark(x: .value("Date", date, unit: .day))
+                        .foregroundStyle(Theme.Colors.textMuted.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 2]))
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                        .foregroundStyle(Theme.Colors.borderLight)
+                    AxisValueLabel {
+                        if let amount = value.as(Double.self) {
+                            Text(formatAxisLabel(amount))
+                                .font(.caption2)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: min(data.totalLine.count, 5))) { value in
+                    AxisGridLine()
+                        .foregroundStyle(Theme.Colors.borderLight.opacity(0.5))
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date.formatted(.dateTime.month(.abbreviated).day()))
+                                .font(.caption2)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                    }
+                }
+            }
+            .chartLegend(.hidden)
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(Color.clear)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    let location = value.location
+                                    if let date: Date = proxy.value(atX: location.x) {
+                                        selectedDate = date
+                                    }
+                                }
+                                .onEnded { _ in
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            selectedDate = nil
+                                        }
+                                    }
+                                }
+                        )
+                }
+            }
+            .frame(height: 180)
+            .animation(.easeInOut(duration: 0.15), value: selectedDate)
+            
+            // Legend (only when member breakdown is enabled)
+            if showMemberBreakdown && !data.memberLines.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                    Divider()
+                        .background(Theme.Colors.borderLight)
+                    
+                    // Total row
+                    HStack(spacing: Theme.Spacing.sm) {
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Theme.Colors.expense)
+                                .frame(width: 16, height: 3)
+                            
+                            Text("Total")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                        }
+                        
+                        Spacer()
+                        
+                        Text(data.totalLine.last?.cumulativeAmount.doubleValue.formattedAsMoney() ?? "$0")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundStyle(Theme.Colors.expense)
+                    }
+                    
+                    // Member rows
+                    ForEach(data.memberLines) { line in
+                        HStack(spacing: Theme.Spacing.sm) {
+                            HStack(spacing: 6) {
+                                if let emoji = line.emoji, !emoji.isEmpty {
+                                    Text(emoji)
+                                        .font(.system(size: 14))
+                                        .frame(width: 16)
+                                } else {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(line.color)
+                                        .frame(width: 16, height: 3)
+                                }
+                                
+                                Text(line.memberName)
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                    .lineLimit(1)
+                            }
+                            
+                            Spacer()
+                            
+                            Text(line.total.doubleValue.formattedAsMoney())
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(line.color)
+                        }
+                    }
+                }
+                .padding(.top, Theme.Spacing.xs)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .cardStyle()
+    }
+    
+    private func formatAxisLabel(_ value: Double) -> String {
+        if value >= 1000 {
+            return "$\(Int(value / 1000))k"
+        } else if value >= 1 {
+            return "$\(Int(value))"
+        }
+        return "$0"
+    }
+}
+
+// MARK: - Expense Detail Row
+
+struct ExpenseDetailRow: View {
+    let transaction: TransactionView
+    var reimbursedAmount: Decimal = 0
+    
+    private var effectiveAmount: Decimal {
+        if reimbursedAmount > 0 {
+            return max(transaction.amount - reimbursedAmount, 0)
+        }
+        return transaction.amount
+    }
+    
+    private var hasReimbursements: Bool {
+        reimbursedAmount > 0
+    }
+    
+    private var categoryColor: Color {
+        if let colorHex = transaction.categoryColor {
+            return Color(hex: colorHex.replacingOccurrences(of: "#", with: ""))
+        }
+        return Theme.Colors.expense
+    }
+    
+    /// Check if a string is a valid SF Symbol name
+    private func isSFSymbol(_ name: String) -> Bool {
+        UIImage(systemName: name) != nil
+    }
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            // Category icon
+            ZStack {
+                Circle()
+                    .fill(categoryColor.opacity(0.2))
+                    .frame(width: 40, height: 40)
+                
+                if let icon = transaction.categoryIcon, !icon.isEmpty {
+                    if isSFSymbol(icon) {
+                        Image(systemName: icon)
+                            .font(.system(size: 16))
+                            .foregroundStyle(categoryColor)
+                    } else {
+                        Text(icon)
+                            .font(.system(size: 18))
+                    }
+                } else {
+                    Image(systemName: "cart")
+                        .font(.system(size: 16))
+                        .foregroundStyle(categoryColor)
+                }
+            }
+            
+            // Details
+            VStack(alignment: .leading, spacing: 2) {
+                Text(transaction.description)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .lineLimit(1)
+                
+                HStack(spacing: Theme.Spacing.xs) {
+                    if let categoryName = transaction.categoryName {
+                        Text(categoryName)
+                            .font(.caption2)
+                            .foregroundStyle(categoryColor)
+                    }
+                    
+                    if transaction.categoryName != nil {
+                        Text("•")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                    
+                    Text(transaction.date.formatted(date: .abbreviated, time: .omitted))
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+            }
+            
+            Spacer()
+            
+            // Amount
+            VStack(alignment: .trailing, spacing: 2) {
+                HStack(spacing: 4) {
+                    if hasReimbursements {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.reimbursement)
+                    }
+                    
+                    Text("-\(effectiveAmount.doubleValue.formattedAsMoney())")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.expense)
+                }
+                
+                if hasReimbursements {
+                    Text("was \(transaction.amount.doubleValue.formattedAsMoney())")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                        .strikethrough()
+                }
+            }
+        }
+        .padding(.vertical, Theme.Spacing.sm)
+        .padding(.horizontal, Theme.Spacing.md)
+    }
+}
+
+// MARK: - Total Income Detail Sheet
+
+struct TotalIncomeDetailSheet: View {
+    let totalIncome: Decimal
+    let filteredTransactions: [TransactionView]
+    let members: [HouseholdMember]
+    
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedTransaction: TransactionView?
+    
+    /// Income transactions only (income + unlinked reimbursements), sorted by date
+    private var incomeTransactions: [TransactionView] {
+        filteredTransactions
+            .filter { transaction in
+                transaction.transactionType == .income ||
+                (transaction.transactionType == .reimbursement && transaction.reimbursesTransactionId == nil)
+            }
+            .sorted { $0.date < $1.date }
+    }
+    
+    /// Active members only (for the chart)
+    private var activeMembers: [HouseholdMember] {
+        members.filter { $0.isActive }
+    }
+    
+    /// Combined chart data including total and per-member lines
+    private var multiLineChartData: MultiLineIncomeData {
+        guard !incomeTransactions.isEmpty else {
+            return MultiLineIncomeData(totalLine: [], memberLines: [])
+        }
+        
+        // Track income by date for total and per member
+        var totalByDate: [Date: Decimal] = [:]
+        var memberIncomeByDate: [UUID: [Date: Decimal]] = [:]
+        
+        // Initialize member tracking
+        for member in activeMembers {
+            memberIncomeByDate[member.id] = [:]
+        }
+        
+        for income in incomeTransactions {
+            let dateKey = Calendar.current.startOfDay(for: income.date)
+            
+            // Add to total
+            totalByDate[dateKey, default: 0] += income.amount
+            
+            // Add to member amounts based on paidByMemberId (who received the income)
+            if let receivedById = income.paidByMemberId {
+                memberIncomeByDate[receivedById, default: [:]][dateKey, default: 0] += income.amount
+            }
+        }
+        
+        // Get all unique dates and sort them
+        let allDates = totalByDate.keys.sorted()
+        
+        // Build total line with cumulative values
+        var totalLine: [IncomeChartPoint] = []
+        var totalCumulative: Decimal = 0
+        for date in allDates {
+            let dailyAmount = totalByDate[date] ?? 0
+            totalCumulative += dailyAmount
+            totalLine.append(IncomeChartPoint(
+                date: date,
+                dailyAmount: dailyAmount,
+                cumulativeAmount: totalCumulative
+            ))
+        }
+        
+        // Build member lines with cumulative values
+        var memberLines: [MemberIncomeLine] = []
+        for member in activeMembers {
+            var points: [IncomeChartPoint] = []
+            var cumulative: Decimal = 0
+            let memberDates = memberIncomeByDate[member.id] ?? [:]
+            
+            for date in allDates {
+                let dailyAmount = memberDates[date] ?? 0
+                cumulative += dailyAmount
+                points.append(IncomeChartPoint(
+                    date: date,
+                    dailyAmount: dailyAmount,
+                    cumulativeAmount: cumulative
+                ))
+            }
+            
+            // Only include members who have some income
+            if cumulative > 0 {
+                memberLines.append(MemberIncomeLine(
+                    memberId: member.id,
+                    memberName: member.displayName,
+                    color: member.swiftUIColor,
+                    emoji: member.avatarUrl,
+                    points: points,
+                    total: cumulative
+                ))
+            }
+        }
+        
+        // Sort member lines by total (highest first)
+        memberLines.sort { $0.total > $1.total }
+        
+        return MultiLineIncomeData(totalLine: totalLine, memberLines: memberLines)
+    }
+    
+    /// Income sorted by date descending for the list
+    private var sortedIncome: [TransactionView] {
+        incomeTransactions.sorted { $0.date > $1.date }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.lg) {
+                        // Total header
+                        VStack(spacing: Theme.Spacing.sm) {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 44))
+                                .foregroundStyle(Theme.Colors.income)
+                            
+                            Text("Total Income")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            
+                            Text(totalIncome.doubleValue.formattedAsMoney())
+                                .font(.system(size: 36, weight: .bold))
+                                .foregroundStyle(Theme.Colors.income)
+                            
+                            Text("\(incomeTransactions.count) transactions")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                        .padding(.top, Theme.Spacing.md)
+                        
+                        // Chart section
+                        if multiLineChartData.totalLine.count >= 2 {
+                            MultiLineIncomeChart(data: multiLineChartData)
+                                .padding(.horizontal, Theme.Spacing.md)
+                        } else if multiLineChartData.totalLine.count == 1 {
+                            // Single data point - show as simple stat
+                            VStack(spacing: Theme.Spacing.sm) {
+                                Text("Income on \(multiLineChartData.totalLine[0].date.formatted(date: .abbreviated, time: .omitted))")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                
+                                Text(multiLineChartData.totalLine[0].dailyAmount.doubleValue.formattedAsMoney())
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(Theme.Colors.income)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .cardStyle()
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Income list
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack {
+                                Text("All Income")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                
+                                Spacer()
+                                
+                                Text("\(sortedIncome.count)")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Theme.Colors.backgroundCard)
+                                    .clipShape(Capsule())
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
+                            
+                            if sortedIncome.isEmpty {
+                                VStack(spacing: Theme.Spacing.sm) {
+                                    Image(systemName: "tray")
+                                        .font(.title)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                    
+                                    Text("No income found")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.xl)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(sortedIncome) { income in
+                                        Button {
+                                            selectedTransaction = income
+                                        } label: {
+                                            IncomeDetailRow(transaction: income)
+                                        }
+                                        .buttonStyle(.plain)
+                                        
+                                        if income.id != sortedIncome.last?.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                                .padding(.leading, 56)
+                                        }
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .cornerRadius(Theme.CornerRadius.md)
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
+                        }
+                        
+                        Spacer(minLength: 40)
+                    }
+                }
+            }
+            .navigationTitle("Income")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+            .sheet(item: $selectedTransaction) { transaction in
+                TransactionDetailView(transaction: transaction)
+            }
+        }
+    }
+}
+
+// MARK: - Income Chart Data Structures
+
+struct IncomeChartPoint: Identifiable {
+    let id = UUID()
+    let date: Date
+    let dailyAmount: Decimal
+    let cumulativeAmount: Decimal
+}
+
+struct MemberIncomeLine: Identifiable {
+    let id: UUID
+    let memberId: UUID
+    let memberName: String
+    let color: Color
+    let emoji: String?
+    let points: [IncomeChartPoint]
+    let total: Decimal
+    
+    init(memberId: UUID, memberName: String, color: Color, emoji: String?, points: [IncomeChartPoint], total: Decimal) {
+        self.id = memberId
+        self.memberId = memberId
+        self.memberName = memberName
+        self.color = color
+        self.emoji = emoji
+        self.points = points
+        self.total = total
+    }
+}
+
+struct MultiLineIncomeData {
+    let totalLine: [IncomeChartPoint]
+    let memberLines: [MemberIncomeLine]
+}
+
+// MARK: - Multi-Line Income Chart
+
+struct MultiLineIncomeChart: View {
+    let data: MultiLineIncomeData
+    
+    @State private var selectedDate: Date?
+    @State private var showMemberBreakdown = false
+    
+    private var maxAmount: Double {
+        data.totalLine.map { $0.cumulativeAmount.doubleValue }.max() ?? 0
+    }
+    
+    /// Get values at selected date
+    private var selectedValues: (total: IncomeChartPoint?, members: [(MemberIncomeLine, IncomeChartPoint)])? {
+        guard let date = selectedDate else { return nil }
+        
+        let totalPoint = data.totalLine.min { point1, point2 in
+            abs(point1.date.timeIntervalSince(date)) < abs(point2.date.timeIntervalSince(date))
+        }
+        
+        let memberPoints: [(MemberIncomeLine, IncomeChartPoint)] = data.memberLines.compactMap { line in
+            guard let point = line.points.min(by: { point1, point2 in
+                abs(point1.date.timeIntervalSince(date)) < abs(point2.date.timeIntervalSince(date))
+            }) else { return nil }
+            return (line, point)
+        }
+        
+        return (totalPoint, memberPoints)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            // Header with member breakdown toggle
+            HStack {
+                Text("Income Over Time")
+                    .font(.headline)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Spacer()
+                
+                if !data.memberLines.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showMemberBreakdown.toggle()
+                        }
+                    } label: {
+                        Image(systemName: showMemberBreakdown ? "person.2.fill" : "person.2")
+                            .font(.title3)
+                            .foregroundStyle(showMemberBreakdown ? Theme.Colors.accent : Theme.Colors.textMuted)
+                    }
+                }
+            }
+            
+            // Selected point info
+            if let selected = selectedValues, let totalPoint = selected.total {
+                VStack(spacing: Theme.Spacing.xs) {
+                    // Date and total
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(totalPoint.date.formatted(date: .abbreviated, time: .omitted))
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                            
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(Theme.Colors.income)
+                                    .frame(width: 8, height: 8)
+                                Text("Total: \(totalPoint.cumulativeAmount.doubleValue.formattedAsMoney())")
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(Theme.Colors.income)
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("That day")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                            
+                            Text("+\(totalPoint.dailyAmount.doubleValue.formattedAsMoney())")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.income.opacity(0.8))
+                        }
+                    }
+                    
+                    // Member breakdown for selected date (only when member breakdown is enabled)
+                    if showMemberBreakdown && !selected.members.isEmpty {
+                        HStack(spacing: Theme.Spacing.md) {
+                            ForEach(selected.members.prefix(4), id: \.0.id) { (line, point) in
+                                HStack(spacing: 4) {
+                                    if let emoji = line.emoji, !emoji.isEmpty {
+                                        Text(emoji)
+                                            .font(.caption2)
+                                    } else {
+                                        Circle()
+                                            .fill(line.color)
+                                            .frame(width: 6, height: 6)
+                                    }
+                                    Text(point.cumulativeAmount.doubleValue.formattedAsMoney())
+                                        .font(.caption2)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(line.color)
+                                }
+                            }
+                            
+                            if selected.members.count > 4 {
+                                Text("+\(selected.members.count - 4)")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, Theme.Spacing.xs)
+                .transition(.opacity)
+            }
+            
+            // Chart
+            Chart {
+                // Member lines (render first so total line is on top) - only when toggled on
+                if showMemberBreakdown {
+                    ForEach(data.memberLines) { memberLine in
+                        ForEach(memberLine.points) { point in
+                            LineMark(
+                                x: .value("Date", point.date, unit: .day),
+                                y: .value("Amount", point.cumulativeAmount.doubleValue),
+                                series: .value("Member", memberLine.memberName)
+                            )
+                            .foregroundStyle(memberLine.color.opacity(0.7))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                            .interpolationMethod(.catmullRom)
+                        }
+                    }
+                }
+                
+                // Total line (area fill)
+                ForEach(data.totalLine) { point in
+                    AreaMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Total", point.cumulativeAmount.doubleValue)
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Theme.Colors.income.opacity(0.15), Theme.Colors.income.opacity(0.02)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .interpolationMethod(.catmullRom)
+                }
+                
+                // Total line
+                ForEach(data.totalLine) { point in
+                    LineMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Total", point.cumulativeAmount.doubleValue),
+                        series: .value("Member", "Total")
+                    )
+                    .foregroundStyle(Theme.Colors.income)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .interpolationMethod(.catmullRom)
+                }
+                
+                // Selection rule line
+                if let date = selectedDate {
+                    RuleMark(x: .value("Date", date, unit: .day))
+                        .foregroundStyle(Theme.Colors.textMuted.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 2]))
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                        .foregroundStyle(Theme.Colors.borderLight)
+                    AxisValueLabel {
+                        if let amount = value.as(Double.self) {
+                            Text(formatAxisLabel(amount))
+                                .font(.caption2)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: min(data.totalLine.count, 5))) { value in
+                    AxisGridLine()
+                        .foregroundStyle(Theme.Colors.borderLight.opacity(0.5))
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date.formatted(.dateTime.month(.abbreviated).day()))
+                                .font(.caption2)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                    }
+                }
+            }
+            .chartLegend(.hidden)
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(Color.clear)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    let location = value.location
+                                    if let date: Date = proxy.value(atX: location.x) {
+                                        selectedDate = date
+                                    }
+                                }
+                                .onEnded { _ in
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            selectedDate = nil
+                                        }
+                                    }
+                                }
+                        )
+                }
+            }
+            .frame(height: 180)
+            .animation(.easeInOut(duration: 0.15), value: selectedDate)
+            
+            // Legend (only when member breakdown is enabled)
+            if showMemberBreakdown && !data.memberLines.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                    Divider()
+                        .background(Theme.Colors.borderLight)
+                    
+                    // Total row
+                    HStack(spacing: Theme.Spacing.sm) {
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Theme.Colors.income)
+                                .frame(width: 16, height: 3)
+                            
+                            Text("Total")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                        }
+                        
+                        Spacer()
+                        
+                        Text(data.totalLine.last?.cumulativeAmount.doubleValue.formattedAsMoney() ?? "$0")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundStyle(Theme.Colors.income)
+                    }
+                    
+                    // Member rows
+                    ForEach(data.memberLines) { line in
+                        HStack(spacing: Theme.Spacing.sm) {
+                            HStack(spacing: 6) {
+                                if let emoji = line.emoji, !emoji.isEmpty {
+                                    Text(emoji)
+                                        .font(.system(size: 14))
+                                        .frame(width: 16)
+                                } else {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(line.color)
+                                        .frame(width: 16, height: 3)
+                                }
+                                
+                                Text(line.memberName)
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                    .lineLimit(1)
+                            }
+                            
+                            Spacer()
+                            
+                            Text(line.total.doubleValue.formattedAsMoney())
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(line.color)
+                        }
+                    }
+                }
+                .padding(.top, Theme.Spacing.xs)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .cardStyle()
+    }
+    
+    private func formatAxisLabel(_ value: Double) -> String {
+        if value >= 1000 {
+            return "$\(Int(value / 1000))k"
+        } else if value >= 1 {
+            return "$\(Int(value))"
+        }
+        return "$0"
+    }
+}
+
+// MARK: - Income Detail Row
+
+struct IncomeDetailRow: View {
+    let transaction: TransactionView
+    
+    private var isReimbursement: Bool {
+        transaction.transactionType == .reimbursement
+    }
+    
+    private var categoryColor: Color {
+        if let colorHex = transaction.categoryColor {
+            return Color(hex: colorHex.replacingOccurrences(of: "#", with: ""))
+        }
+        return isReimbursement ? Theme.Colors.reimbursement : Theme.Colors.income
+    }
+    
+    /// Check if a string is a valid SF Symbol name
+    private func isSFSymbol(_ name: String) -> Bool {
+        UIImage(systemName: name) != nil
+    }
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(categoryColor.opacity(0.2))
+                    .frame(width: 40, height: 40)
+                
+                if let icon = transaction.categoryIcon, !icon.isEmpty {
+                    if isSFSymbol(icon) {
+                        Image(systemName: icon)
+                            .font(.system(size: 16))
+                            .foregroundStyle(categoryColor)
+                    } else {
+                        Text(icon)
+                            .font(.system(size: 18))
+                    }
+                } else {
+                    Image(systemName: isReimbursement ? "arrow.uturn.backward" : "wallet.pass")
+                        .font(.system(size: 16))
+                        .foregroundStyle(categoryColor)
+                }
+            }
+            
+            // Details
+            VStack(alignment: .leading, spacing: 2) {
+                Text(transaction.description)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .lineLimit(1)
+                
+                HStack(spacing: Theme.Spacing.xs) {
+                    if isReimbursement {
+                        Text("Reimbursement")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.reimbursement)
+                    } else if let categoryName = transaction.categoryName {
+                        Text(categoryName)
+                            .font(.caption2)
+                            .foregroundStyle(categoryColor)
+                    }
+                    
+                    if isReimbursement || transaction.categoryName != nil {
+                        Text("•")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                    
+                    Text(transaction.date.formatted(date: .abbreviated, time: .omitted))
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                    
+                    if let receivedByName = transaction.paidByName {
+                        Text("•")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                        
+                        Text(receivedByName)
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                }
+            }
+            
+            Spacer()
+            
+            // Amount
+            Text("+\(transaction.amount.doubleValue.formattedAsMoney())")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.Colors.income)
+        }
+        .padding(.vertical, Theme.Spacing.sm)
+        .padding(.horizontal, Theme.Spacing.md)
+    }
+}
+
+// MARK: - Net Balance Detail Sheet
+
+struct NetBalanceDetailSheet: View {
+    let totalIncome: Decimal
+    let totalExpenses: Decimal
+    let filteredTransactions: [TransactionView]
+    let allTransactions: [TransactionView]
+    let allSplits: [UUID: [TransactionSplit]]
+    let members: [HouseholdMember]
+    
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedTransaction: TransactionView?
+    
+    private var netBalance: Decimal {
+        totalIncome - totalExpenses
+    }
+    
+    private var isPositive: Bool {
+        netBalance >= 0
+    }
+    
+    /// Active members only (for the chart)
+    private var activeMembers: [HouseholdMember] {
+        members.filter { $0.isActive }
+    }
+    
+    /// Expense transactions only
+    private var expenseTransactions: [TransactionView] {
+        filteredTransactions.filter { $0.transactionType == .expense }
+    }
+    
+    /// Income transactions (income + unlinked reimbursements)
+    private var incomeTransactions: [TransactionView] {
+        filteredTransactions.filter { transaction in
+            transaction.transactionType == .income ||
+            (transaction.transactionType == .reimbursement && transaction.reimbursesTransactionId == nil)
+        }
+    }
+    
+    /// Reimbursements by expense ID
+    private var reimbursementsByExpense: [UUID: Decimal] {
+        let visibleExpenseIds = Set(expenseTransactions.map { $0.id })
+        var result: [UUID: Decimal] = [:]
+        for transaction in allTransactions where transaction.transactionType == .reimbursement {
+            if let linkedExpenseId = transaction.reimbursesTransactionId,
+               visibleExpenseIds.contains(linkedExpenseId) {
+                result[linkedExpenseId, default: 0] += transaction.amount
+            }
+        }
+        return result
+    }
+    
+    /// All transactions affecting net balance, sorted by date
+    private var allNetTransactions: [TransactionView] {
+        var transactions: [TransactionView] = []
+        transactions.append(contentsOf: expenseTransactions)
+        transactions.append(contentsOf: incomeTransactions)
+        return transactions.sorted { $0.date < $1.date }
+    }
+    
+    /// Combined chart data
+    private var multiLineChartData: MultiLineNetBalanceData {
+        guard !allNetTransactions.isEmpty else {
+            return MultiLineNetBalanceData(totalLine: [], memberLines: [])
+        }
+        
+        // Track net by date for total and per member
+        var totalIncomeByDate: [Date: Decimal] = [:]
+        var totalExpenseByDate: [Date: Decimal] = [:]
+        var memberIncomeByDate: [UUID: [Date: Decimal]] = [:]
+        var memberExpenseByDate: [UUID: [Date: Decimal]] = [:]
+        
+        // Initialize member tracking
+        for member in activeMembers {
+            memberIncomeByDate[member.id] = [:]
+            memberExpenseByDate[member.id] = [:]
+        }
+        
+        // Process income transactions
+        for income in incomeTransactions {
+            let dateKey = Calendar.current.startOfDay(for: income.date)
+            totalIncomeByDate[dateKey, default: 0] += income.amount
+            
+            // Member income based on who received it
+            if let receivedById = income.paidByMemberId {
+                memberIncomeByDate[receivedById, default: [:]][dateKey, default: 0] += income.amount
+            }
+        }
+        
+        // Process expense transactions
+        for expense in expenseTransactions {
+            let dateKey = Calendar.current.startOfDay(for: expense.date)
+            let reimbursedAmount = reimbursementsByExpense[expense.id] ?? 0
+            let effectiveAmount = max(expense.amount - reimbursedAmount, 0)
+            
+            guard effectiveAmount > 0 else { continue }
+            
+            totalExpenseByDate[dateKey, default: 0] += effectiveAmount
+            
+            // Member expenses based on owed amounts from splits
+            let reimbursementRatio = expense.amount > 0 ? effectiveAmount / expense.amount : 1
+            if let splits = allSplits[expense.id] {
+                for split in splits where split.owedAmount > 0 {
+                    let adjustedOwed = split.owedAmount * reimbursementRatio
+                    memberExpenseByDate[split.memberId, default: [:]][dateKey, default: 0] += adjustedOwed
+                }
+            }
+        }
+        
+        // Get all unique dates and sort them
+        let allDates = Set(totalIncomeByDate.keys).union(Set(totalExpenseByDate.keys)).sorted()
+        
+        // Build total line with cumulative net values
+        var totalLine: [NetBalanceChartPoint] = []
+        var cumulativeIncome: Decimal = 0
+        var cumulativeExpense: Decimal = 0
+        
+        for date in allDates {
+            let dailyIncome = totalIncomeByDate[date] ?? 0
+            let dailyExpense = totalExpenseByDate[date] ?? 0
+            cumulativeIncome += dailyIncome
+            cumulativeExpense += dailyExpense
+            let cumulativeNet = cumulativeIncome - cumulativeExpense
+            let dailyNet = dailyIncome - dailyExpense
+            
+            totalLine.append(NetBalanceChartPoint(
+                date: date,
+                dailyIncome: dailyIncome,
+                dailyExpense: dailyExpense,
+                dailyNet: dailyNet,
+                cumulativeNet: cumulativeNet
+            ))
+        }
+        
+        // Build member lines with cumulative net values
+        var memberLines: [MemberNetBalanceLine] = []
+        for member in activeMembers {
+            var points: [NetBalanceChartPoint] = []
+            var cumIncome: Decimal = 0
+            var cumExpense: Decimal = 0
+            let memberIncome = memberIncomeByDate[member.id] ?? [:]
+            let memberExpense = memberExpenseByDate[member.id] ?? [:]
+            
+            for date in allDates {
+                let dailyIncome = memberIncome[date] ?? 0
+                let dailyExpense = memberExpense[date] ?? 0
+                cumIncome += dailyIncome
+                cumExpense += dailyExpense
+                let cumNet = cumIncome - cumExpense
+                let dailyNet = dailyIncome - dailyExpense
+                
+                points.append(NetBalanceChartPoint(
+                    date: date,
+                    dailyIncome: dailyIncome,
+                    dailyExpense: dailyExpense,
+                    dailyNet: dailyNet,
+                    cumulativeNet: cumNet
+                ))
+            }
+            
+            let totalNet = cumIncome - cumExpense
+            
+            // Only include members who have some activity
+            if cumIncome > 0 || cumExpense > 0 {
+                memberLines.append(MemberNetBalanceLine(
+                    memberId: member.id,
+                    memberName: member.displayName,
+                    color: member.swiftUIColor,
+                    emoji: member.avatarUrl,
+                    points: points,
+                    totalIncome: cumIncome,
+                    totalExpense: cumExpense,
+                    totalNet: totalNet
+                ))
+            }
+        }
+        
+        // Sort member lines by absolute net (highest first)
+        memberLines.sort { abs($0.totalNet) > abs($1.totalNet) }
+        
+        return MultiLineNetBalanceData(totalLine: totalLine, memberLines: memberLines)
+    }
+    
+    /// Transactions sorted by date descending for the list
+    private var sortedTransactions: [TransactionView] {
+        allNetTransactions.sorted { $0.date > $1.date }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.lg) {
+                        // Total header
+                        VStack(spacing: Theme.Spacing.sm) {
+                            Image(systemName: isPositive ? "arrow.up.arrow.down.circle.fill" : "arrow.down.arrow.up.circle.fill")
+                                .font(.system(size: 44))
+                                .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+                            
+                            Text("Net Balance")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            
+                            Text(netBalance.doubleValue.formattedAsMoney(showSign: true))
+                                .font(.system(size: 36, weight: .bold))
+                                .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+                            
+                            // Breakdown
+                            HStack(spacing: Theme.Spacing.lg) {
+                                VStack(spacing: 2) {
+                                    Text("Income")
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                    Text("+\(totalIncome.doubleValue.formattedAsMoney())")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(Theme.Colors.income)
+                                }
+                                
+                                Text("−")
+                                    .font(.title3)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                
+                                VStack(spacing: 2) {
+                                    Text("Expenses")
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                    Text(totalExpenses.doubleValue.formattedAsMoney())
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(Theme.Colors.expense)
+                                }
+                            }
+                            
+                            Text("\(sortedTransactions.count) transactions")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                        .padding(.top, Theme.Spacing.md)
+                        
+                        // Chart section
+                        if multiLineChartData.totalLine.count >= 2 {
+                            MultiLineNetBalanceChart(data: multiLineChartData)
+                                .padding(.horizontal, Theme.Spacing.md)
+                        } else if multiLineChartData.totalLine.count == 1 {
+                            // Single data point
+                            VStack(spacing: Theme.Spacing.sm) {
+                                Text("Activity on \(multiLineChartData.totalLine[0].date.formatted(date: .abbreviated, time: .omitted))")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                
+                                Text(multiLineChartData.totalLine[0].dailyNet.doubleValue.formattedAsMoney(showSign: true))
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(multiLineChartData.totalLine[0].dailyNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .cardStyle()
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Transactions list
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack {
+                                Text("All Transactions")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                
+                                Spacer()
+                                
+                                Text("\(sortedTransactions.count)")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Theme.Colors.backgroundCard)
+                                    .clipShape(Capsule())
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
+                            
+                            if sortedTransactions.isEmpty {
+                                VStack(spacing: Theme.Spacing.sm) {
+                                    Image(systemName: "tray")
+                                        .font(.title)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                    
+                                    Text("No transactions found")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.xl)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(sortedTransactions) { transaction in
+                                        Button {
+                                            selectedTransaction = transaction
+                                        } label: {
+                                            NetBalanceTransactionRow(
+                                                transaction: transaction,
+                                                reimbursedAmount: reimbursementsByExpense[transaction.id] ?? 0
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                        
+                                        if transaction.id != sortedTransactions.last?.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                                .padding(.leading, 56)
+                                        }
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .cornerRadius(Theme.CornerRadius.md)
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
+                        }
+                        
+                        Spacer(minLength: 40)
+                    }
+                }
+            }
+            .navigationTitle("Net Balance")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+            .sheet(item: $selectedTransaction) { transaction in
+                TransactionDetailView(transaction: transaction)
+            }
+        }
+    }
+}
+
+// MARK: - Net Balance Chart Data Structures
+
+struct NetBalanceChartPoint: Identifiable {
+    let id = UUID()
+    let date: Date
+    let dailyIncome: Decimal
+    let dailyExpense: Decimal
+    let dailyNet: Decimal
+    let cumulativeNet: Decimal
+}
+
+struct MemberNetBalanceLine: Identifiable {
+    let id: UUID
+    let memberId: UUID
+    let memberName: String
+    let color: Color
+    let emoji: String?
+    let points: [NetBalanceChartPoint]
+    let totalIncome: Decimal
+    let totalExpense: Decimal
+    let totalNet: Decimal
+    
+    init(memberId: UUID, memberName: String, color: Color, emoji: String?, points: [NetBalanceChartPoint], totalIncome: Decimal, totalExpense: Decimal, totalNet: Decimal) {
+        self.id = memberId
+        self.memberId = memberId
+        self.memberName = memberName
+        self.color = color
+        self.emoji = emoji
+        self.points = points
+        self.totalIncome = totalIncome
+        self.totalExpense = totalExpense
+        self.totalNet = totalNet
+    }
+}
+
+struct MultiLineNetBalanceData {
+    let totalLine: [NetBalanceChartPoint]
+    let memberLines: [MemberNetBalanceLine]
+}
+
+// MARK: - Multi-Line Net Balance Chart
+
+struct MultiLineNetBalanceChart: View {
+    let data: MultiLineNetBalanceData
+    
+    @State private var selectedDate: Date?
+    @State private var showMemberBreakdown = false
+    
+    private var finalNetBalance: Decimal {
+        data.totalLine.last?.cumulativeNet ?? 0
+    }
+    
+    private var isPositive: Bool {
+        finalNetBalance >= 0
+    }
+    
+    private var netColor: Color {
+        isPositive ? Theme.Colors.success : Theme.Colors.error
+    }
+    
+    /// Get values at selected date
+    private var selectedValues: (total: NetBalanceChartPoint?, members: [(MemberNetBalanceLine, NetBalanceChartPoint)])? {
+        guard let date = selectedDate else { return nil }
+        
+        let totalPoint = data.totalLine.min { point1, point2 in
+            abs(point1.date.timeIntervalSince(date)) < abs(point2.date.timeIntervalSince(date))
+        }
+        
+        let memberPoints: [(MemberNetBalanceLine, NetBalanceChartPoint)] = data.memberLines.compactMap { line in
+            guard let point = line.points.min(by: { point1, point2 in
+                abs(point1.date.timeIntervalSince(date)) < abs(point2.date.timeIntervalSince(date))
+            }) else { return nil }
+            return (line, point)
+        }
+        
+        return (totalPoint, memberPoints)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            // Header with member breakdown toggle
+            HStack {
+                Text("Net Balance Over Time")
+                    .font(.headline)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Spacer()
+                
+                if !data.memberLines.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showMemberBreakdown.toggle()
+                        }
+                    } label: {
+                        Image(systemName: showMemberBreakdown ? "person.2.fill" : "person.2")
+                            .font(.title3)
+                            .foregroundStyle(showMemberBreakdown ? Theme.Colors.accent : Theme.Colors.textMuted)
+                    }
+                }
+            }
+            
+            // Selected point info
+            if let selected = selectedValues, let totalPoint = selected.total {
+                VStack(spacing: Theme.Spacing.xs) {
+                    // Date and total
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(totalPoint.date.formatted(date: .abbreviated, time: .omitted))
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                            
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(totalPoint.cumulativeNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                    .frame(width: 8, height: 8)
+                                Text("Net: \(totalPoint.cumulativeNet.doubleValue.formattedAsMoney(showSign: true))")
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(totalPoint.cumulativeNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("That day")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                            
+                            Text(totalPoint.dailyNet.doubleValue.formattedAsMoney(showSign: true))
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(totalPoint.dailyNet >= 0 ? Theme.Colors.success.opacity(0.8) : Theme.Colors.error.opacity(0.8))
+                        }
+                    }
+                    
+                    // Member breakdown for selected date (only when member breakdown is enabled)
+                    if showMemberBreakdown && !selected.members.isEmpty {
+                        HStack(spacing: Theme.Spacing.md) {
+                            ForEach(selected.members.prefix(4), id: \.0.id) { (line, point) in
+                                HStack(spacing: 4) {
+                                    if let emoji = line.emoji, !emoji.isEmpty {
+                                        Text(emoji)
+                                            .font(.caption2)
+                                    } else {
+                                        Circle()
+                                            .fill(line.color)
+                                            .frame(width: 6, height: 6)
+                                    }
+                                    Text(point.cumulativeNet.doubleValue.formattedAsMoney(showSign: true))
+                                        .font(.caption2)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(point.cumulativeNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                }
+                            }
+                            
+                            if selected.members.count > 4 {
+                                Text("+\(selected.members.count - 4)")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, Theme.Spacing.xs)
+                .transition(.opacity)
+            }
+            
+            // Chart
+            Chart {
+                // Zero line
+                RuleMark(y: .value("Zero", 0))
+                    .foregroundStyle(Theme.Colors.textMuted.opacity(0.3))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                
+                // Member lines (render first so total line is on top) - only when toggled on
+                if showMemberBreakdown {
+                    ForEach(data.memberLines) { memberLine in
+                        ForEach(memberLine.points) { point in
+                            LineMark(
+                                x: .value("Date", point.date, unit: .day),
+                                y: .value("Net", point.cumulativeNet.doubleValue),
+                                series: .value("Member", memberLine.memberName)
+                            )
+                            .foregroundStyle(memberLine.color.opacity(0.7))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                            .interpolationMethod(.catmullRom)
+                        }
+                    }
+                }
+                
+                // Total line (area fill) - different color above/below zero
+                ForEach(data.totalLine) { point in
+                    AreaMark(
+                        x: .value("Date", point.date, unit: .day),
+                        yStart: .value("Zero", 0),
+                        yEnd: .value("Net", point.cumulativeNet.doubleValue)
+                    )
+                    .foregroundStyle(
+                        point.cumulativeNet >= 0 ?
+                        LinearGradient(
+                            colors: [Theme.Colors.success.opacity(0.15), Theme.Colors.success.opacity(0.02)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ) :
+                        LinearGradient(
+                            colors: [Theme.Colors.error.opacity(0.02), Theme.Colors.error.opacity(0.15)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .interpolationMethod(.catmullRom)
+                }
+                
+                // Total line
+                ForEach(data.totalLine) { point in
+                    LineMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Net", point.cumulativeNet.doubleValue),
+                        series: .value("Member", "Total")
+                    )
+                    .foregroundStyle(point.cumulativeNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .interpolationMethod(.catmullRom)
+                }
+                
+                // Selection rule line
+                if let date = selectedDate {
+                    RuleMark(x: .value("Date", date, unit: .day))
+                        .foregroundStyle(Theme.Colors.textMuted.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 2]))
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                        .foregroundStyle(Theme.Colors.borderLight)
+                    AxisValueLabel {
+                        if let amount = value.as(Double.self) {
+                            Text(formatAxisLabel(amount))
+                                .font(.caption2)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: min(data.totalLine.count, 5))) { value in
+                    AxisGridLine()
+                        .foregroundStyle(Theme.Colors.borderLight.opacity(0.5))
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date.formatted(.dateTime.month(.abbreviated).day()))
+                                .font(.caption2)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                    }
+                }
+            }
+            .chartLegend(.hidden)
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(Color.clear)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    let location = value.location
+                                    if let date: Date = proxy.value(atX: location.x) {
+                                        selectedDate = date
+                                    }
+                                }
+                                .onEnded { _ in
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            selectedDate = nil
+                                        }
+                                    }
+                                }
+                        )
+                }
+            }
+            .frame(height: 180)
+            .animation(.easeInOut(duration: 0.15), value: selectedDate)
+            
+            // Legend (only when member breakdown is enabled)
+            if showMemberBreakdown && !data.memberLines.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                    Divider()
+                        .background(Theme.Colors.borderLight)
+                    
+                    // Total row
+                    HStack(spacing: Theme.Spacing.sm) {
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(netColor)
+                                .frame(width: 16, height: 3)
+                            
+                            Text("Total")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                        }
+                        
+                        Spacer()
+                        
+                        Text(finalNetBalance.doubleValue.formattedAsMoney(showSign: true))
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundStyle(netColor)
+                    }
+                    
+                    // Member rows
+                    ForEach(data.memberLines) { line in
+                        HStack(spacing: Theme.Spacing.sm) {
+                            HStack(spacing: 6) {
+                                if let emoji = line.emoji, !emoji.isEmpty {
+                                    Text(emoji)
+                                        .font(.system(size: 14))
+                                        .frame(width: 16)
+                                } else {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(line.color)
+                                        .frame(width: 16, height: 3)
+                                }
+                                
+                                Text(line.memberName)
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                    .lineLimit(1)
+                            }
+                            
+                            Spacer()
+                            
+                            Text(line.totalNet.doubleValue.formattedAsMoney(showSign: true))
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(line.color)
+                        }
+                    }
+                }
+                .padding(.top, Theme.Spacing.xs)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .cardStyle()
+    }
+    
+    private func formatAxisLabel(_ value: Double) -> String {
+        let absValue = abs(value)
+        let sign = value < 0 ? "-" : ""
+        if absValue >= 1000 {
+            return "\(sign)$\(Int(absValue / 1000))k"
+        } else if absValue >= 1 {
+            return "\(sign)$\(Int(absValue))"
+        }
+        return "$0"
+    }
+}
+
+// MARK: - Net Balance Transaction Row
+
+struct NetBalanceTransactionRow: View {
+    let transaction: TransactionView
+    var reimbursedAmount: Decimal = 0
+    
+    private var isExpense: Bool {
+        transaction.transactionType == .expense
+    }
+    
+    private var isReimbursement: Bool {
+        transaction.transactionType == .reimbursement
+    }
+    
+    private var effectiveAmount: Decimal {
+        if isExpense && reimbursedAmount > 0 {
+            return max(transaction.amount - reimbursedAmount, 0)
+        }
+        return transaction.amount
+    }
+    
+    private var hasReimbursements: Bool {
+        isExpense && reimbursedAmount > 0
+    }
+    
+    private var categoryColor: Color {
+        if let colorHex = transaction.categoryColor {
+            return Color(hex: colorHex.replacingOccurrences(of: "#", with: ""))
+        }
+        if isExpense { return Theme.Colors.expense }
+        if isReimbursement { return Theme.Colors.reimbursement }
+        return Theme.Colors.income
+    }
+    
+    /// Check if a string is a valid SF Symbol name
+    private func isSFSymbol(_ name: String) -> Bool {
+        UIImage(systemName: name) != nil
+    }
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(categoryColor.opacity(0.2))
+                    .frame(width: 40, height: 40)
+                
+                if let icon = transaction.categoryIcon, !icon.isEmpty {
+                    if isSFSymbol(icon) {
+                        Image(systemName: icon)
+                            .font(.system(size: 16))
+                            .foregroundStyle(categoryColor)
+                    } else {
+                        Text(icon)
+                            .font(.system(size: 18))
+                    }
+                } else {
+                    Image(systemName: isExpense ? "cart" : (isReimbursement ? "arrow.uturn.backward" : "wallet.pass"))
+                        .font(.system(size: 16))
+                        .foregroundStyle(categoryColor)
+                }
+            }
+            
+            // Details
+            VStack(alignment: .leading, spacing: 2) {
+                Text(transaction.description)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .lineLimit(1)
+                
+                HStack(spacing: Theme.Spacing.xs) {
+                    // Type indicator
+                    Text(isExpense ? "Expense" : (isReimbursement ? "Reimbursement" : "Income"))
+                        .font(.caption2)
+                        .foregroundStyle(categoryColor)
+                    
+                    Text("•")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                    
+                    Text(transaction.date.formatted(date: .abbreviated, time: .omitted))
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+            }
+            
+            Spacer()
+            
+            // Amount
+            VStack(alignment: .trailing, spacing: 2) {
+                HStack(spacing: 4) {
+                    if hasReimbursements {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.reimbursement)
+                    }
+                    
+                    Text(isExpense ? "-\(effectiveAmount.doubleValue.formattedAsMoney())" : "+\(effectiveAmount.doubleValue.formattedAsMoney())")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(isExpense ? Theme.Colors.expense : Theme.Colors.income)
+                }
+                
+                if hasReimbursements {
+                    Text("was \(transaction.amount.doubleValue.formattedAsMoney())")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                        .strikethrough()
+                }
+            }
+        }
+        .padding(.vertical, Theme.Spacing.sm)
+        .padding(.horizontal, Theme.Spacing.md)
     }
 }
 
