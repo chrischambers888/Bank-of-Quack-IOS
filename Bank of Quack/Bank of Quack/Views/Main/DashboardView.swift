@@ -3,6 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(TransactionViewModel.self) private var transactionViewModel
+    @ObservedObject private var themeProvider = ThemeProvider.shared
     
     @State private var memberBalances: [MemberBalance] = []
     @State private var allSplits: [UUID: [TransactionSplit]] = [:] // Keyed by transaction ID
@@ -566,9 +567,9 @@ struct DashboardView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                // Background gradient
+                // Background gradient (dynamic from current theme)
                 LinearGradient(
-                    colors: [Theme.Colors.primary900, Theme.Colors.primary700],
+                    colors: [Theme.Colors.gradientEnd, Theme.Colors.gradientStart],
                     startPoint: .top,
                     endPoint: .center
                 )

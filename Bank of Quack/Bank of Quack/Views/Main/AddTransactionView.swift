@@ -4,6 +4,7 @@ import Auth
 struct AddTransactionView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(TransactionViewModel.self) private var transactionViewModel
+    @ObservedObject private var themeProvider = ThemeProvider.shared
     
     @State private var transactionType: TransactionType = .expense
     @State private var amount = ""
@@ -215,7 +216,7 @@ struct AddTransactionView: View {
                                 )
                                 .datePickerStyle(.graphical)
                                 .tint(Theme.Colors.accent)
-                                .colorScheme(.dark)
+                                .colorScheme(Theme.Colors.isLightMode ? .light : .dark)
                                 .onChange(of: date) { _, _ in
                                     withAnimation {
                                         showDatePicker = false
@@ -329,6 +330,7 @@ struct AddTransactionView: View {
                             .buttonStyle(PrimaryButtonStyle())
                             .disabled(!isFormValid || isSubmitting)
                             .frame(maxWidth: .infinity)
+                            .id("addTransaction-\(themeProvider.currentPalette.id)")
                             
                             // Notes Icon Button (20%)
                             Button {
@@ -355,7 +357,7 @@ struct AddTransactionView: View {
             .navigationTitle("Add Transaction")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
         }
         .onAppear {
             initializeMemberSplits()
@@ -1216,7 +1218,7 @@ struct MemberPickerSheet: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -1434,7 +1436,7 @@ struct CategoryPickerSheet: View {
             .navigationTitle("Select Category")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -1941,7 +1943,7 @@ struct ExpensePickerSheet: View {
             .navigationTitle("Link to Expense")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

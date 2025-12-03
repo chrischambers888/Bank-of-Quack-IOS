@@ -47,6 +47,8 @@ final class AuthViewModel {
             await loadUserData()
         } else {
             isAuthenticated = false
+            // Ensure default theme is set when not authenticated
+            ThemeProvider.shared.resetToDefault()
         }
         
         isLoading = false
@@ -100,6 +102,10 @@ final class AuthViewModel {
             sectors = []
             sectorCategories = [:]
             isAuthenticated = false
+            
+            // Reset theme to Quack Classic when logging out
+            AppliedThemeManager.shared.clearForLogout()
+            ThemeProvider.shared.resetToDefault()
         } catch {
             self.error = error.localizedDescription
         }
@@ -149,6 +155,9 @@ final class AuthViewModel {
         
         currentHousehold = household
         
+        // Load this household's theme
+        loadHouseholdTheme(for: household.id)
+        
         do {
             // Fetch members (approved and inactive - we need inactive for historical data)
             let allMembers = try await dataService.fetchMembers(householdId: household.id)
@@ -176,6 +185,16 @@ final class AuthViewModel {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+    
+    /// Load the theme for a specific household and update the ThemeProvider
+    private func loadHouseholdTheme(for householdId: UUID) {
+        // Load household-specific theme from AppliedThemeManager
+        AppliedThemeManager.shared.loadTheme(for: householdId)
+        
+        // Update the ThemeProvider with the loaded palette
+        let palette = AppliedThemeManager.shared.getCurrentPalette()
+        ThemeProvider.shared.updatePalette(palette)
     }
     
     @MainActor
@@ -230,13 +249,10 @@ final class AuthViewModel {
                 displayName: displayName
             )
             
-            // Set default theme for new households
-            AppliedThemeManager.shared.setDefaultThemeIfNeeded()
-            
             // Reload user data
             await loadUserData()
             
-            // Select the new household
+            // Select the new household (this will set up the default theme)
             if let newHousehold = households.first(where: { $0.id == householdId }) {
                 await selectHousehold(newHousehold)
             }

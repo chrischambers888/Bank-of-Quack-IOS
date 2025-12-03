@@ -27,7 +27,7 @@ struct CategoriesView: View {
             .navigationTitle("Categories")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Done") {

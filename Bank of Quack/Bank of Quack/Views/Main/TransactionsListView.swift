@@ -3,6 +3,7 @@ import SwiftUI
 struct TransactionsListView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(TransactionViewModel.self) private var transactionViewModel
+    @ObservedObject private var themeProvider = ThemeProvider.shared
     
     @State private var searchText = ""
     @State private var selectedTransaction: TransactionView?
@@ -89,7 +90,7 @@ struct TransactionsListView: View {
             .navigationTitle("Transactions")
             .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
             .searchable(text: $searchText, prompt: "Search transactions")
             .sheet(item: $selectedTransaction) { transaction in
                 TransactionDetailView(transaction: transaction)

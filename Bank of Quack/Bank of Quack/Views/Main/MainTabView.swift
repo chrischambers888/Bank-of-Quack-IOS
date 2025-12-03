@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MainTabView: View {
     @Environment(AuthViewModel.self) private var authViewModel
+    @ObservedObject private var themeProvider = ThemeProvider.shared
     @State private var selectedTab = 0
     @State private var transactionViewModel = TransactionViewModel()
     
@@ -34,21 +35,38 @@ struct MainTabView: View {
                 }
                 .tag(3)
         }
-        .tint(Theme.Colors.accent)
+        .tint(themeProvider.accent)
         .onAppear {
-            // Configure tab bar appearance
-            let appearance = UITabBarAppearance()
-            appearance.configureWithOpaqueBackground()
-            appearance.backgroundColor = UIColor(Theme.Colors.primary900)
-            
-            UITabBar.appearance().standardAppearance = appearance
-            UITabBar.appearance().scrollEdgeAppearance = appearance
+            updateTabBarAppearance()
+        }
+        .onChange(of: themeProvider.currentPalette.id) { _, _ in
+            updateTabBarAppearance()
         }
         .task {
             if let householdId = authViewModel.currentHousehold?.id {
                 await transactionViewModel.fetchTransactions(householdId: householdId)
             }
         }
+        // Force tab bar to rebuild when theme changes
+        .id(themeProvider.currentPalette.id)
+    }
+    
+    private func updateTabBarAppearance() {
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(themeProvider.backgroundPrimary)
+        
+        // Configure item colors based on theme
+        let normalColor = UIColor(themeProvider.textSecondary)
+        let selectedColor = UIColor(themeProvider.accent)
+        
+        appearance.stackedLayoutAppearance.normal.iconColor = normalColor
+        appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: normalColor]
+        appearance.stackedLayoutAppearance.selected.iconColor = selectedColor
+        appearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: selectedColor]
+        
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
     }
 }
 
@@ -56,4 +74,3 @@ struct MainTabView: View {
     MainTabView()
         .environment(AuthViewModel())
 }
-

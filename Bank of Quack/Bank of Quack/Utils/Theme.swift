@@ -1,8 +1,78 @@
 import SwiftUI
+import Combine
+
+// MARK: - Theme Provider (Dynamic Theme Colors)
+
+/// Observable class that provides dynamic theme colors based on the current household's theme.
+/// Falls back to Quack Classic when no theme is set or user is logged out.
+class ThemeProvider: ObservableObject {
+    static let shared = ThemeProvider()
+    
+    @Published private(set) var currentPalette: ColorPalette
+    
+    private init() {
+        self.currentPalette = QuackPalettes.quackClassic
+    }
+    
+    /// Update the current palette (called when household changes or theme is applied)
+    func updatePalette(_ palette: ColorPalette?) {
+        currentPalette = palette ?? QuackPalettes.quackClassic
+        objectWillChange.send()
+    }
+    
+    /// Reset to default theme (used when logging out)
+    func resetToDefault() {
+        currentPalette = QuackPalettes.quackClassic
+        objectWillChange.send()
+    }
+    
+    // MARK: - Dynamic Colors
+    
+    var gradientStart: Color { currentPalette.gradientStartColor }
+    var gradientEnd: Color { currentPalette.gradientEndColor }
+    var accent: Color { currentPalette.accent }
+    var textPrimary: Color { currentPalette.textPrimary }
+    var textSecondary: Color { currentPalette.textSecondary }
+    var backgroundPrimary: Color { currentPalette.bgPrimary }
+    var backgroundSecondary: Color { currentPalette.bgSecondary }
+    var isLightMode: Bool { currentPalette.isLightMode }
+    
+    // Derived colors
+    var textTertiary: Color { textSecondary.opacity(0.75) }
+    var textMuted: Color { textSecondary.opacity(0.5) }
+    var textInverse: Color { isLightMode ? .white : Color(hex: "212121") }
+    var backgroundCard: Color { textPrimary.opacity(0.1) }
+    var backgroundCardSolid: Color { backgroundSecondary }
+    var backgroundInput: Color { textPrimary.opacity(0.15) }
+    var borderLight: Color { textPrimary.opacity(0.2) }
+    var borderDefault: Color { textPrimary.opacity(0.3) }
+    
+    // Gradient helper
+    var backgroundGradient: LinearGradient {
+        LinearGradient(
+            colors: [gradientStart, gradientEnd],
+            startPoint: .top,
+            endPoint: .center
+        )
+    }
+}
+
+// MARK: - Static Theme (Backwards Compatibility + Spacing/Radius)
 
 enum Theme {
+    /// Dynamic colors from current theme - use these for themed views
+    static var current: ThemeProvider { ThemeProvider.shared }
+    
     enum Colors {
-        // Primary palette - Deep teal/emerald tones
+        // MARK: - Dynamic Colors (from current theme)
+        
+        /// Returns the current theme's gradient start color
+        static var gradientStart: Color { ThemeProvider.shared.gradientStart }
+        /// Returns the current theme's gradient end color  
+        static var gradientEnd: Color { ThemeProvider.shared.gradientEnd }
+        
+        // MARK: - Static Primary Palette (Quack Classic - used as fallback)
+        
         static let primary50 = Color(hex: "E0F2F1")
         static let primary100 = Color(hex: "B2DFDB")
         static let primary200 = Color(hex: "80CBC4")
@@ -14,27 +84,36 @@ enum Theme {
         static let primary800 = Color(hex: "00695C")
         static let primary900 = Color(hex: "004D40")
         
-        // Secondary palette - Warm gold/amber (accent)
-        static let accent = Color(hex: "FFCA28")
+        // MARK: - Dynamic Accent (from current theme)
+        
+        /// Returns the current theme's accent color
+        static var accent: Color { ThemeProvider.shared.accent }
         static let accentLight = Color(hex: "FFE082")
         static let accentDark = Color(hex: "FFB300")
         
-        // Background colors
-        static let backgroundPrimary = Color(hex: "004D40")
-        static let backgroundSecondary = Color(hex: "00695C")
-        static let backgroundTertiary = Color(hex: "26A69A")
-        static let backgroundCard = Color.white.opacity(0.1)
-        static let backgroundCardSolid = Color(hex: "00796B")
-        static let backgroundInput = Color.white.opacity(0.15)
+        // MARK: - Dynamic Background Colors
         
-        // Text colors
-        static let textPrimary = Color.white
-        static let textSecondary = Color.white.opacity(0.8)
-        static let textTertiary = Color.white.opacity(0.6)
-        static let textMuted = Color.white.opacity(0.4)
-        static let textInverse = Color(hex: "212121")
+        /// Returns the current theme's primary background
+        static var backgroundPrimary: Color { ThemeProvider.shared.backgroundPrimary }
+        /// Returns the current theme's secondary background
+        static var backgroundSecondary: Color { ThemeProvider.shared.backgroundSecondary }
+        static var backgroundTertiary: Color { ThemeProvider.shared.gradientStart }
+        static var backgroundCard: Color { ThemeProvider.shared.backgroundCard }
+        static var backgroundCardSolid: Color { ThemeProvider.shared.backgroundCardSolid }
+        static var backgroundInput: Color { ThemeProvider.shared.backgroundInput }
         
-        // Semantic colors
+        // MARK: - Dynamic Text Colors
+        
+        /// Returns the current theme's primary text color
+        static var textPrimary: Color { ThemeProvider.shared.textPrimary }
+        /// Returns the current theme's secondary text color
+        static var textSecondary: Color { ThemeProvider.shared.textSecondary }
+        static var textTertiary: Color { ThemeProvider.shared.textTertiary }
+        static var textMuted: Color { ThemeProvider.shared.textMuted }
+        static var textInverse: Color { ThemeProvider.shared.textInverse }
+        
+        // MARK: - Semantic Colors (static - consistent across themes)
+        
         static let success = Color(hex: "4CAF50")
         static let successLight = Color(hex: "81C784")
         static let warning = Color(hex: "FF9800")
@@ -42,15 +121,21 @@ enum Theme {
         static let errorLight = Color(hex: "E57373")
         static let info = Color(hex: "2196F3")
         
-        // Transaction type colors
+        // MARK: - Transaction Type Colors (static - consistent across themes)
+        
         static let expense = Color(hex: "EF5350")
         static let income = Color(hex: "66BB6A")
         static let settlement = Color(hex: "42A5F5")
         static let reimbursement = Color(hex: "AB47BC")
         
-        // Border
-        static let borderLight = Color.white.opacity(0.2)
-        static let borderDefault = Color.white.opacity(0.3)
+        // MARK: - Dynamic Border Colors
+        
+        static var borderLight: Color { ThemeProvider.shared.borderLight }
+        static var borderDefault: Color { ThemeProvider.shared.borderDefault }
+        
+        // MARK: - Light Mode Detection
+        
+        static var isLightMode: Bool { ThemeProvider.shared.isLightMode }
     }
     
     enum Spacing {
@@ -99,7 +184,7 @@ extension Color {
     }
 }
 
-// MARK: - View Modifiers
+// MARK: - View Modifiers (Dynamic)
 
 struct CardStyle: ViewModifier {
     func body(content: Content) -> some View {
@@ -176,5 +261,23 @@ extension View {
     func inputFieldStyle() -> some View {
         modifier(InputFieldStyle())
     }
+    
+    /// Apply the current theme's background gradient
+    func themedBackground() -> some View {
+        self.background(
+            LinearGradient(
+                colors: [Theme.Colors.gradientStart, Theme.Colors.gradientEnd],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .ignoresSafeArea()
+        )
+    }
+    
+    /// Apply toolbar color scheme based on current theme
+    func themedToolbar() -> some View {
+        self
+            .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
+            .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
+    }
 }
-

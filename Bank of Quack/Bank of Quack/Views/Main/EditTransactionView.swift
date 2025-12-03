@@ -4,6 +4,7 @@ struct EditTransactionView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(TransactionViewModel.self) private var transactionViewModel
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var themeProvider = ThemeProvider.shared
     
     let transaction: TransactionView
     
@@ -236,7 +237,7 @@ struct EditTransactionView: View {
                                 )
                                 .datePickerStyle(.graphical)
                                 .tint(Theme.Colors.accent)
-                                .colorScheme(.dark)
+                                .colorScheme(Theme.Colors.isLightMode ? .light : .dark)
                                 .onChange(of: date) { _, _ in
                                     withAnimation {
                                         showDatePicker = false
@@ -351,6 +352,7 @@ struct EditTransactionView: View {
                                 .buttonStyle(PrimaryButtonStyle())
                                 .disabled(!isFormValid || isSubmitting)
                                 .frame(maxWidth: .infinity)
+                                .id("saveChanges-\(themeProvider.currentPalette.id)")
                                 
                                 // Notes Icon Button
                                 Button {
@@ -393,7 +395,7 @@ struct EditTransactionView: View {
             .navigationTitle("Edit Transaction")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
