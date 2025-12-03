@@ -117,21 +117,13 @@ struct ExpenseDonutChart: View {
                             startAngle: categoryStartAngle(for: index, in: selected),
                             endAngle: categoryEndAngle(for: index, in: selected),
                             animationProgress: categorySliceAnimations[category.id] ?? 0,
-                            isSelected: category.id == selectedCategoryId,
+                            isSelected: false,
                             color: category.color,
                             lineWidth: categoryDonutWidth,
                             useGap: true
                         )
                         .frame(width: chartSize - donutWidth - 8, height: chartSize - donutWidth - 8)
-                        .contentShape(DonutSliceShape(
-                            startAngle: categoryStartAngle(for: index, in: selected),
-                            endAngle: categoryEndAngle(for: index, in: selected),
-                            lineWidth: categoryDonutWidth
-                        ))
-                        .onTapGesture {
-                            selectedCategoryId = category.id
-                            showingCategoryPopup = true
-                        }
+                        .allowsHitTesting(false)
                     }
                 }
                 

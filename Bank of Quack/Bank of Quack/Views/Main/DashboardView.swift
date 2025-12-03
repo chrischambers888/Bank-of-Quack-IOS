@@ -672,7 +672,7 @@ struct DashboardView: View {
     private var headerSection: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Hello, \(authViewModel.currentMember?.displayName ?? "there")! 👋")
+                Text("Hello, \(authViewModel.currentMember?.displayName ?? "there")!")
                     .font(.title2)
                     .fontWeight(.semibold)
                     .foregroundStyle(Theme.Colors.textPrimary)
@@ -689,7 +689,7 @@ struct DashboardView: View {
                             .foregroundStyle(Theme.Colors.accent)
                             .lineLimit(2)
                     } else {
-                        Text("Showing \(filterManager.filter.dateDescription)")
+                        Text(filterManager.filter.dateDescription)
                             .font(.caption)
                             .foregroundStyle(Theme.Colors.textMuted)
                     }
