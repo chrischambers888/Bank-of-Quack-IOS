@@ -141,20 +141,18 @@ struct EditTransactionView: View {
                 
                 ScrollView {
                     VStack(spacing: Theme.Spacing.lg) {
-                        // Transaction Type Selector
+                        // Transaction Type Display (non-editable)
                         HStack(spacing: Theme.Spacing.sm) {
-                            ForEach(TransactionType.allCases, id: \.self) { type in
-                                TransactionTypeButton(
-                                    type: type,
-                                    isSelected: transactionType == type
-                                ) {
-                                    withAnimation {
-                                        switchTransactionType(to: type)
-                                    }
-                                }
-                            }
+                            Image(systemName: transactionType.icon)
+                                .font(.body)
+                            Text(transactionType.displayName)
+                                .font(.headline)
                         }
+                        .foregroundStyle(transactionType.color)
                         .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.vertical, Theme.Spacing.sm)
+                        .background(transactionType.color.opacity(0.15))
+                        .clipShape(Capsule())
                         .padding(.top, Theme.Spacing.md)
                         
                         // Amount Input
@@ -805,46 +803,6 @@ struct EditTransactionView: View {
     }
     
     // MARK: - Helper Methods
-    
-    private func switchTransactionType(to newType: TransactionType) {
-        let oldType = transactionType
-        transactionType = newType
-        
-        // Clear type-specific fields when switching types
-        if oldType != newType {
-            // Clear expense-specific fields
-            if oldType == .expense {
-                categoryId = nil
-                splitType = .equal
-                splitMemberId = nil
-                showCustomSplitEditor = false
-                paidByType = .single
-                showCustomPaidByEditor = false
-            }
-            
-            // Clear settlement-specific fields
-            if oldType == .settlement {
-                paidToMemberId = nil
-            }
-            
-            // Clear reimbursement-specific fields
-            if oldType == .reimbursement {
-                reimbursesTransactionId = nil
-            }
-            
-            // Reset paid by to current user when switching to a type that uses it
-            if newType == .expense || newType == .settlement || newType == .reimbursement || newType == .income {
-                paidByMemberId = authViewModel.currentMember?.id
-                paidByType = .single
-            }
-            
-            // Re-initialize member splits for expenses
-            if newType == .expense {
-                initializeMemberSplits()
-                updateMemberSplitsForAmount()
-            }
-        }
-    }
     
     private func initializeMemberSplits() {
         memberSplits = approvedMembers.map { member in

@@ -39,6 +39,7 @@ struct AddTransactionView: View {
     @State private var showSplitMemberPicker = false
     @State private var showNotes = false
     @State private var showExpensePicker = false
+    @State private var showBalancesSheet = false
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
@@ -307,6 +308,9 @@ struct AddTransactionView: View {
                                     )
                                     .presentationDetents([.medium])
                                 }
+                                
+                                // Current Balances Card
+                                settlementBalancesCard
                             }
                             
                             // Split Type Section (for expense only, moved category to date row)
@@ -764,6 +768,112 @@ struct AddTransactionView: View {
     /// Expenses that can be linked to for reimbursement
     private var linkableExpenses: [TransactionView] {
         transactionViewModel.transactions.filter { $0.transactionType == .expense }
+    }
+    
+    // MARK: - Settlement Balances Card
+    
+    private var settlementBalancesCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            HStack {
+                Text("Current Balances")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                
+                Spacer()
+                
+                if !memberBalances.isEmpty {
+                    Button {
+                        showBalancesSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Details")
+                                .font(.caption)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(Theme.Colors.accent)
+                    }
+                }
+            }
+            
+            if memberBalances.isEmpty {
+                // Loading or empty state
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Loading balances...")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+                .padding(.vertical, Theme.Spacing.sm)
+            } else {
+                // Compact balance summary
+                VStack(spacing: Theme.Spacing.xs) {
+                    ForEach(sortedBalances, id: \.memberId) { balance in
+                        HStack {
+                            Text(balance.displayName)
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                                .lineLimit(1)
+                            
+                            Spacer()
+                            
+                            Text(balance.balance.doubleValue.formattedAsMoney(showSign: true))
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundStyle(balanceColor(for: balance.balance))
+                        }
+                    }
+                }
+                .padding(Theme.Spacing.sm)
+                .background(Theme.Colors.backgroundCard)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+            }
+            
+            // Helper text
+            Text("Positive = owed money • Negative = owes money")
+                .font(.caption2)
+                .foregroundStyle(Theme.Colors.textMuted)
+        }
+        .sheet(isPresented: $showBalancesSheet) {
+            SettlementBalancesSheet(
+                balances: memberBalances,
+                members: authViewModel.members,
+                onSelectSettlement: { fromMember, toMember, amount in
+                    // Pre-fill the settlement form
+                    paidByMemberId = fromMember
+                    paidToMemberId = toMember
+                    self.amount = String(format: "%.2f", abs(amount))
+                    showBalancesSheet = false
+                }
+            )
+            .presentationDetents([.medium, .large])
+        }
+    }
+    
+    private var sortedBalances: [MemberBalance] {
+        memberBalances
+            .filter { balance in
+                // Hide inactive members with zero balance
+                if let member = authViewModel.members.first(where: { $0.id == balance.memberId }),
+                   member.isInactive,
+                   abs(balance.balance.doubleValue) < 0.01 {
+                    return false
+                }
+                return true
+            }
+            .sorted { abs($0.balance.doubleValue) > abs($1.balance.doubleValue) }
+    }
+    
+    private func balanceColor(for balance: Decimal) -> Color {
+        let value = balance.doubleValue
+        if abs(value) < 0.01 {
+            return Theme.Colors.textSecondary
+        } else if value > 0 {
+            return Theme.Colors.income // Owed money (positive)
+        } else {
+            return Theme.Colors.expense // Owes money (negative)
+        }
     }
     
     // MARK: - Helper Methods
@@ -2034,6 +2144,328 @@ struct ExpensePickerRow: View {
             .padding(.vertical, Theme.Spacing.sm)
             .background(isSelected ? Theme.Colors.accent.opacity(0.15) : Color.clear)
         }
+    }
+}
+
+// MARK: - Settlement Balances Sheet
+
+struct SettlementBalancesSheet: View {
+    let balances: [MemberBalance]
+    let members: [HouseholdMember]
+    let onSelectSettlement: (UUID, UUID, Double) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    /// Balances filtered to exclude inactive members with zero balance
+    private var filteredBalances: [MemberBalance] {
+        balances.filter { balance in
+            // Hide inactive members with zero balance
+            if let member = members.first(where: { $0.id == balance.memberId }),
+               member.isInactive,
+               abs(balance.balance.doubleValue) < 0.01 {
+                return false
+            }
+            return true
+        }
+    }
+    
+    private var sortedBalances: [MemberBalance] {
+        filteredBalances.sorted { $0.balance.doubleValue > $1.balance.doubleValue }
+    }
+    
+    /// Members who are owed money (positive balance)
+    private var creditors: [MemberBalance] {
+        filteredBalances.filter { $0.balance.doubleValue > 0.01 }
+            .sorted { $0.balance.doubleValue > $1.balance.doubleValue }
+    }
+    
+    /// Members who owe money (negative balance)
+    private var debtors: [MemberBalance] {
+        filteredBalances.filter { $0.balance.doubleValue < -0.01 }
+            .sorted { $0.balance.doubleValue < $1.balance.doubleValue }
+    }
+    
+    /// Calculate suggested settlements to balance everyone out
+    private var suggestedSettlements: [(from: MemberBalance, to: MemberBalance, amount: Double)] {
+        var settlements: [(from: MemberBalance, to: MemberBalance, amount: Double)] = []
+        var debtorsCopy = debtors.map { ($0, abs($0.balance.doubleValue)) }
+        var creditorsCopy = creditors.map { ($0, $0.balance.doubleValue) }
+        
+        var i = 0, j = 0
+        while i < debtorsCopy.count && j < creditorsCopy.count {
+            let (debtor, debtAmount) = debtorsCopy[i]
+            let (creditor, creditAmount) = creditorsCopy[j]
+            
+            let settlementAmount = min(debtAmount, creditAmount)
+            if settlementAmount >= 0.01 {
+                settlements.append((from: debtor, to: creditor, amount: settlementAmount))
+            }
+            
+            debtorsCopy[i].1 -= settlementAmount
+            creditorsCopy[j].1 -= settlementAmount
+            
+            if debtorsCopy[i].1 < 0.01 { i += 1 }
+            if creditorsCopy[j].1 < 0.01 { j += 1 }
+        }
+        
+        return settlements
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                        // Summary section
+                        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                            Text("All Balances")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            VStack(spacing: 0) {
+                                ForEach(sortedBalances, id: \.memberId) { balance in
+                                    BalanceRow(balance: balance, member: memberFor(balance.memberId))
+                                    
+                                    if balance.memberId != sortedBalances.last?.memberId {
+                                        Divider()
+                                            .background(Theme.Colors.borderLight)
+                                    }
+                                }
+                            }
+                            .background(Theme.Colors.backgroundCard)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        // Suggested Settlements
+                        if !suggestedSettlements.isEmpty {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                                Text("Suggested Settlements")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                
+                                Text("Tap a suggestion to pre-fill the form")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                
+                                VStack(spacing: Theme.Spacing.sm) {
+                                    ForEach(suggestedSettlements.indices, id: \.self) { index in
+                                        let settlement = suggestedSettlements[index]
+                                        SuggestedSettlementRow(
+                                            from: settlement.from,
+                                            to: settlement.to,
+                                            amount: settlement.amount,
+                                            fromMember: memberFor(settlement.from.memberId),
+                                            toMember: memberFor(settlement.to.memberId)
+                                        ) {
+                                            onSelectSettlement(
+                                                settlement.from.memberId,
+                                                settlement.to.memberId,
+                                                settlement.amount
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Legend
+                        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Circle()
+                                    .fill(Theme.Colors.income)
+                                    .frame(width: 8, height: 8)
+                                Text("Owed money (paid more than share)")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                            
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Circle()
+                                    .fill(Theme.Colors.expense)
+                                    .frame(width: 8, height: 8)
+                                Text("Owes money (paid less than share)")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.top, Theme.Spacing.sm)
+                        
+                        Spacer(minLength: 50)
+                    }
+                    .padding(.top, Theme.Spacing.md)
+                }
+            }
+            .navigationTitle("Household Balances")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
+            .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            }
+        }
+    }
+    
+    private func memberFor(_ memberId: UUID) -> HouseholdMember? {
+        members.first { $0.id == memberId }
+    }
+}
+
+struct BalanceRow: View {
+    let balance: MemberBalance
+    let member: HouseholdMember?
+    
+    private var balanceColor: Color {
+        let value = balance.balance.doubleValue
+        if abs(value) < 0.01 {
+            return Theme.Colors.textSecondary
+        } else if value > 0 {
+            return Theme.Colors.income
+        } else {
+            return Theme.Colors.expense
+        }
+    }
+    
+    private var statusText: String {
+        let value = balance.balance.doubleValue
+        if abs(value) < 0.01 {
+            return "Settled"
+        } else if value > 0 {
+            return "is owed"
+        } else {
+            return "owes"
+        }
+    }
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            // Avatar
+            if let member = member {
+                Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.Colors.textInverse)
+                    .frame(width: 36, height: 36)
+                    .background(member.swiftUIColor)
+                    .clipShape(Circle())
+            }
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(balance.displayName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(abs(balance.balance.doubleValue).formattedAsMoney(showSign: false))
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(balanceColor)
+                
+                HStack(spacing: 4) {
+                    Text("Paid: \(balance.totalPaid.doubleValue.formattedAsMoney(showSign: false))")
+                        .font(.caption2)
+                    Text("•")
+                        .font(.caption2)
+                    Text("Share: \(balance.totalShare.doubleValue.formattedAsMoney(showSign: false))")
+                        .font(.caption2)
+                }
+                .foregroundStyle(Theme.Colors.textMuted)
+            }
+        }
+        .padding(Theme.Spacing.sm)
+    }
+}
+
+struct SuggestedSettlementRow: View {
+    let from: MemberBalance
+    let to: MemberBalance
+    let amount: Double
+    let fromMember: HouseholdMember?
+    let toMember: HouseholdMember?
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Theme.Spacing.sm) {
+                // From member
+                VStack(spacing: 2) {
+                    if let member = fromMember {
+                        Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Theme.Colors.textInverse)
+                            .frame(width: 28, height: 28)
+                            .background(member.swiftUIColor)
+                            .clipShape(Circle())
+                    }
+                    Text(from.displayName)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .lineLimit(1)
+                }
+                .frame(width: 60)
+                
+                // Arrow with amount
+                VStack(spacing: 2) {
+                    Image(systemName: "arrow.right")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.accent)
+                    Text(amount.formattedAsMoney(showSign: false))
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                }
+                .frame(maxWidth: .infinity)
+                
+                // To member
+                VStack(spacing: 2) {
+                    if let member = toMember {
+                        Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Theme.Colors.textInverse)
+                            .frame(width: 28, height: 28)
+                            .background(member.swiftUIColor)
+                            .clipShape(Circle())
+                    }
+                    Text(to.displayName)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .lineLimit(1)
+                }
+                .frame(width: 60)
+                
+                // Chevron
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+            .padding(Theme.Spacing.sm)
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                    .strokeBorder(Theme.Colors.accent.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 
