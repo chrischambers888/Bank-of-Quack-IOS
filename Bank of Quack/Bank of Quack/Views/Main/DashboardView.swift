@@ -5,6 +5,7 @@ struct DashboardView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(TransactionViewModel.self) private var transactionViewModel
     @ObservedObject private var themeProvider = ThemeProvider.shared
+    @State private var privacyManager = PrivacyManager.shared
     
     @State private var memberBalances: [MemberBalance] = []
     @State private var allSplits: [UUID: [TransactionSplit]] = [:] // Keyed by transaction ID
@@ -190,6 +191,19 @@ struct DashboardView: View {
     /// Count of members with non-zero balances (for display in balance card)
     private var membersWithNonZeroBalance: Int {
         filteredMemberBalances.filter { abs($0.balance.doubleValue) >= 0.01 }.count
+    }
+    
+    /// Whether to show the balance widget on the dashboard
+    /// Show when: multiple active members OR single active member with non-zero balance
+    private var shouldShowBalanceWidget: Bool {
+        // Multiple active members - always show (balance tracking makes sense)
+        if activeMembers.count > 1 {
+            return true
+        }
+        
+        // Single active member - only show if they have a non-zero balance
+        // (could happen from inactive members or old shared transactions)
+        return abs(filteredCurrentMemberBalance.doubleValue) >= 0.01
     }
     
     /// Get all category IDs within selected sectors
@@ -733,34 +747,41 @@ struct DashboardView: View {
                             }
                             .buttonStyle(.plain)
                             
+                            // Hide income card when privacy mode is enabled
+                            if !privacyManager.hideIncomeData {
+                                Button {
+                                    showIncomeDetail = true
+                                } label: {
+                                    BalanceCard(
+                                        title: "Total Income",
+                                        amount: filteredTotalIncome,
+                                        icon: "arrow.up.circle.fill",
+                                        color: Theme.Colors.income
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        // Net Balance (using filtered totals) - hide when income is hidden
+                        if !privacyManager.hideIncomeData {
                             Button {
-                                showIncomeDetail = true
+                                showNetBalanceDetail = true
                             } label: {
-                                BalanceCard(
-                                    title: "Total Income",
-                                    amount: filteredTotalIncome,
-                                    icon: "arrow.up.circle.fill",
-                                    color: Theme.Colors.income
+                                NetBalanceCard(
+                                    income: filteredTotalIncome,
+                                    expenses: filteredTotalExpenses
                                 )
                             }
                             .buttonStyle(.plain)
+                            .padding(.horizontal, Theme.Spacing.md)
                         }
-                        .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Net Balance (using filtered totals)
-                        Button {
-                            showNetBalanceDetail = true
-                        } label: {
-                            NetBalanceCard(
-                                income: filteredTotalIncome,
-                                expenses: filteredTotalExpenses
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, Theme.Spacing.md)
-                        
-                        // Member Balance (only show if multiple members have balance history)
-                        if authViewModel.members.count > 1 {
+                        // Member Balance - show when:
+                        // - Multiple active members, OR
+                        // - Only one active member but has non-zero balance (due to inactive members/old transactions)
+                        if shouldShowBalanceWidget {
                             MemberBalanceCardWithInfo(
                                 balance: filteredCurrentMemberBalance,
                                 memberCount: membersWithNonZeroBalance,

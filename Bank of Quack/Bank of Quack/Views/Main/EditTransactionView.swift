@@ -129,6 +129,8 @@ struct EditTransactionView: View {
         case .settlement:
             return paidByMemberId != nil && paidToMemberId != nil && paidByMemberId != paidToMemberId
         case .reimbursement:
+            // Check that reimbursement amount doesn't exceed remaining expense amount
+            if reimbursementExceedsExpense { return false }
             return paidByMemberId != nil
         }
     }
@@ -260,12 +262,14 @@ struct EditTransactionView: View {
                             }
                             
                             // Paid By Section (for expense, settlement only)
-                            if transactionType == .expense || transactionType == .settlement {
+                            // Hide for single-member households on expenses (always current user)
+                            if transactionType == .settlement || (transactionType == .expense && activeMembers.count > 1) {
                                 paidBySection
                             }
                             
                             // Received By (for income and reimbursement)
-                            if transactionType == .income || transactionType == .reimbursement {
+                            // Hide for single-member households (always current user)
+                            if (transactionType == .income || transactionType == .reimbursement) && activeMembers.count > 1 {
                                 FormField(label: "Received By") {
                                     if approvedMembers.count > 5 {
                                         MemberPickerButton(
@@ -782,6 +786,19 @@ struct EditTransactionView: View {
                 Text("Unlinked reimbursements will count as income")
                     .font(.caption2)
                     .foregroundStyle(Theme.Colors.textMuted)
+            } else if let remaining = remainingReimbursableAmount {
+                if reimbursementExceedsExpense {
+                    HStack(spacing: Theme.Spacing.xs) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("Amount exceeds remaining \(remaining.doubleValue.formattedAsMoney(applyPrivacy: false))")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.error)
+                } else {
+                    Text("Remaining: \(remaining.doubleValue.formattedAsMoney(applyPrivacy: false)) of \(selectedExpense?.amount.doubleValue.formattedAsMoney(applyPrivacy: false) ?? "$0.00")")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
             } else {
                 Text("Linked reimbursements reduce the original expense value")
                     .font(.caption2)
@@ -800,6 +817,37 @@ struct EditTransactionView: View {
     /// Expenses that can be linked to for reimbursement
     private var linkableExpenses: [TransactionView] {
         transactionViewModel.transactions.filter { $0.transactionType == .expense }
+    }
+    
+    /// Calculate total reimbursements already applied to a specific expense (excluding this transaction if editing a reimbursement)
+    private func existingReimbursements(for expenseId: UUID) -> Decimal {
+        transactionViewModel.transactions
+            .filter { 
+                $0.transactionType == .reimbursement && 
+                $0.reimbursesTransactionId == expenseId &&
+                $0.id != transaction.id // Exclude current transaction when editing
+            }
+            .reduce(Decimal(0)) { $0 + $1.amount }
+    }
+    
+    /// The selected expense for reimbursement (if any)
+    private var selectedExpense: TransactionView? {
+        guard let id = reimbursesTransactionId else { return nil }
+        return transactionViewModel.transactions.first { $0.id == id }
+    }
+    
+    /// Remaining amount that can be reimbursed for the selected expense
+    private var remainingReimbursableAmount: Decimal? {
+        guard let expense = selectedExpense else { return nil }
+        let existing = existingReimbursements(for: expense.id)
+        return max(expense.amount - existing, 0)
+    }
+    
+    /// Whether the current reimbursement amount exceeds the remaining reimbursable amount
+    private var reimbursementExceedsExpense: Bool {
+        guard transactionType == .reimbursement,
+              let remaining = remainingReimbursableAmount else { return false }
+        return parsedAmount > remaining
     }
     
     // MARK: - Helper Methods

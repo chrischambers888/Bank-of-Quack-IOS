@@ -5,20 +5,31 @@ struct MainTabView: View {
     @ObservedObject private var themeProvider = ThemeProvider.shared
     @State private var selectedTab = 0
     @State private var transactionViewModel = TransactionViewModel()
+    @State private var privacyManager = PrivacyManager.shared
+    
+    /// Icon for Home tab - shows lock when privacy is active
+    private var homeIcon: String {
+        privacyManager.isPrivacyActive ? "lock.fill" : "house.fill"
+    }
+    
+    /// Icon for Transactions tab - shows lock when privacy is active
+    private var transactionsIcon: String {
+        privacyManager.isPrivacyActive ? "lock.fill" : "list.bullet"
+    }
     
     var body: some View {
         TabView(selection: $selectedTab) {
             DashboardView()
                 .environment(transactionViewModel)
                 .tabItem {
-                    Label("Home", systemImage: "house.fill")
+                    Label("Home", systemImage: homeIcon)
                 }
                 .tag(0)
             
             TransactionsListView()
                 .environment(transactionViewModel)
                 .tabItem {
-                    Label("Transactions", systemImage: "list.bullet")
+                    Label("Transactions", systemImage: transactionsIcon)
                 }
                 .tag(1)
             
@@ -47,8 +58,8 @@ struct MainTabView: View {
                 await transactionViewModel.fetchTransactions(householdId: householdId)
             }
         }
-        // Force tab bar to rebuild when theme changes
-        .id(themeProvider.currentPalette.id)
+        // Force tab bar to rebuild when theme or privacy changes
+        .id("\(themeProvider.currentPalette.id)-\(privacyManager.isPrivacyActive)")
     }
     
     private func updateTabBarAppearance() {

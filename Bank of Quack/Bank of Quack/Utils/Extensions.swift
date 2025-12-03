@@ -46,7 +46,14 @@ extension Decimal {
         NSDecimalNumber(decimal: self).doubleValue
     }
     
-    func formatted(as style: MoneyFormatStyle = .standard) -> String {
+    func formatted(as style: MoneyFormatStyle = .standard, applyPrivacy: Bool = true) -> String {
+        let displayValue: Decimal
+        if applyPrivacy && PrivacyManager.shared.randomizeValues {
+            displayValue = PrivacyManager.shared.randomizedAmount(self)
+        } else {
+            displayValue = self
+        }
+        
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.currencySymbol = "$"
@@ -60,7 +67,7 @@ extension Decimal {
             formatter.maximumFractionDigits = 0
         }
         
-        guard let formatted = formatter.string(from: self as NSDecimalNumber) else {
+        guard let formatted = formatter.string(from: displayValue as NSDecimalNumber) else {
             return "$0.00"
         }
         return "$\(formatted)"
@@ -72,19 +79,26 @@ extension Decimal {
 }
 
 extension Double {
-    func formattedAsMoney(showSign: Bool = false) -> String {
+    func formattedAsMoney(showSign: Bool = false, applyPrivacy: Bool = true) -> String {
+        let displayValue: Double
+        if applyPrivacy && PrivacyManager.shared.randomizeValues {
+            displayValue = PrivacyManager.shared.randomizedAmount(self)
+        } else {
+            displayValue = self
+        }
+        
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
         
-        guard let formatted = formatter.string(from: NSNumber(value: abs(self))) else {
+        guard let formatted = formatter.string(from: NSNumber(value: abs(displayValue))) else {
             return "$0.00"
         }
         
-        if self < 0 {
+        if displayValue < 0 {
             return "-$\(formatted)"
-        } else if showSign && self > 0 {
+        } else if showSign && displayValue > 0 {
             return "+$\(formatted)"
         }
         return "$\(formatted)"

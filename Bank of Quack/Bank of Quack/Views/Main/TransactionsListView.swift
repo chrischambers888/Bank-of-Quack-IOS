@@ -4,18 +4,27 @@ struct TransactionsListView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(TransactionViewModel.self) private var transactionViewModel
     @ObservedObject private var themeProvider = ThemeProvider.shared
+    @State private var privacyManager = PrivacyManager.shared
     
     @State private var searchText = ""
     @State private var selectedTransaction: TransactionView?
     
     private var filteredTransactions: [TransactionView] {
-        if searchText.isEmpty {
-            return transactionViewModel.transactions
+        var transactions = transactionViewModel.transactions
+        
+        // Filter out income transactions when privacy mode is enabled
+        if privacyManager.hideIncomeData {
+            transactions = transactions.filter { $0.transactionType != .income }
         }
-        return transactionViewModel.transactions.filter {
-            $0.description.localizedCaseInsensitiveContains(searchText) ||
-            $0.categoryName?.localizedCaseInsensitiveContains(searchText) == true
+        
+        if !searchText.isEmpty {
+            transactions = transactions.filter {
+                $0.description.localizedCaseInsensitiveContains(searchText) ||
+                $0.categoryName?.localizedCaseInsensitiveContains(searchText) == true
+            }
         }
+        
+        return transactions
     }
     
     /// Computed reimbursements by expense ID

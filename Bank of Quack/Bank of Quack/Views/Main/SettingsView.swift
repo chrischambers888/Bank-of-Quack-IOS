@@ -299,6 +299,9 @@ struct SettingsView: View {
                             .padding(.horizontal, Theme.Spacing.md)
                         }
                         
+                        // Privacy Section
+                        PrivacySettingsSection()
+                        
                         // Account Section
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                             Text("ACCOUNT")
@@ -1245,6 +1248,98 @@ struct DestructiveButtonStyle: ButtonStyle {
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Privacy Settings Section
+
+struct PrivacySettingsSection: View {
+    @State private var privacyManager = PrivacyManager.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("PRIVACY")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.Colors.textMuted)
+                .padding(.horizontal, Theme.Spacing.md)
+            
+            VStack(spacing: 0) {
+                // Hide Income Toggle
+                PrivacyToggleRow(
+                    icon: "eye.slash",
+                    title: "Hide Income",
+                    subtitle: "Hide income, net balance, and income transactions",
+                    isOn: Binding(
+                        get: { privacyManager.hideIncomeData },
+                        set: { privacyManager.hideIncomeData = $0 }
+                    )
+                )
+                
+                Divider()
+                    .background(Theme.Colors.borderLight)
+                
+                // Randomize Values Toggle
+                PrivacyToggleRow(
+                    icon: "shuffle",
+                    title: "Randomize Values",
+                    subtitle: "Show random amounts instead of real values",
+                    isOn: Binding(
+                        get: { privacyManager.randomizeValues },
+                        set: { privacyManager.randomizeValues = $0 }
+                    )
+                )
+            }
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+            .padding(.horizontal, Theme.Spacing.md)
+            
+            // Info text when privacy is active
+            if privacyManager.hideIncomeData || privacyManager.randomizeValues {
+                HStack(spacing: Theme.Spacing.xs) {
+                    Image(systemName: "lock.fill")
+                        .font(.caption2)
+                    Text("Privacy mode active - look for lock icons on tabs")
+                }
+                .font(.caption2)
+                .foregroundStyle(Theme.Colors.accent)
+                .padding(.horizontal, Theme.Spacing.md)
+            }
+        }
+    }
+}
+
+struct PrivacyToggleRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    @Binding var isOn: Bool
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.md) {
+            Image(systemName: icon)
+                .font(.body)
+                .foregroundStyle(isOn ? Theme.Colors.accent : Theme.Colors.textSecondary)
+                .frame(width: 24)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            
+            Spacer()
+            
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .tint(Theme.Colors.accent)
+        }
+        .padding(Theme.Spacing.md)
+        .contentShape(Rectangle())
     }
 }
 

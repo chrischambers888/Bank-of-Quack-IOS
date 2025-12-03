@@ -87,6 +87,36 @@ struct AddTransactionView: View {
         activeMembers
     }
     
+    /// Check if settlements should be available as a transaction type
+    /// Hide settlements when: only one active member AND no inactive members with non-zero balance
+    private var shouldShowSettlementOption: Bool {
+        // If there are multiple active members, settlements make sense
+        if activeMembers.count > 1 {
+            return true
+        }
+        
+        // Single active member: check if any inactive member has a non-zero balance
+        // (meaning there could still be settling to do with departed members)
+        let inactiveMembersWithBalance = authViewModel.members.filter { member in
+            guard member.isInactive else { return false }
+            if let balance = memberBalances.first(where: { $0.memberId == member.id }) {
+                return abs(balance.balance.doubleValue) >= 0.01
+            }
+            return false
+        }
+        
+        return !inactiveMembersWithBalance.isEmpty
+    }
+    
+    /// Transaction types available for selection (may exclude settlement for single-member households)
+    private var availableTransactionTypes: [TransactionType] {
+        if shouldShowSettlementOption {
+            return TransactionType.allCases
+        } else {
+            return TransactionType.allCases.filter { $0 != .settlement }
+        }
+    }
+    
     private var isFormValid: Bool {
         guard parsedAmount > 0 else { return false }
         guard !description.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
@@ -108,6 +138,8 @@ struct AddTransactionView: View {
         case .settlement:
             return paidByMemberId != nil && paidToMemberId != nil && paidByMemberId != paidToMemberId
         case .reimbursement:
+            // Check that reimbursement amount doesn't exceed remaining expense amount
+            if reimbursementExceedsExpense { return false }
             return paidByMemberId != nil
         }
     }
@@ -122,7 +154,7 @@ struct AddTransactionView: View {
                     VStack(spacing: Theme.Spacing.lg) {
                         // Transaction Type Selector
                         HStack(spacing: Theme.Spacing.sm) {
-                            ForEach(TransactionType.allCases, id: \.self) { type in
+                            ForEach(availableTransactionTypes, id: \.self) { type in
                                 TransactionTypeButton(
                                     type: type,
                                     isSelected: transactionType == type
@@ -241,12 +273,14 @@ struct AddTransactionView: View {
                             }
                             
                             // Paid By Section (for expense, settlement only)
-                            if transactionType == .expense || transactionType == .settlement {
+                            // Hide for single-member households on expenses (always current user)
+                            if transactionType == .settlement || (transactionType == .expense && activeMembers.count > 1) {
                                 paidBySection
                             }
                             
                             // Received By (for income and reimbursement)
-                            if transactionType == .income || transactionType == .reimbursement {
+                            // Hide for single-member households (always current user)
+                            if (transactionType == .income || transactionType == .reimbursement) && activeMembers.count > 1 {
                                 FormField(label: "Received By") {
                                     if approvedMembers.count > 5 {
                                         MemberPickerButton(
@@ -750,6 +784,19 @@ struct AddTransactionView: View {
                 Text("Unlinked reimbursements will count as income")
                     .font(.caption2)
                     .foregroundStyle(Theme.Colors.textMuted)
+            } else if let remaining = remainingReimbursableAmount {
+                if reimbursementExceedsExpense {
+                    HStack(spacing: Theme.Spacing.xs) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("Amount exceeds remaining \(remaining.doubleValue.formattedAsMoney(applyPrivacy: false))")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.error)
+                } else {
+                    Text("Remaining: \(remaining.doubleValue.formattedAsMoney(applyPrivacy: false)) of \(selectedExpense?.amount.doubleValue.formattedAsMoney(applyPrivacy: false) ?? "$0.00")")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
             } else {
                 Text("Linked reimbursements reduce the original expense value")
                     .font(.caption2)
@@ -768,6 +815,33 @@ struct AddTransactionView: View {
     /// Expenses that can be linked to for reimbursement
     private var linkableExpenses: [TransactionView] {
         transactionViewModel.transactions.filter { $0.transactionType == .expense }
+    }
+    
+    /// Calculate total reimbursements already applied to a specific expense
+    private func existingReimbursements(for expenseId: UUID) -> Decimal {
+        transactionViewModel.transactions
+            .filter { $0.transactionType == .reimbursement && $0.reimbursesTransactionId == expenseId }
+            .reduce(Decimal(0)) { $0 + $1.amount }
+    }
+    
+    /// The selected expense for reimbursement (if any)
+    private var selectedExpense: TransactionView? {
+        guard let id = reimbursesTransactionId else { return nil }
+        return transactionViewModel.transactions.first { $0.id == id }
+    }
+    
+    /// Remaining amount that can be reimbursed for the selected expense
+    private var remainingReimbursableAmount: Decimal? {
+        guard let expense = selectedExpense else { return nil }
+        let existing = existingReimbursements(for: expense.id)
+        return max(expense.amount - existing, 0)
+    }
+    
+    /// Whether the current reimbursement amount exceeds the remaining reimbursable amount
+    private var reimbursementExceedsExpense: Bool {
+        guard transactionType == .reimbursement,
+              let remaining = remainingReimbursableAmount else { return false }
+        return parsedAmount > remaining
     }
     
     // MARK: - Settlement Balances Card
