@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var showSwitchHousehold = false
     @State private var showCategories = false
     @State private var showSectors = false
+    @State private var showThemePalette = false
     @State private var showSignOutConfirm = false
     @State private var showInviteCodeWarning = false
     @State private var showInviteCode = false
@@ -277,6 +278,20 @@ struct SettingsView: View {
                                         showChevron: true
                                     )
                                 }
+                                
+                                Divider()
+                                    .background(Theme.Colors.borderLight)
+                                
+                                Button {
+                                    showThemePalette = true
+                                } label: {
+                                    SettingsRow(
+                                        icon: "paintpalette.fill",
+                                        title: "Color Themes",
+                                        subtitle: "Apply a color palette",
+                                        showChevron: true
+                                    )
+                                }
                             }
                             .background(Theme.Colors.backgroundCard)
                             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
@@ -333,6 +348,9 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showSectors) {
             SectorsView()
+        }
+        .sheet(isPresented: $showThemePalette) {
+            ThemePaletteView()
         }
         .alert("Sign Out?", isPresented: $showSignOutConfirm) {
             Button("Cancel", role: .cancel) { }

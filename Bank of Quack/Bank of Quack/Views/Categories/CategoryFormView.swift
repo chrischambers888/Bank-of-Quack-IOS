@@ -23,13 +23,18 @@ struct CategoryFormView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(\.dismiss) private var dismiss
     
+    @StateObject private var customThemeStorage = CustomThemeStorage()
+    
     let mode: Mode
     
     @State private var name = ""
     @State private var icon = ""
+    @State private var selectedColor = "#26A69A"
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var useThemeColor = true
+    @State private var showColorPicker = false
     
     @FocusState private var focusedField: Field?
     
@@ -40,11 +45,35 @@ struct CategoryFormView: View {
     
     private let dataService = DataService()
     
-    // Default color for all categories
-    private let defaultColor = "#26A69A"
+    // Color options for categories
+    private let colorOptions = [
+        "#26A69A", "#00897B", "#00796B", "#00695C",
+        "#42A5F5", "#1E88E5", "#1565C0", "#0D47A1",
+        "#66BB6A", "#43A047", "#2E7D32", "#1B5E20",
+        "#FFCA28", "#FFB300", "#FF8F00", "#FF6F00",
+        "#EF5350", "#E53935", "#D32F2F", "#C62828",
+        "#AB47BC", "#8E24AA", "#7B1FA2", "#6A1B9A",
+        "#EC407A", "#D81B60", "#C2185B", "#AD1457",
+        "#78909C", "#607D8B", "#546E7A", "#455A64"
+    ]
     
     private var isFormValid: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+    
+    private var hasAppliedTheme: Bool {
+        AppliedThemeManager.shared.appliedThemeId != nil
+    }
+    
+    private var appliedThemeName: String {
+        AppliedThemeManager.shared.appliedThemeName ?? "Theme"
+    }
+    
+    private var themeColor: String? {
+        AppliedThemeManager.shared.getNextCategoryColor(
+            categoryCount: authViewModel.categories.count,
+            customStorage: customThemeStorage
+        )
     }
     
     // Extract just the first emoji from input
@@ -59,6 +88,9 @@ struct CategoryFormView: View {
         if case .edit(let category) = mode {
             _name = State(initialValue: category.name)
             _icon = State(initialValue: category.icon ?? "")
+            _selectedColor = State(initialValue: category.color)
+            _useThemeColor = State(initialValue: false) // Editing always shows manual
+            _showColorPicker = State(initialValue: true)
         }
     }
     
@@ -126,6 +158,9 @@ struct CategoryFormView: View {
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
+                        // Color Section
+                        colorSection
+                        
                         // Submit Button
                         Button {
                             submit()
@@ -167,6 +202,12 @@ struct CategoryFormView: View {
                     }
                 }
             }
+            .onAppear {
+                // Set theme color if creating and theme is applied
+                if case .create = mode, let color = themeColor {
+                    selectedColor = color
+                }
+            }
         }
         .alert("Error", isPresented: $showError) {
             Button("OK") { }
@@ -175,20 +216,132 @@ struct CategoryFormView: View {
         }
     }
     
+    @ViewBuilder
+    private var colorSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("Color")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textSecondary)
+                .padding(.horizontal, Theme.Spacing.md)
+            
+            if hasAppliedTheme && !showColorPicker {
+                // Theme color indicator
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        showColorPicker = true
+                        useThemeColor = false
+                    }
+                } label: {
+                    HStack {
+                        Circle()
+                            .fill(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")))
+                            .frame(width: 36, height: 36)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white, lineWidth: 2)
+                            )
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: Theme.Spacing.xs) {
+                                Image(systemName: "paintpalette.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.accent)
+                                
+                                Text("Using \(appliedThemeName)")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                            }
+                            
+                            Text("Tap to choose a different color")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                        
+                        Spacer()
+                        
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                    .padding(Theme.Spacing.md)
+                    .background(Theme.Colors.backgroundCard)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, Theme.Spacing.md)
+            } else {
+                // Full color picker
+                VStack(spacing: Theme.Spacing.sm) {
+                    if hasAppliedTheme {
+                        // Option to revert to theme color
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                if let color = themeColor {
+                                    selectedColor = color
+                                }
+                                showColorPicker = false
+                                useThemeColor = true
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "paintpalette.fill")
+                                    .font(.caption)
+                                Text("Use \(appliedThemeName) color")
+                                    .font(.caption)
+                            }
+                            .foregroundStyle(Theme.Colors.accent)
+                        }
+                    }
+                    
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: Theme.Spacing.sm) {
+                        ForEach(colorOptions, id: \.self) { color in
+                            Button {
+                                selectedColor = color
+                            } label: {
+                                Circle()
+                                    .fill(Color(hex: color.replacingOccurrences(of: "#", with: "")))
+                                    .frame(width: 36, height: 36)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.white, lineWidth: selectedColor == color ? 3 : 0)
+                                    )
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, Theme.Spacing.md)
+            }
+        }
+    }
+    
     private var categoryPreview: some View {
         HStack(spacing: Theme.Spacing.sm) {
-            if !icon.isEmpty {
-                Text(icon)
-                    .font(.title)
-            } else {
-                Image(systemName: "folder.fill")
-                    .font(.title2)
-                    .foregroundStyle(Theme.Colors.accent)
+            ZStack {
+                Circle()
+                    .fill(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")).opacity(0.2))
+                    .frame(width: 44, height: 44)
+                
+                if !icon.isEmpty {
+                    Text(icon)
+                        .font(.title2)
+                } else {
+                    Image(systemName: "folder.fill")
+                        .font(.title3)
+                        .foregroundStyle(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")))
+                }
             }
             
             Text(name.isEmpty ? "Category Name" : name)
                 .font(.headline)
                 .foregroundStyle(name.isEmpty ? Theme.Colors.textMuted : Theme.Colors.textPrimary)
+            
+            Spacer()
+            
+            // Color indicator
+            Circle()
+                .fill(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")))
+                .frame(width: 16, height: 16)
         }
         .padding(Theme.Spacing.lg)
         .frame(maxWidth: .infinity)
@@ -210,7 +363,7 @@ struct CategoryFormView: View {
                         householdId: householdId,
                         name: name.trimmingCharacters(in: .whitespaces),
                         icon: icon.isEmpty ? nil : icon,
-                        color: defaultColor,
+                        color: selectedColor,
                         imageUrl: nil,
                         sortOrder: authViewModel.categories.count
                     )
@@ -220,7 +373,7 @@ struct CategoryFormView: View {
                     let dto = UpdateCategoryDTO(
                         name: name.trimmingCharacters(in: .whitespaces),
                         icon: icon.isEmpty ? nil : icon,
-                        color: nil // Keep existing color
+                        color: selectedColor
                     )
                     _ = try await dataService.updateCategory(id: category.id, dto: dto)
                 }

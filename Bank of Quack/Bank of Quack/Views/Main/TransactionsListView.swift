@@ -126,22 +126,27 @@ struct TransactionDetailView: View {
     
     let transaction: TransactionView
     
+    // Look up the current transaction from the view model for live updates after editing
+    private var currentTransaction: TransactionView {
+        transactionViewModel.transactions.first { $0.id == transaction.id } ?? transaction
+    }
+    
     @State private var showDeleteConfirm = false
     @State private var showEditSheet = false
     
     private var splitDisplayText: String {
-        switch transaction.splitType {
+        switch currentTransaction.splitType {
         case .equal:
             return "Split Equally"
         case .memberOnly:
-            if let memberName = transaction.splitMemberName {
+            if let memberName = currentTransaction.splitMemberName {
                 return "\(memberName) Only"
             }
             return "Member Only"
         case .custom:
             return "Custom Split"
         case .payerOnly:
-            if let paidByName = transaction.paidByName {
+            if let paidByName = currentTransaction.paidByName {
                 return "\(paidByName) Only"
             }
             return "Payer Only"
@@ -149,9 +154,9 @@ struct TransactionDetailView: View {
     }
     
     private var paidByDisplayText: String {
-        switch transaction.paidByType {
+        switch currentTransaction.paidByType {
         case .single:
-            return transaction.paidByName ?? "Single Member"
+            return currentTransaction.paidByName ?? "Single Member"
         case .shared:
             return "Shared Equally"
         case .custom:
@@ -161,16 +166,16 @@ struct TransactionDetailView: View {
     
     /// For reimbursements: the expense this reimbursement is linked to
     private var linkedExpense: TransactionView? {
-        guard transaction.transactionType == .reimbursement,
-              let linkedId = transaction.reimbursesTransactionId else { return nil }
+        guard currentTransaction.transactionType == .reimbursement,
+              let linkedId = currentTransaction.reimbursesTransactionId else { return nil }
         return transactionViewModel.transactions.first { $0.id == linkedId }
     }
     
     /// For expenses: any reimbursements linked to this expense
     private var linkedReimbursements: [TransactionView] {
-        guard transaction.transactionType == .expense else { return [] }
+        guard currentTransaction.transactionType == .expense else { return [] }
         return transactionViewModel.transactions.filter {
-            $0.transactionType == .reimbursement && $0.reimbursesTransactionId == transaction.id
+            $0.transactionType == .reimbursement && $0.reimbursesTransactionId == currentTransaction.id
         }
     }
     
@@ -184,11 +189,11 @@ struct TransactionDetailView: View {
                     VStack(spacing: Theme.Spacing.lg) {
                         // Amount
                         VStack(spacing: Theme.Spacing.xs) {
-                            Text(transaction.amount.doubleValue.formattedAsMoney())
+                            Text(currentTransaction.amount.doubleValue.formattedAsMoney())
                                 .font(.system(size: 48, weight: .bold))
-                                .foregroundStyle(transaction.transactionType.color)
+                                .foregroundStyle(currentTransaction.transactionType.color)
                             
-                            Text(transaction.transactionType.displayName)
+                            Text(currentTransaction.transactionType.displayName)
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                         }
@@ -196,19 +201,19 @@ struct TransactionDetailView: View {
                         
                         // Details Card
                         VStack(spacing: 0) {
-                            DetailRow(label: "Description", value: transaction.description)
+                            DetailRow(label: "Description", value: currentTransaction.description)
                             Divider().background(Theme.Colors.borderLight)
-                            DetailRow(label: "Date", value: transaction.date.formatted(as: .long))
+                            DetailRow(label: "Date", value: currentTransaction.date.formatted(as: .long))
                             
-                            if let categoryName = transaction.categoryName {
+                            if let categoryName = currentTransaction.categoryName {
                                 Divider().background(Theme.Colors.borderLight)
                                 DetailRow(
                                     label: "Category",
-                                    value: "\(transaction.categoryIcon ?? "") \(categoryName)"
+                                    value: "\(currentTransaction.categoryIcon ?? "") \(categoryName)"
                                 )
                             }
                             
-                            if transaction.transactionType == .expense {
+                            if currentTransaction.transactionType == .expense {
                                 Divider().background(Theme.Colors.borderLight)
                                 DetailRow(label: "Paid By", value: paidByDisplayText)
                                 
@@ -220,13 +225,13 @@ struct TransactionDetailView: View {
                                     Divider().background(Theme.Colors.borderLight)
                                     ReimbursementsDetailRow(reimbursements: linkedReimbursements)
                                 }
-                            } else if transaction.transactionType == .income {
-                                if let paidByName = transaction.paidByName {
+                            } else if currentTransaction.transactionType == .income {
+                                if let paidByName = currentTransaction.paidByName {
                                     Divider().background(Theme.Colors.borderLight)
                                     DetailRow(label: "Received By", value: paidByName)
                                 }
-                            } else if transaction.transactionType == .reimbursement {
-                                if let paidByName = transaction.paidByName {
+                            } else if currentTransaction.transactionType == .reimbursement {
+                                if let paidByName = currentTransaction.paidByName {
                                     Divider().background(Theme.Colors.borderLight)
                                     DetailRow(label: "Received By", value: paidByName)
                                 }
@@ -240,18 +245,18 @@ struct TransactionDetailView: View {
                                     DetailRow(label: "Linked Expense", value: "None (counts as income)")
                                 }
                             } else {
-                                if let paidByName = transaction.paidByName {
+                                if let paidByName = currentTransaction.paidByName {
                                     Divider().background(Theme.Colors.borderLight)
                                     DetailRow(label: "Paid By", value: paidByName)
                                 }
                             }
                             
-                            if let paidToName = transaction.paidToName {
+                            if let paidToName = currentTransaction.paidToName {
                                 Divider().background(Theme.Colors.borderLight)
                                 DetailRow(label: "Paid To", value: paidToName)
                             }
                             
-                            if let notes = transaction.notes, !notes.isEmpty {
+                            if let notes = currentTransaction.notes, !notes.isEmpty {
                                 Divider().background(Theme.Colors.borderLight)
                                 DetailRow(label: "Notes", value: notes)
                             }
@@ -311,7 +316,7 @@ struct TransactionDetailView: View {
             }
         }
         .fullScreenCover(isPresented: $showEditSheet) {
-            EditTransactionView(transaction: transaction)
+            EditTransactionView(transaction: currentTransaction)
         }
         .alert("Delete Transaction?", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
@@ -319,7 +324,7 @@ struct TransactionDetailView: View {
                 if let householdId = authViewModel.currentHousehold?.id {
                     Task {
                         await transactionViewModel.deleteTransaction(
-                            id: transaction.id,
+                            id: currentTransaction.id,
                             householdId: householdId
                         )
                         dismiss()

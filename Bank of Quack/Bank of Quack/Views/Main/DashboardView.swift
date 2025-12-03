@@ -359,13 +359,21 @@ struct DashboardView: View {
                       let amount = expensesByCategory[categoryId], amount > 0 else { continue }
                 
                 sectorTotal += amount
+                
+                // Build member breakdown for this category
+                let categoryMemberBreakdown = buildMemberBreakdown(
+                    from: expensesByCategoryAndMember[categoryId] ?? [:],
+                    sectorTotal: amount
+                )
+                
                 categoryExpenses.append(CategoryExpense(
                     id: categoryId,
                     name: category.name,
                     icon: category.icon,
                     color: category.swiftUIColor,
                     amount: amount,
-                    percentage: 0 // Will calculate after we know sector total
+                    percentage: 0, // Will calculate after we know sector total
+                    memberBreakdown: categoryMemberBreakdown
                 ))
                 
                 // Aggregate member expenses for this sector
@@ -391,7 +399,8 @@ struct DashboardView: View {
                     icon: cat.icon,
                     color: cat.color,
                     amount: cat.amount,
-                    percentage: (cat.amount.doubleValue / sectorTotal.doubleValue) * 100
+                    percentage: (cat.amount.doubleValue / sectorTotal.doubleValue) * 100,
+                    memberBreakdown: cat.memberBreakdown
                 )
             }.sorted { $0.amount > $1.amount }
             
@@ -419,13 +428,20 @@ struct DashboardView: View {
             
             for (categoryId, amount) in expensesByCategory where amount > 0 {
                 if let category = categoryLookup[categoryId] {
+                    // Build member breakdown for this category
+                    let categoryMemberBreakdown = buildMemberBreakdown(
+                        from: expensesByCategoryAndMember[categoryId] ?? [:],
+                        sectorTotal: amount
+                    )
+                    
                     otherCategories.append(CategoryExpense(
                         id: categoryId,
                         name: category.name,
                         icon: category.icon,
                         color: category.swiftUIColor,
                         amount: amount,
-                        percentage: (amount.doubleValue / otherTotal.doubleValue) * 100
+                        percentage: (amount.doubleValue / otherTotal.doubleValue) * 100,
+                        memberBreakdown: categoryMemberBreakdown
                     ))
                     
                     // Add member expenses for this category (already using owed amounts from splits)
@@ -438,13 +454,20 @@ struct DashboardView: View {
             }
             
             if uncategorizedAmount > 0 {
+                // Build member breakdown for uncategorized expenses
+                let uncategorizedMemberBreakdown = buildMemberBreakdown(
+                    from: uncategorizedByMember,
+                    sectorTotal: uncategorizedAmount
+                )
+                
                 otherCategories.append(CategoryExpense(
                     id: UUID(),
                     name: "Uncategorized",
                     icon: "questionmark.circle",
                     color: Theme.Colors.textMuted,
                     amount: uncategorizedAmount,
-                    percentage: (uncategorizedAmount.doubleValue / otherTotal.doubleValue) * 100
+                    percentage: (uncategorizedAmount.doubleValue / otherTotal.doubleValue) * 100,
+                    memberBreakdown: uncategorizedMemberBreakdown
                 ))
             }
             

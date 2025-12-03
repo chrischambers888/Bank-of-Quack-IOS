@@ -30,6 +30,7 @@ struct CategoryExpense: Identifiable {
     let color: Color
     let amount: Decimal
     let percentage: Double // Percentage of sector total
+    var memberBreakdown: [MemberExpenseBreakdown] = [] // Member breakdown for this category
 }
 
 // MARK: - Donut Chart View
@@ -39,15 +40,24 @@ struct ExpenseDonutChart: View {
     let totalExpenses: Decimal
     
     @State private var selectedSectorId: UUID?
+    @State private var selectedCategoryId: UUID?
+    @State private var showingCategoryPopup = false
     @State private var hasAnimated = false
     @State private var sliceAnimations: [UUID: Double] = [:]
+    @State private var categorySliceAnimations: [UUID: Double] = [:]
     
     private let donutWidth: CGFloat = 32
+    private let categoryDonutWidth: CGFloat = 24 // Thinner inner ring for categories
     private let chartSize: CGFloat = 200
     private let sliceGap: Double = 1.5 // Gap between slices in degrees
     
     private var selectedSector: SectorExpense? {
         sectors.first { $0.id == selectedSectorId }
+    }
+    
+    private var selectedCategory: CategoryExpense? {
+        guard let sector = selectedSector else { return nil }
+        return sector.categories.first { $0.id == selectedCategoryId }
     }
     
     var body: some View {
@@ -58,6 +68,13 @@ struct ExpenseDonutChart: View {
                 Circle()
                     .stroke(Theme.Colors.backgroundCard, lineWidth: donutWidth)
                     .frame(width: chartSize, height: chartSize)
+                
+                // Inner background ring for categories (when sector selected)
+                if selectedSector != nil {
+                    Circle()
+                        .stroke(Theme.Colors.backgroundCard.opacity(0.5), lineWidth: categoryDonutWidth)
+                        .frame(width: chartSize - donutWidth - 8, height: chartSize - donutWidth - 8)
+                }
                 
                 // Standard sector slices
                 ForEach(Array(sectors.enumerated()), id: \.element.id) { index, sector in
@@ -71,6 +88,7 @@ struct ExpenseDonutChart: View {
                         useGap: true
                     )
                     .frame(width: chartSize, height: chartSize)
+                    .opacity(selectedSectorId == nil || sector.id == selectedSectorId ? 1.0 : 0.3)
                     .contentShape(DonutSliceShape(
                         startAngle: startAngle(for: index),
                         endAngle: endAngle(for: index),
@@ -80,9 +98,42 @@ struct ExpenseDonutChart: View {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                             if selectedSectorId == sector.id {
                                 selectedSectorId = nil
+                                selectedCategoryId = nil
                             } else {
                                 selectedSectorId = sector.id
+                                selectedCategoryId = nil
                             }
+                        }
+                        // Animate category slices when sector is selected
+                        if selectedSectorId == sector.id {
+                            Task {
+                                await animateCategorySlicesIn(for: sector)
+                            }
+                        }
+                    }
+                }
+                
+                // Category slices (inner ring) when sector is selected
+                if let selected = selectedSector, !selected.categories.isEmpty {
+                    ForEach(Array(selected.categories.enumerated()), id: \.element.id) { index, category in
+                        DonutSliceView(
+                            startAngle: categoryStartAngle(for: index, in: selected),
+                            endAngle: categoryEndAngle(for: index, in: selected),
+                            animationProgress: categorySliceAnimations[category.id] ?? 0,
+                            isSelected: category.id == selectedCategoryId,
+                            color: category.color,
+                            lineWidth: categoryDonutWidth,
+                            useGap: true
+                        )
+                        .frame(width: chartSize - donutWidth - 8, height: chartSize - donutWidth - 8)
+                        .contentShape(DonutSliceShape(
+                            startAngle: categoryStartAngle(for: index, in: selected),
+                            endAngle: categoryEndAngle(for: index, in: selected),
+                            lineWidth: categoryDonutWidth
+                        ))
+                        .onTapGesture {
+                            selectedCategoryId = category.id
+                            showingCategoryPopup = true
                         }
                     }
                 }
@@ -154,7 +205,12 @@ struct ExpenseDonutChart: View {
                     onClose: {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                             selectedSectorId = nil
+                            selectedCategoryId = nil
                         }
+                    },
+                    onCategoryTapped: { category in
+                        selectedCategoryId = category.id
+                        showingCategoryPopup = true
                     }
                 )
                 .transition(.asymmetric(
@@ -175,6 +231,20 @@ struct ExpenseDonutChart: View {
                 await animateSlicesIn()
             }
         }
+        .sheet(isPresented: $showingCategoryPopup) {
+            if let category = selectedCategory, let sector = selectedSector {
+                CategoryMemberPopup(
+                    category: category,
+                    sectorColor: sector.color,
+                    onDismiss: {
+                        showingCategoryPopup = false
+                        selectedCategoryId = nil
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+        }
     }
     
     // MARK: - Angle Calculations
@@ -190,6 +260,22 @@ struct ExpenseDonutChart: View {
         let totalPercentage = sectors.prefix(index + 1).reduce(0.0) { $0 + $1.percentage }
         // Subtract half gap at end
         let gapOffset = index < sectors.count - 1 ? sliceGap / 2 : 0
+        return Angle(degrees: totalPercentage * 3.6 - 90 - gapOffset)
+    }
+    
+    // MARK: - Category Angle Calculations
+    
+    private func categoryStartAngle(for index: Int, in sector: SectorExpense) -> Angle {
+        let precedingPercentage = sector.categories.prefix(index).reduce(0.0) { $0 + $1.percentage }
+        // Add half gap at start
+        let gapOffset = index > 0 ? sliceGap / 2 : 0
+        return Angle(degrees: precedingPercentage * 3.6 - 90 + gapOffset)
+    }
+    
+    private func categoryEndAngle(for index: Int, in sector: SectorExpense) -> Angle {
+        let totalPercentage = sector.categories.prefix(index + 1).reduce(0.0) { $0 + $1.percentage }
+        // Subtract half gap at end
+        let gapOffset = index < sector.categories.count - 1 ? sliceGap / 2 : 0
         return Angle(degrees: totalPercentage * 3.6 - 90 - gapOffset)
     }
     
@@ -211,6 +297,25 @@ struct ExpenseDonutChart: View {
         }
         
         hasAnimated = true
+    }
+    
+    @MainActor
+    private func animateCategorySlicesIn(for sector: SectorExpense) async {
+        // Initialize all category slices to 0
+        for category in sector.categories {
+            categorySliceAnimations[category.id] = 0
+        }
+        
+        // Small delay before starting category animations
+        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+        
+        // Staggered animation for each category slice
+        for (index, category) in sector.categories.enumerated() {
+            let delay = Double(index) * 0.06
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.75).delay(delay)) {
+                categorySliceAnimations[category.id] = 1.0
+            }
+        }
     }
 }
 
@@ -328,6 +433,7 @@ struct SectorLegend: View {
 struct SectorDetailView: View {
     let sector: SectorExpense
     let onClose: () -> Void
+    var onCategoryTapped: ((CategoryExpense) -> Void)? = nil
     
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -358,27 +464,7 @@ struct SectorDetailView: View {
             Divider()
                 .background(Theme.Colors.borderLight)
             
-            // Member breakdown (always shown when data exists)
-            if !sector.memberBreakdown.isEmpty {
-                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                    Text("By Member")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(Theme.Colors.textMuted)
-                    
-                    ForEach(sector.memberBreakdown) { member in
-                        MemberExpenseRow(member: member, sectorTotal: sector.amount, sectorColor: sector.color)
-                    }
-                }
-                
-                if !sector.categories.isEmpty {
-                    Divider()
-                        .background(Theme.Colors.borderLight)
-                        .padding(.vertical, Theme.Spacing.xs)
-                }
-            }
-            
-            // Categories
+            // Categories (shown first)
             if sector.categories.isEmpty && sector.memberBreakdown.isEmpty {
                 HStack {
                     Spacer()
@@ -394,15 +480,39 @@ struct SectorDetailView: View {
                 }
                 .padding(.vertical, Theme.Spacing.md)
             } else if !sector.categories.isEmpty {
-                if !sector.memberBreakdown.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
                     Text("By Category")
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundStyle(Theme.Colors.textMuted)
+                    
+                    ForEach(sector.categories) { category in
+                        CategoryExpenseRow(
+                            category: category,
+                            sectorTotal: sector.amount,
+                            onTap: onCategoryTapped != nil ? { onCategoryTapped?(category) } : nil
+                        )
+                    }
                 }
                 
-                ForEach(sector.categories) { category in
-                    CategoryExpenseRow(category: category, sectorTotal: sector.amount)
+                if !sector.memberBreakdown.isEmpty {
+                    Divider()
+                        .background(Theme.Colors.borderLight)
+                        .padding(.vertical, Theme.Spacing.xs)
+                }
+            }
+            
+            // Member breakdown (shown after categories)
+            if !sector.memberBreakdown.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                    Text("By Member")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                    
+                    ForEach(sector.memberBreakdown) { member in
+                        MemberExpenseRow(member: member, sectorTotal: sector.amount, sectorColor: sector.color)
+                    }
                 }
             }
         }
@@ -500,6 +610,7 @@ struct MemberExpenseRow: View {
 struct CategoryExpenseRow: View {
     let category: CategoryExpense
     let sectorTotal: Decimal
+    var onTap: (() -> Void)? = nil
     
     private var percentageOfSector: Double {
         guard sectorTotal > 0 else { return 0 }
@@ -512,65 +623,278 @@ struct CategoryExpenseRow: View {
     }
     
     var body: some View {
-        VStack(spacing: Theme.Spacing.xs) {
-            HStack(spacing: Theme.Spacing.sm) {
-                // Category icon
-                ZStack {
-                    Circle()
-                        .fill(category.color.opacity(0.2))
-                        .frame(width: 32, height: 32)
-                    
-                    if let icon = category.icon, !icon.isEmpty {
-                        if isSFSymbol(icon) {
-                            // It's an SF Symbol
-                            Image(systemName: icon)
+        Button {
+            onTap?()
+        } label: {
+            VStack(spacing: Theme.Spacing.xs) {
+                HStack(spacing: Theme.Spacing.sm) {
+                    // Category icon
+                    ZStack {
+                        Circle()
+                            .fill(category.color.opacity(0.2))
+                            .frame(width: 32, height: 32)
+                        
+                        if let icon = category.icon, !icon.isEmpty {
+                            if isSFSymbol(icon) {
+                                // It's an SF Symbol
+                                Image(systemName: icon)
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(category.color)
+                            } else {
+                                // It's an emoji or other text
+                                Text(icon)
+                                    .font(.system(size: 16))
+                            }
+                        } else {
+                            Image(systemName: "tag.fill")
                                 .font(.system(size: 14))
                                 .foregroundStyle(category.color)
-                        } else {
-                            // It's an emoji or other text
-                            Text(icon)
-                                .font(.system(size: 16))
                         }
-                    } else {
-                        Image(systemName: "tag.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(category.color)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Text(category.name)
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            if onTap != nil && !category.memberBreakdown.isEmpty {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                        }
+                        
+                        Text("\(Int(percentageOfSector))% of sector")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                    
+                    Spacer()
+                    
+                    Text(category.amount.doubleValue.formattedAsMoney())
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                }
+                
+                // Progress bar
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Theme.Colors.backgroundCard)
+                            .frame(height: 4)
+                        
+                        Capsule()
+                            .fill(category.color)
+                            .frame(width: geometry.size.width * CGFloat(percentageOfSector / 100), height: 4)
+                    }
+                }
+                .frame(height: 4)
+            }
+            .padding(.vertical, Theme.Spacing.xs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(onTap == nil)
+    }
+}
+
+// MARK: - Category Member Popup
+
+struct CategoryMemberPopup: View {
+    let category: CategoryExpense
+    let sectorColor: Color
+    let onDismiss: () -> Void
+    
+    /// Check if a string is a valid SF Symbol name
+    private func isSFSymbol(_ name: String) -> Bool {
+        UIImage(systemName: name) != nil
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.lg) {
+                        // Category header
+                        VStack(spacing: Theme.Spacing.sm) {
+                            ZStack {
+                                Circle()
+                                    .fill(category.color.opacity(0.2))
+                                    .frame(width: 60, height: 60)
+                                
+                                if let icon = category.icon, !icon.isEmpty {
+                                    if isSFSymbol(icon) {
+                                        Image(systemName: icon)
+                                            .font(.system(size: 28))
+                                            .foregroundStyle(category.color)
+                                    } else {
+                                        Text(icon)
+                                            .font(.system(size: 32))
+                                    }
+                                } else {
+                                    Image(systemName: "tag.fill")
+                                        .font(.system(size: 28))
+                                        .foregroundStyle(category.color)
+                                }
+                            }
+                            
+                            Text(category.name)
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Text(category.amount.doubleValue.formattedAsMoney())
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundStyle(category.color)
+                        }
+                        .padding(.top, Theme.Spacing.md)
+                        
+                        // Member breakdown
+                        if category.memberBreakdown.isEmpty {
+                            VStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "person.2.slash")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                
+                                Text("No member breakdown available")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                            .padding(.vertical, Theme.Spacing.xl)
+                        } else {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                                Text("Expense For")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                
+                                VStack(spacing: 0) {
+                                    ForEach(category.memberBreakdown) { member in
+                                        CategoryMemberRow(
+                                            member: member,
+                                            categoryTotal: category.amount,
+                                            categoryColor: category.color
+                                        )
+                                        
+                                        if member.id != category.memberBreakdown.last?.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                                .padding(.horizontal, Theme.Spacing.md)
+                                        }
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .cornerRadius(Theme.CornerRadius.md)
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
+                        }
+                        
+                        Spacer(minLength: 40)
+                    }
+                }
+            }
+            .navigationTitle("Category Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        onDismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Category Member Row
+
+struct CategoryMemberRow: View {
+    let member: MemberExpenseBreakdown
+    let categoryTotal: Decimal
+    let categoryColor: Color
+    
+    private var percentageOfCategory: Double {
+        guard categoryTotal > 0 else { return 0 }
+        return (member.amount.doubleValue / categoryTotal.doubleValue) * 100
+    }
+    
+    var body: some View {
+        VStack(spacing: Theme.Spacing.xs) {
+            HStack(spacing: Theme.Spacing.sm) {
+                // Member emoji or color
+                if let emoji = member.emoji, !emoji.isEmpty {
+                    Text(emoji)
+                        .font(.system(size: 24))
+                        .frame(width: 36, height: 36)
+                        .opacity(member.isInactive ? 0.6 : 1.0)
+                } else {
+                    ZStack {
+                        Circle()
+                            .fill(member.color.opacity(member.isInactive ? 0.5 : 1.0))
+                            .frame(width: 36, height: 36)
+                        
+                        Text(String(member.name.prefix(1)).uppercased())
+                            .font(.subheadline)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.white)
+                            .opacity(member.isInactive ? 0.7 : 1.0)
                     }
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(category.name)
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.Colors.textPrimary)
+                    HStack(spacing: Theme.Spacing.xs) {
+                        Text(member.name)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(member.isInactive ? Theme.Colors.textMuted : Theme.Colors.textPrimary)
+                        
+                        if member.isInactive {
+                            Text("Inactive")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Theme.Colors.textMuted.opacity(0.2))
+                                .clipShape(Capsule())
+                        }
+                    }
                     
-                    Text("\(Int(percentageOfSector))% of sector")
+                    Text("\(Int(percentageOfCategory))% of category")
                         .font(.caption2)
                         .foregroundStyle(Theme.Colors.textMuted)
                 }
                 
                 Spacer()
                 
-                Text(category.amount.doubleValue.formattedAsMoney())
+                Text(member.amount.doubleValue.formattedAsMoney())
                     .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(member.isInactive ? Theme.Colors.textMuted : Theme.Colors.textPrimary)
             }
             
             // Progress bar
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Theme.Colors.backgroundCard)
+                        .fill(Theme.Colors.backgroundPrimary)
                         .frame(height: 4)
                     
                     Capsule()
-                        .fill(category.color)
-                        .frame(width: geometry.size.width * CGFloat(percentageOfSector / 100), height: 4)
+                        .fill(categoryColor.opacity(member.isInactive ? 0.5 : 1.0))
+                        .frame(width: geometry.size.width * CGFloat(percentageOfCategory / 100), height: 4)
                 }
             }
             .frame(height: 4)
         }
-        .padding(.vertical, Theme.Spacing.xs)
+        .padding(Theme.Spacing.md)
     }
 }
 
@@ -625,8 +949,30 @@ struct ExpenseDonutEmptyState: View {
                         amount: 1500,
                         percentage: 45,
                         categories: [
-                            CategoryExpense(id: UUID(), name: "Rent", icon: "house.fill", color: .blue, amount: 1200, percentage: 80),
-                            CategoryExpense(id: UUID(), name: "Utilities", icon: "bolt.fill", color: .cyan, amount: 300, percentage: 20)
+                            CategoryExpense(
+                                id: UUID(),
+                                name: "Rent",
+                                icon: "house.fill",
+                                color: .blue,
+                                amount: 1200,
+                                percentage: 80,
+                                memberBreakdown: [
+                                    MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 720, percentage: 60),
+                                    MemberExpenseBreakdown(id: member2Id, name: "Jordan", color: .mint, emoji: "🐸", amount: 480, percentage: 40)
+                                ]
+                            ),
+                            CategoryExpense(
+                                id: UUID(),
+                                name: "Utilities",
+                                icon: "bolt.fill",
+                                color: .cyan,
+                                amount: 300,
+                                percentage: 20,
+                                memberBreakdown: [
+                                    MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 180, percentage: 60),
+                                    MemberExpenseBreakdown(id: member2Id, name: "Jordan", color: .mint, emoji: "🐸", amount: 120, percentage: 40)
+                                ]
+                            )
                         ],
                         memberBreakdown: [
                             MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 900, percentage: 60),
@@ -640,8 +986,30 @@ struct ExpenseDonutEmptyState: View {
                         amount: 800,
                         percentage: 24,
                         categories: [
-                            CategoryExpense(id: UUID(), name: "Groceries", icon: "🛒", color: .green, amount: 500, percentage: 62.5),
-                            CategoryExpense(id: UUID(), name: "Dining Out", icon: "🍔", color: .orange, amount: 300, percentage: 37.5)
+                            CategoryExpense(
+                                id: UUID(),
+                                name: "Groceries",
+                                icon: "🛒",
+                                color: .green,
+                                amount: 500,
+                                percentage: 62.5,
+                                memberBreakdown: [
+                                    MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 300, percentage: 60),
+                                    MemberExpenseBreakdown(id: member2Id, name: "Jordan", color: .mint, emoji: "🐸", amount: 200, percentage: 40)
+                                ]
+                            ),
+                            CategoryExpense(
+                                id: UUID(),
+                                name: "Dining Out",
+                                icon: "🍔",
+                                color: .orange,
+                                amount: 300,
+                                percentage: 37.5,
+                                memberBreakdown: [
+                                    MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 150, percentage: 50),
+                                    MemberExpenseBreakdown(id: member2Id, name: "Jordan", color: .mint, emoji: "🐸", amount: 150, percentage: 50)
+                                ]
+                            )
                         ],
                         memberBreakdown: [
                             MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 450, percentage: 56),
@@ -655,8 +1023,30 @@ struct ExpenseDonutEmptyState: View {
                         amount: 500,
                         percentage: 15,
                         categories: [
-                            CategoryExpense(id: UUID(), name: "Gas", icon: "fuelpump.fill", color: .orange, amount: 300, percentage: 60),
-                            CategoryExpense(id: UUID(), name: "Parking", icon: "parkingsign", color: .red, amount: 200, percentage: 40)
+                            CategoryExpense(
+                                id: UUID(),
+                                name: "Gas",
+                                icon: "fuelpump.fill",
+                                color: .orange,
+                                amount: 300,
+                                percentage: 60,
+                                memberBreakdown: [
+                                    MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 120, percentage: 40),
+                                    MemberExpenseBreakdown(id: member2Id, name: "Jordan", color: .mint, emoji: "🐸", amount: 180, percentage: 60)
+                                ]
+                            ),
+                            CategoryExpense(
+                                id: UUID(),
+                                name: "Parking",
+                                icon: "parkingsign",
+                                color: .red,
+                                amount: 200,
+                                percentage: 40,
+                                memberBreakdown: [
+                                    MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 80, percentage: 40),
+                                    MemberExpenseBreakdown(id: member2Id, name: "Jordan", color: .mint, emoji: "🐸", amount: 120, percentage: 60)
+                                ]
+                            )
                         ],
                         memberBreakdown: [
                             MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 200, percentage: 40),
@@ -670,8 +1060,30 @@ struct ExpenseDonutEmptyState: View {
                         amount: 533,
                         percentage: 16,
                         categories: [
-                            CategoryExpense(id: UUID(), name: "Streaming", icon: "play.tv", color: .purple, amount: 33, percentage: 6),
-                            CategoryExpense(id: UUID(), name: "Games", icon: "gamecontroller.fill", color: .pink, amount: 500, percentage: 94)
+                            CategoryExpense(
+                                id: UUID(),
+                                name: "Streaming",
+                                icon: "play.tv",
+                                color: .purple,
+                                amount: 33,
+                                percentage: 6,
+                                memberBreakdown: [
+                                    MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 16.50, percentage: 50),
+                                    MemberExpenseBreakdown(id: member2Id, name: "Jordan", color: .mint, emoji: "🐸", amount: 16.50, percentage: 50)
+                                ]
+                            ),
+                            CategoryExpense(
+                                id: UUID(),
+                                name: "Games",
+                                icon: "gamecontroller.fill",
+                                color: .pink,
+                                amount: 500,
+                                percentage: 94,
+                                memberBreakdown: [
+                                    MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 283.50, percentage: 56.7),
+                                    MemberExpenseBreakdown(id: member2Id, name: "Jordan", color: .mint, emoji: "🐸", amount: 216.50, percentage: 43.3)
+                                ]
+                            )
                         ],
                         memberBreakdown: [
                             MemberExpenseBreakdown(id: member1Id, name: "Alex", color: .pink, emoji: "🦊", amount: 300, percentage: 56),

@@ -230,6 +230,9 @@ final class AuthViewModel {
                 displayName: displayName
             )
             
+            // Set default theme for new households
+            AppliedThemeManager.shared.setDefaultThemeIfNeeded()
+            
             // Reload user data
             await loadUserData()
             
