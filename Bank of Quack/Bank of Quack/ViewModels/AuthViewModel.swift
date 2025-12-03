@@ -577,6 +577,174 @@ final class AuthViewModel {
         }
     }
     
+    // MARK: - Owner Member Management
+    
+    /// Removes a member from the household (owner only)
+    /// If they have transactions, sets them to inactive; otherwise deletes them
+    @MainActor
+    func removeMember(_ member: HouseholdMember) async -> Bool {
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.removeMember(memberId: member.id)
+            
+            // Refresh members
+            if let household = currentHousehold {
+                await selectHousehold(household)
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    /// Reactivates an inactive member (owner only)
+    @MainActor
+    func reactivateMember(_ member: HouseholdMember) async -> Bool {
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.reactivateMember(memberId: member.id)
+            
+            // Refresh members
+            if let household = currentHousehold {
+                await selectHousehold(household)
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    // MARK: - Ownership Transfer
+    
+    /// Initiates ownership transfer to a target member (owner only)
+    @MainActor
+    func initiateOwnershipTransfer(to member: HouseholdMember) async -> Bool {
+        guard let householdId = currentHousehold?.id else { return false }
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.initiateOwnershipTransfer(householdId: householdId, targetMemberId: member.id)
+            
+            // Reload household to get updated pending transfer info
+            await loadUserData()
+            if let household = households.first(where: { $0.id == householdId }) {
+                await selectHousehold(household)
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    /// Revokes a pending ownership transfer (owner only)
+    @MainActor
+    func revokeOwnershipTransfer() async -> Bool {
+        guard let householdId = currentHousehold?.id else { return false }
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.revokeOwnershipTransfer(householdId: householdId)
+            
+            // Reload household
+            await loadUserData()
+            if let household = households.first(where: { $0.id == householdId }) {
+                await selectHousehold(household)
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    /// Accepts a pending ownership transfer (target member only)
+    @MainActor
+    func acceptOwnershipTransfer() async -> Bool {
+        guard let householdId = currentHousehold?.id else { return false }
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.acceptOwnershipTransfer(householdId: householdId)
+            
+            // Reload everything - roles have changed
+            await loadUserData()
+            if let household = households.first(where: { $0.id == householdId }) {
+                await selectHousehold(household)
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    /// Declines a pending ownership transfer (target member only)
+    @MainActor
+    func declineOwnershipTransfer() async -> Bool {
+        guard let householdId = currentHousehold?.id else { return false }
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.declineOwnershipTransfer(householdId: householdId)
+            
+            // Reload household
+            await loadUserData()
+            if let household = households.first(where: { $0.id == householdId }) {
+                await selectHousehold(household)
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    /// Returns the member who is pending to receive ownership
+    var pendingOwnerMember: HouseholdMember? {
+        guard let pendingMemberId = currentHousehold?.pendingOwnerMemberId else { return nil }
+        return members.first { $0.id == pendingMemberId }
+    }
+    
+    /// Returns true if current user is the pending owner recipient
+    var isCurrentUserPendingOwner: Bool {
+        guard let pendingMemberId = currentHousehold?.pendingOwnerMemberId,
+              let currentMemberId = currentMember?.id else { return false }
+        return pendingMemberId == currentMemberId
+    }
+    
     // MARK: - Helpers
     
     func clearError() {

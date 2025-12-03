@@ -79,5 +79,15 @@ enum RPCFunction: String {
     case regenerateClaimCode = "regenerate_claim_code"
     case deleteManagedMember = "delete_managed_member"
     case checkInactiveMembership = "check_inactive_membership"
+    
+    // Owner member management
+    case removeMember = "remove_member_from_household"
+    case reactivateMember = "reactivate_member"
+    
+    // Ownership transfer
+    case initiateOwnershipTransfer = "initiate_ownership_transfer"
+    case revokeOwnershipTransfer = "revoke_ownership_transfer"
+    case acceptOwnershipTransfer = "accept_ownership_transfer"
+    case declineOwnershipTransfer = "decline_ownership_transfer"
 }
 

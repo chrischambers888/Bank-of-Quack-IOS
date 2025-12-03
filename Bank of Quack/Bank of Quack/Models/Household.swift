@@ -6,12 +6,16 @@ struct Household: Identifiable, Codable, Hashable, Sendable {
     let inviteCode: String
     let createdAt: Date
     var updatedAt: Date
+    var pendingOwnerMemberId: UUID?
+    var pendingOwnerInitiatedAt: Date?
     
     enum CodingKeys: String, CodingKey {
         case id, name
         case inviteCode = "invite_code"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case pendingOwnerMemberId = "pending_owner_member_id"
+        case pendingOwnerInitiatedAt = "pending_owner_initiated_at"
     }
     
     nonisolated init(from decoder: Decoder) throws {
@@ -21,6 +25,13 @@ struct Household: Identifiable, Codable, Hashable, Sendable {
         inviteCode = try container.decode(String.self, forKey: .inviteCode)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        pendingOwnerMemberId = try container.decodeIfPresent(UUID.self, forKey: .pendingOwnerMemberId)
+        pendingOwnerInitiatedAt = try container.decodeIfPresent(Date.self, forKey: .pendingOwnerInitiatedAt)
+    }
+    
+    /// Returns true if there's a pending ownership transfer
+    var hasPendingOwnershipTransfer: Bool {
+        pendingOwnerMemberId != nil
     }
 }
 
@@ -373,6 +384,91 @@ struct InactiveMemberInfo: Codable, Sendable {
         case memberId = "member_id"
         case displayName = "display_name"
         case householdName = "household_name"
+    }
+}
+
+// MARK: - Owner Member Management
+
+struct RemoveMemberRequest: Encodable, Sendable {
+    let pMemberId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pMemberId = "p_member_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pMemberId, forKey: .pMemberId)
+    }
+}
+
+struct ReactivateMemberRequest: Encodable, Sendable {
+    let pMemberId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pMemberId = "p_member_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pMemberId, forKey: .pMemberId)
+    }
+}
+
+// MARK: - Ownership Transfer
+
+struct InitiateOwnershipTransferRequest: Encodable, Sendable {
+    let pHouseholdId: UUID
+    let pTargetMemberId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pHouseholdId = "p_household_id"
+        case pTargetMemberId = "p_target_member_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pHouseholdId, forKey: .pHouseholdId)
+        try container.encode(pTargetMemberId, forKey: .pTargetMemberId)
+    }
+}
+
+struct RevokeOwnershipTransferRequest: Encodable, Sendable {
+    let pHouseholdId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pHouseholdId = "p_household_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pHouseholdId, forKey: .pHouseholdId)
+    }
+}
+
+struct AcceptOwnershipTransferRequest: Encodable, Sendable {
+    let pHouseholdId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pHouseholdId = "p_household_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pHouseholdId, forKey: .pHouseholdId)
+    }
+}
+
+struct DeclineOwnershipTransferRequest: Encodable, Sendable {
+    let pHouseholdId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pHouseholdId = "p_household_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pHouseholdId, forKey: .pHouseholdId)
     }
 }
 

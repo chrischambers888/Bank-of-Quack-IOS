@@ -6,7 +6,17 @@ struct MemberManagementView: View {
     @Environment(\.dismiss) private var dismiss
     
     @State private var showAddManagedMember = false
-    @State private var selectedMember: HouseholdMember?
+    @State private var selectedManagedMember: HouseholdMember?
+    @State private var selectedRegularMember: HouseholdMember?
+    @State private var selectedInactiveMember: HouseholdMember?
+    @State private var showTransferOwnership = false
+    @State private var showRevokeTransferConfirm = false
+    @State private var showAcceptTransferConfirm = false
+    @State private var showDeclineTransferConfirm = false
+    
+    private var isOwner: Bool {
+        authViewModel.currentMember?.role == .owner
+    }
     
     private var regularMembers: [HouseholdMember] {
         authViewModel.members.filter { !$0.isManaged && !$0.isInactive }
@@ -20,6 +30,16 @@ struct MemberManagementView: View {
         authViewModel.members.filter { $0.isInactive }
     }
     
+    /// Members eligible for ownership transfer (active, non-managed, not owner)
+    private var eligibleForOwnership: [HouseholdMember] {
+        authViewModel.members.filter { member in
+            !member.isManaged && 
+            !member.isInactive && 
+            member.role != .owner &&
+            member.userId != nil
+        }
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -28,6 +48,59 @@ struct MemberManagementView: View {
                 
                 ScrollView {
                     VStack(spacing: Theme.Spacing.lg) {
+                        // Pending Ownership Transfer Card (for target member)
+                        if authViewModel.isCurrentUserPendingOwner {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                                HStack(spacing: Theme.Spacing.sm) {
+                                    Image(systemName: "crown.fill")
+                                        .foregroundStyle(Theme.Colors.warning)
+                                    Text("Ownership Transfer")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(Theme.Colors.textPrimary)
+                                }
+                                
+                                Text("You have been offered ownership of this household. As owner, you'll have full control over members, settings, and can delete the household.")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                
+                                HStack(spacing: Theme.Spacing.md) {
+                                    Button {
+                                        showDeclineTransferConfirm = true
+                                    } label: {
+                                        Text("Decline")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, Theme.Spacing.sm)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(Theme.Colors.textSecondary)
+                                    
+                                    Button {
+                                        showAcceptTransferConfirm = true
+                                    } label: {
+                                        Text("Accept Ownership")
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, Theme.Spacing.sm)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(Theme.Colors.warning)
+                                }
+                            }
+                            .padding(Theme.Spacing.md)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.Colors.warning.opacity(0.15))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
+                                    .stroke(Theme.Colors.warning.opacity(0.5), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
                         // Regular Members Section
                         if !regularMembers.isEmpty {
                             VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -39,10 +112,23 @@ struct MemberManagementView: View {
                                 
                                 VStack(spacing: 0) {
                                     ForEach(regularMembers) { member in
-                                        MemberManagementRow(
-                                            member: member,
-                                            showManagedBadge: false
-                                        )
+                                        // Owners can tap non-owner members to manage them
+                                        if isOwner && member.role != .owner {
+                                            Button {
+                                                selectedRegularMember = member
+                                            } label: {
+                                                MemberManagementRow(
+                                                    member: member,
+                                                    showManagedBadge: false,
+                                                    showChevron: true
+                                                )
+                                            }
+                                        } else {
+                                            MemberManagementRow(
+                                                member: member,
+                                                showManagedBadge: false
+                                            )
+                                        }
                                         
                                         if member.id != regularMembers.last?.id {
                                             Divider()
@@ -103,11 +189,12 @@ struct MemberManagementView: View {
                                 VStack(spacing: 0) {
                                     ForEach(managedMembers) { member in
                                         Button {
-                                            selectedMember = member
+                                            selectedManagedMember = member
                                         } label: {
                                             MemberManagementRow(
                                                 member: member,
-                                                showManagedBadge: true
+                                                showManagedBadge: true,
+                                                showChevron: true
                                             )
                                         }
                                         
@@ -144,6 +231,105 @@ struct MemberManagementView: View {
                         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
                         .padding(.horizontal, Theme.Spacing.md)
                         
+                        // Ownership Transfer Section (Owner only)
+                        if isOwner {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                                Text("OWNERSHIP")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                
+                                if let pendingMember = authViewModel.pendingOwnerMember {
+                                    // Show pending transfer status
+                                    VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                                        HStack(spacing: Theme.Spacing.sm) {
+                                            Image(systemName: "clock.fill")
+                                                .foregroundStyle(Theme.Colors.warning)
+                                            Text("Transfer Pending")
+                                                .font(.subheadline)
+                                                .fontWeight(.semibold)
+                                                .foregroundStyle(Theme.Colors.textPrimary)
+                                        }
+                                        
+                                        HStack(spacing: Theme.Spacing.md) {
+                                            ZStack {
+                                                Circle()
+                                                    .fill(pendingMember.swiftUIColor)
+                                                    .frame(width: 36, height: 36)
+                                                
+                                                if let emoji = pendingMember.avatarUrl, !emoji.isEmpty {
+                                                    Text(emoji)
+                                                        .font(.system(size: 20))
+                                                } else {
+                                                    Text(pendingMember.initials)
+                                                        .font(.caption)
+                                                        .fontWeight(.semibold)
+                                                        .foregroundStyle(.white)
+                                                }
+                                            }
+                                            
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(pendingMember.displayName)
+                                                    .font(.body)
+                                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                                Text("Waiting to accept ownership")
+                                                    .font(.caption)
+                                                    .foregroundStyle(Theme.Colors.warning)
+                                            }
+                                        }
+                                        
+                                        Button {
+                                            showRevokeTransferConfirm = true
+                                        } label: {
+                                            Label("Cancel Transfer", systemImage: "xmark.circle")
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                        }
+                                        .foregroundStyle(Theme.Colors.error)
+                                    }
+                                    .padding(Theme.Spacing.md)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Theme.Colors.warning.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                } else if !eligibleForOwnership.isEmpty {
+                                    // Show transfer ownership button
+                                    Button {
+                                        showTransferOwnership = true
+                                    } label: {
+                                        HStack(spacing: Theme.Spacing.md) {
+                                            Image(systemName: "crown.fill")
+                                                .font(.body)
+                                                .foregroundStyle(Theme.Colors.warning)
+                                                .frame(width: 24)
+                                            
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text("Transfer Ownership")
+                                                    .font(.body)
+                                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                                
+                                                Text("Give another member full control")
+                                                    .font(.caption)
+                                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                                .foregroundStyle(Theme.Colors.textMuted)
+                                        }
+                                        .padding(Theme.Spacing.md)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .background(Theme.Colors.backgroundCard)
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                }
+                            }
+                        }
+                        
                         // Inactive Members Section
                         if !inactiveMembers.isEmpty {
                             VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -155,10 +341,23 @@ struct MemberManagementView: View {
                                 
                                 VStack(spacing: 0) {
                                     ForEach(inactiveMembers) { member in
-                                        MemberManagementRow(
-                                            member: member,
-                                            showManagedBadge: member.isManaged
-                                        )
+                                        // Owners can tap inactive members to manage/reactivate them
+                                        if isOwner {
+                                            Button {
+                                                selectedInactiveMember = member
+                                            } label: {
+                                                MemberManagementRow(
+                                                    member: member,
+                                                    showManagedBadge: member.isManaged,
+                                                    showChevron: true
+                                                )
+                                            }
+                                        } else {
+                                            MemberManagementRow(
+                                                member: member,
+                                                showManagedBadge: member.isManaged
+                                            )
+                                        }
                                         
                                         if member.id != inactiveMembers.last?.id {
                                             Divider()
@@ -191,8 +390,49 @@ struct MemberManagementView: View {
         .sheet(isPresented: $showAddManagedMember) {
             AddManagedMemberView()
         }
-        .sheet(item: $selectedMember) { member in
+        .sheet(item: $selectedManagedMember) { member in
             ManagedMemberDetailView(member: member)
+        }
+        .sheet(item: $selectedRegularMember) { member in
+            RegularMemberDetailView(member: member)
+        }
+        .sheet(item: $selectedInactiveMember) { member in
+            InactiveMemberDetailView(member: member)
+        }
+        .sheet(isPresented: $showTransferOwnership) {
+            TransferOwnershipView()
+        }
+        .alert("Revoke Transfer?", isPresented: $showRevokeTransferConfirm) {
+            Button("Cancel", role: .cancel) { }
+            Button("Revoke", role: .destructive) {
+                Task {
+                    await authViewModel.revokeOwnershipTransfer()
+                }
+            }
+        } message: {
+            if let pendingMember = authViewModel.pendingOwnerMember {
+                Text("\(pendingMember.displayName) will no longer be able to accept ownership.")
+            }
+        }
+        .alert("Accept Ownership?", isPresented: $showAcceptTransferConfirm) {
+            Button("Cancel", role: .cancel) { }
+            Button("Accept") {
+                Task {
+                    await authViewModel.acceptOwnershipTransfer()
+                }
+            }
+        } message: {
+            Text("You will become the owner of this household with full control over members, settings, and the ability to delete the household. The current owner will become an admin.")
+        }
+        .alert("Decline Ownership?", isPresented: $showDeclineTransferConfirm) {
+            Button("Cancel", role: .cancel) { }
+            Button("Decline", role: .destructive) {
+                Task {
+                    await authViewModel.declineOwnershipTransfer()
+                }
+            }
+        } message: {
+            Text("The ownership transfer will be cancelled. The current owner will remain as owner.")
         }
     }
 }
@@ -202,6 +442,7 @@ struct MemberManagementView: View {
 struct MemberManagementRow: View {
     let member: HouseholdMember
     var showManagedBadge: Bool = false
+    var showChevron: Bool = false
     
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
@@ -243,7 +484,7 @@ struct MemberManagementRow: View {
             
             Spacer()
             
-            if member.isManaged && !member.isInactive {
+            if showChevron {
                 Image(systemName: "chevron.right")
                     .font(.caption)
                     .foregroundStyle(Theme.Colors.textMuted)
@@ -1123,6 +1364,535 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
     
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Transfer Ownership View
+
+struct TransferOwnershipView: View {
+    @Environment(AuthViewModel.self) private var authViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var selectedMember: HouseholdMember?
+    @State private var showConfirmation = false
+    @State private var isProcessing = false
+    
+    private var eligibleMembers: [HouseholdMember] {
+        authViewModel.members.filter { member in
+            !member.isManaged && 
+            !member.isInactive && 
+            member.role != .owner &&
+            member.userId != nil
+        }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.lg) {
+                        // Header
+                        VStack(spacing: Theme.Spacing.md) {
+                            Image(systemName: "crown.fill")
+                                .font(.system(size: 50))
+                                .foregroundStyle(Theme.Colors.warning)
+                            
+                            Text("Transfer Ownership")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Text("Select a member to transfer ownership to. They will need to accept before the transfer completes.")
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.top, Theme.Spacing.lg)
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        // Error Display
+                        if let error = authViewModel.error {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Theme.Colors.error)
+                                Text(error)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.error)
+                            }
+                            .padding(Theme.Spacing.md)
+                            .frame(maxWidth: .infinity)
+                            .background(Theme.Colors.error.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Eligible Members
+                        if eligibleMembers.isEmpty {
+                            VStack(spacing: Theme.Spacing.md) {
+                                Image(systemName: "person.slash")
+                                    .font(.system(size: 40))
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                
+                                Text("No eligible members")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                                
+                                Text("Only active members with their own accounts can receive ownership.")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(Theme.Spacing.xl)
+                            .background(Theme.Colors.backgroundCard)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                            .padding(.horizontal, Theme.Spacing.md)
+                        } else {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                                Text("SELECT NEW OWNER")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                
+                                VStack(spacing: 0) {
+                                    ForEach(eligibleMembers) { member in
+                                        Button {
+                                            selectedMember = member
+                                            showConfirmation = true
+                                        } label: {
+                                            HStack(spacing: Theme.Spacing.md) {
+                                                ZStack {
+                                                    Circle()
+                                                        .fill(member.swiftUIColor)
+                                                        .frame(width: 44, height: 44)
+                                                    
+                                                    if let emoji = member.avatarUrl, !emoji.isEmpty {
+                                                        Text(emoji)
+                                                            .font(.system(size: 24))
+                                                    } else {
+                                                        Text(member.initials)
+                                                            .font(.subheadline)
+                                                            .fontWeight(.semibold)
+                                                            .foregroundStyle(.white)
+                                                    }
+                                                }
+                                                
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(member.displayName)
+                                                        .font(.body)
+                                                        .foregroundStyle(Theme.Colors.textPrimary)
+                                                    
+                                                    Text(member.role.displayName)
+                                                        .font(.caption)
+                                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                                }
+                                                
+                                                Spacer()
+                                                
+                                                Image(systemName: "chevron.right")
+                                                    .font(.caption)
+                                                    .foregroundStyle(Theme.Colors.textMuted)
+                                            }
+                                            .padding(Theme.Spacing.md)
+                                            .contentShape(Rectangle())
+                                        }
+                                        
+                                        if member.id != eligibleMembers.last?.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                        }
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
+                        }
+                        
+                        // Warning
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Theme.Colors.warning)
+                                Text("Important")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                            }
+                            
+                            Text("After the transfer is accepted, you will become an admin. The new owner will have full control over the household, including the ability to remove you.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        .padding(Theme.Spacing.md)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.Colors.warning.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        Spacer(minLength: 100)
+                    }
+                }
+                
+                // Loading overlay
+                if isProcessing {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                    
+                    ProgressView()
+                        .tint(Theme.Colors.accent)
+                        .scaleEffect(1.5)
+                }
+            }
+            .navigationTitle("Transfer Ownership")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                    .disabled(isProcessing)
+                }
+            }
+            .alert("Transfer Ownership?", isPresented: $showConfirmation) {
+                Button("Cancel", role: .cancel) {
+                    selectedMember = nil
+                }
+                Button("Transfer") {
+                    initiateTransfer()
+                }
+            } message: {
+                if let member = selectedMember {
+                    Text("\(member.displayName) will receive an ownership offer. The transfer will complete when they accept.")
+                }
+            }
+            .onAppear {
+                authViewModel.clearError()
+            }
+        }
+    }
+    
+    private func initiateTransfer() {
+        guard let member = selectedMember else { return }
+        
+        isProcessing = true
+        
+        Task {
+            let success = await authViewModel.initiateOwnershipTransfer(to: member)
+            isProcessing = false
+            
+            if success {
+                dismiss()
+            }
+            
+            selectedMember = nil
+        }
+    }
+}
+
+// MARK: - Inactive Member Detail View (Owner Actions)
+
+struct InactiveMemberDetailView: View {
+    @Environment(AuthViewModel.self) private var authViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    let member: HouseholdMember
+    
+    @State private var showReactivateConfirm = false
+    @State private var isProcessing = false
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.xl) {
+                        // Member Profile
+                        VStack(spacing: Theme.Spacing.md) {
+                            ZStack {
+                                Circle()
+                                    .fill(member.swiftUIColor.opacity(0.5))
+                                    .frame(width: 100, height: 100)
+                                
+                                if let emoji = member.avatarUrl, !emoji.isEmpty {
+                                    Text(emoji)
+                                        .font(.system(size: 50))
+                                        .opacity(0.6)
+                                } else {
+                                    Text(member.initials)
+                                        .font(.largeTitle)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(.white)
+                                        .opacity(0.6)
+                                }
+                            }
+                            
+                            Text(member.displayName)
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                            
+                            HStack(spacing: Theme.Spacing.sm) {
+                                BadgeView(text: "Inactive", color: Theme.Colors.textMuted)
+                                if member.isManaged {
+                                    BadgeView(text: "Managed", color: Theme.Colors.accent)
+                                }
+                            }
+                        }
+                        .padding(.top, Theme.Spacing.lg)
+                        
+                        // Error Display
+                        if let error = authViewModel.error {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Theme.Colors.error)
+                                Text(error)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.error)
+                            }
+                            .padding(Theme.Spacing.md)
+                            .frame(maxWidth: .infinity)
+                            .background(Theme.Colors.error.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Info Section
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "info.circle.fill")
+                                    .foregroundStyle(Theme.Colors.accent)
+                                Text("About Inactive Members")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                            }
+                            
+                            Text("This member was removed from the household but their transaction history has been preserved. You can reactivate them to restore their active membership.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        .padding(Theme.Spacing.md)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.Colors.accent.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        // Reactivate Button
+                        Button {
+                            showReactivateConfirm = true
+                        } label: {
+                            Label("Reactivate Member", systemImage: "arrow.uturn.backward.circle.fill")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundStyle(Theme.Colors.success)
+                        .padding(.top, Theme.Spacing.lg)
+                        
+                        Spacer(minLength: 100)
+                    }
+                }
+                
+                // Loading overlay
+                if isProcessing {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                    
+                    ProgressView()
+                        .tint(Theme.Colors.accent)
+                        .scaleEffect(1.5)
+                }
+            }
+            .navigationTitle("Inactive Member")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.accent)
+                    .disabled(isProcessing)
+                }
+            }
+            .alert("Reactivate Member?", isPresented: $showReactivateConfirm) {
+                Button("Cancel", role: .cancel) { }
+                Button("Reactivate") {
+                    reactivateMember()
+                }
+            } message: {
+                Text("\(member.displayName) will be restored as an active member of the household.")
+            }
+            .onAppear {
+                authViewModel.clearError()
+            }
+        }
+    }
+    
+    private func reactivateMember() {
+        isProcessing = true
+        
+        Task {
+            let success = await authViewModel.reactivateMember(member)
+            isProcessing = false
+            
+            if success {
+                dismiss()
+            }
+        }
+    }
+}
+
+// MARK: - Regular Member Detail View (Owner Actions)
+
+struct RegularMemberDetailView: View {
+    @Environment(AuthViewModel.self) private var authViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    let member: HouseholdMember
+    
+    @State private var showRemoveConfirm = false
+    @State private var isProcessing = false
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.xl) {
+                        // Member Profile
+                        VStack(spacing: Theme.Spacing.md) {
+                            ZStack {
+                                Circle()
+                                    .fill(member.swiftUIColor)
+                                    .frame(width: 100, height: 100)
+                                
+                                if let emoji = member.avatarUrl, !emoji.isEmpty {
+                                    Text(emoji)
+                                        .font(.system(size: 50))
+                                } else {
+                                    Text(member.initials)
+                                        .font(.largeTitle)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                            
+                            Text(member.displayName)
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            BadgeView(text: member.role.displayName, color: Theme.Colors.accent)
+                        }
+                        .padding(.top, Theme.Spacing.lg)
+                        
+                        // Error Display
+                        if let error = authViewModel.error {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Theme.Colors.error)
+                                Text(error)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.error)
+                            }
+                            .padding(Theme.Spacing.md)
+                            .frame(maxWidth: .infinity)
+                            .background(Theme.Colors.error.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Info Section
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "info.circle.fill")
+                                    .foregroundStyle(Theme.Colors.accent)
+                                Text("About Removing Members")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                            }
+                            
+                            Text("If \(member.displayName) has any transaction history, they will be marked as inactive to preserve the records. Otherwise, they will be completely removed from the household. They can rejoin later with an invite code.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        .padding(Theme.Spacing.md)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.Colors.accent.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        // Remove Button
+                        Button {
+                            showRemoveConfirm = true
+                        } label: {
+                            Label("Remove Member", systemImage: "trash")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundStyle(Theme.Colors.error)
+                        .padding(.top, Theme.Spacing.lg)
+                        
+                        Spacer(minLength: 100)
+                    }
+                }
+                
+                // Loading overlay
+                if isProcessing {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                    
+                    ProgressView()
+                        .tint(Theme.Colors.accent)
+                        .scaleEffect(1.5)
+                }
+            }
+            .navigationTitle("Member Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.accent)
+                    .disabled(isProcessing)
+                }
+            }
+            .alert("Remove Member?", isPresented: $showRemoveConfirm) {
+                Button("Cancel", role: .cancel) { }
+                Button("Remove", role: .destructive) {
+                    removeMember()
+                }
+            } message: {
+                Text("If \(member.displayName) has any transaction history, they will be marked as inactive instead of removed. They can rejoin later with an invite code.")
+            }
+            .onAppear {
+                authViewModel.clearError()
+            }
+        }
+    }
+    
+    private func removeMember() {
+        isProcessing = true
+        
+        Task {
+            let success = await authViewModel.removeMember(member)
+            isProcessing = false
+            
+            if success {
+                dismiss()
+            }
+        }
+    }
 }
 
 #Preview {

@@ -236,6 +236,71 @@ actor DataService {
         return results.first
     }
     
+    // MARK: - Owner Member Management
+    
+    /// Removes a member from the household (owner only)
+    /// If they have transactions, sets them to inactive; otherwise deletes them
+    func removeMember(memberId: UUID) async throws {
+        let request = RemoveMemberRequest(pMemberId: memberId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.removeMember.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Reactivates an inactive member (owner only)
+    func reactivateMember(memberId: UUID) async throws {
+        let request = ReactivateMemberRequest(pMemberId: memberId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.reactivateMember.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    // MARK: - Ownership Transfer
+    
+    /// Initiates ownership transfer to a target member (owner only)
+    func initiateOwnershipTransfer(householdId: UUID, targetMemberId: UUID) async throws {
+        let request = InitiateOwnershipTransferRequest(pHouseholdId: householdId, pTargetMemberId: targetMemberId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.initiateOwnershipTransfer.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Revokes a pending ownership transfer (owner only)
+    func revokeOwnershipTransfer(householdId: UUID) async throws {
+        let request = RevokeOwnershipTransferRequest(pHouseholdId: householdId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.revokeOwnershipTransfer.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Accepts a pending ownership transfer (target member only)
+    func acceptOwnershipTransfer(householdId: UUID) async throws {
+        let request = AcceptOwnershipTransferRequest(pHouseholdId: householdId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.acceptOwnershipTransfer.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Declines a pending ownership transfer (target member only)
+    func declineOwnershipTransfer(householdId: UUID) async throws {
+        let request = DeclineOwnershipTransferRequest(pHouseholdId: householdId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.declineOwnershipTransfer.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
     // MARK: - Household Management
     
     func deleteHousehold(householdId: UUID) async throws {
