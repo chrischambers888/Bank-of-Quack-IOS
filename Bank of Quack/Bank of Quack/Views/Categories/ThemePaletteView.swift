@@ -9,7 +9,6 @@ struct ColorPalette: Identifiable, Codable {
     let description: String
     let sectorColors: [String]
     let categoryColors: [String]
-    let isCustom: Bool
     
     var previewGradient: [Color] {
         let colors = sectorColors.prefix(3)
@@ -20,50 +19,12 @@ struct ColorPalette: Identifiable, Codable {
         sectorColors + categoryColors
     }
     
-    init(id: String, name: String, description: String, sectorColors: [String], categoryColors: [String], isCustom: Bool = false) {
+    init(id: String, name: String, description: String, sectorColors: [String], categoryColors: [String]) {
         self.id = id
         self.name = name
         self.description = description
         self.sectorColors = sectorColors
         self.categoryColors = categoryColors
-        self.isCustom = isCustom
-    }
-}
-
-// MARK: - Custom Theme Storage
-
-class CustomThemeStorage: ObservableObject {
-    @Published var customThemes: [ColorPalette] = []
-    
-    private let storageKey = "customColorThemes"
-    
-    init() {
-        loadThemes()
-    }
-    
-    func loadThemes() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let themes = try? JSONDecoder().decode([ColorPalette].self, from: data) {
-            customThemes = themes
-        }
-    }
-    
-    func saveTheme(_ theme: ColorPalette) {
-        // Remove existing theme with same id if updating
-        customThemes.removeAll { $0.id == theme.id }
-        customThemes.append(theme)
-        persist()
-    }
-    
-    func deleteTheme(id: String) {
-        customThemes.removeAll { $0.id == id }
-        persist()
-    }
-    
-    private func persist() {
-        if let data = try? JSONEncoder().encode(customThemes) {
-            UserDefaults.standard.set(data, forKey: storageKey)
-        }
     }
 }
 
@@ -77,6 +38,7 @@ class AppliedThemeManager: ObservableObject {
     
     private let themeIdKey = "appliedThemeId"
     private let themeNameKey = "appliedThemeName"
+    private let colorOrderPrefix = "themeColorOrder_"
     
     init() {
         appliedThemeId = UserDefaults.standard.string(forKey: themeIdKey)
@@ -104,31 +66,75 @@ class AppliedThemeManager: ObservableObject {
         }
     }
     
-    /// Get the current theme palette (built-in or custom)
-    func getCurrentPalette(customStorage: CustomThemeStorage) -> ColorPalette? {
+    // MARK: - Custom Color Order
+    
+    /// Get the custom color order for a theme, or nil if using default order
+    func getCustomColorOrder(for themeId: String, colorType: ColorType) -> [Int]? {
+        let key = colorOrderPrefix + themeId + "_" + colorType.rawValue
+        return UserDefaults.standard.array(forKey: key) as? [Int]
+    }
+    
+    /// Save a custom color order for a theme
+    func saveCustomColorOrder(for themeId: String, colorType: ColorType, order: [Int]) {
+        let key = colorOrderPrefix + themeId + "_" + colorType.rawValue
+        UserDefaults.standard.set(order, forKey: key)
+    }
+    
+    /// Reset color order to default for a theme
+    func resetColorOrder(for themeId: String, colorType: ColorType) {
+        let key = colorOrderPrefix + themeId + "_" + colorType.rawValue
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+    
+    /// Reset all color orders for a theme
+    func resetAllColorOrders(for themeId: String) {
+        resetColorOrder(for: themeId, colorType: .sector)
+        resetColorOrder(for: themeId, colorType: .category)
+    }
+    
+    enum ColorType: String {
+        case sector
+        case category
+    }
+    
+    /// Get the current theme palette
+    func getCurrentPalette() -> ColorPalette? {
         guard let themeId = appliedThemeId else { return nil }
+        return ColorPalettes.all.first(where: { $0.id == themeId })
+    }
+    
+    /// Get colors in the custom order (or default if no custom order)
+    func getOrderedColors(for themeId: String, colorType: ColorType) -> [String] {
+        guard let palette = ColorPalettes.all.first(where: { $0.id == themeId }) else { return [] }
         
-        // Check built-in themes first
-        if let builtIn = ColorPalettes.all.first(where: { $0.id == themeId }) {
-            return builtIn
+        let baseColors = colorType == .sector ? palette.sectorColors : palette.categoryColors
+        
+        guard let customOrder = getCustomColorOrder(for: themeId, colorType: colorType),
+              customOrder.count == baseColors.count else {
+            return baseColors
         }
         
-        // Check custom themes
-        return customStorage.customThemes.first(where: { $0.id == themeId })
+        // Reorder based on custom indices
+        return customOrder.compactMap { index in
+            guard index >= 0, index < baseColors.count else { return nil }
+            return baseColors[index]
+        }
     }
     
     /// Get the next sector color based on current sector count
-    func getNextSectorColor(sectorCount: Int, customStorage: CustomThemeStorage) -> String? {
-        guard let palette = getCurrentPalette(customStorage: customStorage) else { return nil }
-        let index = sectorCount % palette.sectorColors.count
-        return palette.sectorColors[index]
+    func getNextSectorColor(sectorCount: Int) -> String? {
+        guard let themeId = appliedThemeId else { return nil }
+        let colors = getOrderedColors(for: themeId, colorType: .sector)
+        guard !colors.isEmpty else { return nil }
+        return colors[sectorCount % colors.count]
     }
     
     /// Get the next category color based on current category count
-    func getNextCategoryColor(categoryCount: Int, customStorage: CustomThemeStorage) -> String? {
-        guard let palette = getCurrentPalette(customStorage: customStorage) else { return nil }
-        let index = categoryCount % palette.categoryColors.count
-        return palette.categoryColors[index]
+    func getNextCategoryColor(categoryCount: Int) -> String? {
+        guard let themeId = appliedThemeId else { return nil }
+        let colors = getOrderedColors(for: themeId, colorType: .category)
+        guard !colors.isEmpty else { return nil }
+        return colors[categoryCount % colors.count]
     }
 }
 
@@ -397,24 +403,15 @@ enum ColorPalettes {
 
 // MARK: - Theme Palette View
 
-// Helper struct to properly pass theme to sheet
-struct ThemeBuilderItem: Identifiable {
-    let id = UUID()
-    let existingTheme: ColorPalette?
-}
-
 struct ThemePaletteView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(\.dismiss) private var dismiss
     
-    @StateObject private var customStorage = CustomThemeStorage()
     @State private var selectedPalette: ColorPalette?
     @State private var isApplying = false
     @State private var showConfirmation = false
     @State private var showSuccess = false
-    @State private var themeBuilderItem: ThemeBuilderItem?
-    @State private var showDeleteConfirmation = false
-    @State private var themeToDelete: ColorPalette?
+    @State private var showColorReorder = false
     
     private let dataService = DataService()
     
@@ -437,77 +434,48 @@ struct ThemePaletteView: View {
                                 .fontWeight(.bold)
                                 .foregroundStyle(Theme.Colors.textPrimary)
                             
-                            Text("Select a theme or create your own custom palette")
+                            Text("Choose a theme to color your sectors and categories")
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                                 .multilineTextAlignment(.center)
                         }
                         .padding(.top, Theme.Spacing.lg)
                         
-                        // Custom Theme Button
-                        Button {
-                            themeBuilderItem = ThemeBuilderItem(existingTheme: nil)
-                        } label: {
-                            HStack {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.title2)
-                                Text("Create Custom Theme")
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundStyle(Theme.Colors.accent)
-                            .frame(maxWidth: .infinity)
-                            .padding(Theme.Spacing.md)
-                            .background(Theme.Colors.backgroundCard)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
-                                    .stroke(Theme.Colors.accent.opacity(0.5), lineWidth: 2)
-                                    .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [8, 4]))
-                            )
-                        }
-                        .padding(.horizontal, Theme.Spacing.md)
-                        
-                        // Custom Themes Section
-                        if !customStorage.customThemes.isEmpty {
-                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                                Text("YOUR THEMES")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(Theme.Colors.textMuted)
-                                    .padding(.horizontal, Theme.Spacing.md)
-                                
-                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: Theme.Spacing.md) {
-                                    ForEach(customStorage.customThemes) { palette in
-                                        PaletteCard(
-                                            palette: palette,
-                                            isSelected: selectedPalette?.id == palette.id,
-                                            isCustom: true,
-                                            isApplied: AppliedThemeManager.shared.appliedThemeId == palette.id,
-                                            onSelect: {
-                                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                                    selectedPalette = palette
-                                                }
-                                            },
-                                            onEdit: {
-                                                themeBuilderItem = ThemeBuilderItem(existingTheme: palette)
-                                            },
-                                            onDelete: {
-                                                themeToDelete = palette
-                                                showDeleteConfirmation = true
-                                            },
-                                            onDuplicate: {
-                                                duplicateTheme(palette)
-                                            }
-                                        )
+                        // Customize Color Order Button (only if a theme is applied)
+                        if AppliedThemeManager.shared.appliedThemeId != nil {
+                            Button {
+                                showColorReorder = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "arrow.up.arrow.down.circle.fill")
+                                        .font(.title2)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Customize Color Order")
+                                            .fontWeight(.semibold)
+                                        Text("Reorder colors within \(AppliedThemeManager.shared.appliedThemeName ?? "theme")")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.textSecondary)
                                     }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Colors.textMuted)
                                 }
-                                .padding(.horizontal, Theme.Spacing.md)
+                                .foregroundStyle(Theme.Colors.accent)
+                                .padding(Theme.Spacing.md)
+                                .background(Theme.Colors.backgroundCard)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
+                                        .stroke(Theme.Colors.accent.opacity(0.3), lineWidth: 1)
+                                )
                             }
+                            .padding(.horizontal, Theme.Spacing.md)
                         }
                         
-                        // Built-in Themes Section
+                        // Themes Grid
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Text("BUILT-IN THEMES")
+                            Text("THEMES")
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(Theme.Colors.textMuted)
@@ -518,15 +486,11 @@ struct ThemePaletteView: View {
                                     PaletteCard(
                                         palette: palette,
                                         isSelected: selectedPalette?.id == palette.id,
-                                        isCustom: false,
                                         isApplied: AppliedThemeManager.shared.appliedThemeId == palette.id,
                                         onSelect: {
                                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                                 selectedPalette = palette
                                             }
-                                        },
-                                        onDuplicate: {
-                                            duplicateTheme(palette)
                                         }
                                     )
                                 }
@@ -590,42 +554,10 @@ struct ThemePaletteView: View {
             } message: {
                 Text("Your sectors and categories have been updated with the new color theme.")
             }
-            .alert("Delete Theme?", isPresented: $showDeleteConfirmation) {
-                Button("Cancel", role: .cancel) { themeToDelete = nil }
-                Button("Delete", role: .destructive) {
-                    if let theme = themeToDelete {
-                        customStorage.deleteTheme(id: theme.id)
-                        if selectedPalette?.id == theme.id {
-                            selectedPalette = nil
-                        }
-                    }
-                    themeToDelete = nil
-                }
-            } message: {
-                Text("This will permanently delete \"\(themeToDelete?.name ?? "this theme")\".")
-            }
-            .sheet(item: $themeBuilderItem) { item in
-                CustomThemeBuilderView(
-                    existingTheme: item.existingTheme,
-                    onSave: { theme in
-                        customStorage.saveTheme(theme)
-                        themeBuilderItem = nil
-                    }
-                )
+            .sheet(isPresented: $showColorReorder) {
+                ColorReorderView()
             }
         }
-    }
-    
-    private func duplicateTheme(_ palette: ColorPalette) {
-        let newTheme = ColorPalette(
-            id: UUID().uuidString,
-            name: "\(palette.name) Copy",
-            description: palette.description,
-            sectorColors: palette.sectorColors,
-            categoryColors: palette.categoryColors,
-            isCustom: true
-        )
-        themeBuilderItem = ThemeBuilderItem(existingTheme: newTheme)
     }
     
     private func applyPalette() {
@@ -635,17 +567,21 @@ struct ThemePaletteView: View {
         
         Task {
             do {
+                // Get the ordered colors (respecting any custom order for this theme)
+                let sectorColors = AppliedThemeManager.shared.getOrderedColors(for: palette.id, colorType: .sector)
+                let categoryColors = AppliedThemeManager.shared.getOrderedColors(for: palette.id, colorType: .category)
+                
                 let sectors = authViewModel.sectors
                 for (index, sector) in sectors.enumerated() {
-                    let colorIndex = index % palette.sectorColors.count
-                    let dto = UpdateSectorDTO(color: palette.sectorColors[colorIndex])
+                    let colorIndex = index % sectorColors.count
+                    let dto = UpdateSectorDTO(color: sectorColors[colorIndex])
                     _ = try await dataService.updateSector(id: sector.id, dto: dto)
                 }
                 
                 let categories = authViewModel.categories
                 for (index, category) in categories.enumerated() {
-                    let colorIndex = index % palette.categoryColors.count
-                    let dto = UpdateCategoryDTO(color: palette.categoryColors[colorIndex])
+                    let colorIndex = index % categoryColors.count
+                    let dto = UpdateCategoryDTO(color: categoryColors[colorIndex])
                     _ = try await dataService.updateCategory(id: category.id, dto: dto)
                 }
                 
@@ -674,12 +610,8 @@ struct ThemePaletteView: View {
 struct PaletteCard: View {
     let palette: ColorPalette
     let isSelected: Bool
-    var isCustom: Bool = false
     var isApplied: Bool = false
     let onSelect: () -> Void
-    var onEdit: (() -> Void)? = nil
-    var onDelete: (() -> Void)? = nil
-    var onDuplicate: (() -> Void)? = nil
     
     var body: some View {
         Button(action: onSelect) {
@@ -735,74 +667,14 @@ struct PaletteCard: View {
                         }
                         .padding(6)
                     }
-                    
-                    // Action buttons (top-right)
-                    VStack {
-                        HStack {
-                            Spacer()
-                            HStack(spacing: 4) {
-                                // Duplicate button (for all themes)
-                                if onDuplicate != nil {
-                                    Button {
-                                        onDuplicate?()
-                                    } label: {
-                                        Image(systemName: "doc.on.doc.fill")
-                                            .font(.caption)
-                                            .foregroundStyle(.white)
-                                            .padding(6)
-                                            .background(Color.black.opacity(0.3))
-                                            .clipShape(Circle())
-                                            .shadow(radius: 2)
-                                    }
-                                }
-                                
-                                // Edit/Delete buttons for custom themes only
-                                if isCustom {
-                                    Button {
-                                        onEdit?()
-                                    } label: {
-                                        Image(systemName: "pencil")
-                                            .font(.caption)
-                                            .foregroundStyle(.white)
-                                            .padding(6)
-                                            .background(Color.black.opacity(0.3))
-                                            .clipShape(Circle())
-                                            .shadow(radius: 2)
-                                    }
-                                    
-                                    Button {
-                                        onDelete?()
-                                    } label: {
-                                        Image(systemName: "trash")
-                                            .font(.caption)
-                                            .foregroundStyle(.white)
-                                            .padding(6)
-                                            .background(Color.black.opacity(0.3))
-                                            .clipShape(Circle())
-                                            .shadow(radius: 2)
-                                    }
-                                }
-                            }
-                        }
-                        Spacer()
-                    }
-                    .padding(4)
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(palette.name)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(Theme.Colors.textPrimary)
-                            .lineLimit(1)
-                        
-                        if isCustom {
-                            Image(systemName: "star.fill")
-                                .font(.caption2)
-                                .foregroundStyle(Theme.Colors.accent)
-                        }
-                    }
+                    Text(palette.name)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .lineLimit(1)
                     
                     Text(palette.description)
                         .font(.caption2)
@@ -824,46 +696,39 @@ struct PaletteCard: View {
     }
 }
 
-// MARK: - Custom Theme Builder
+// MARK: - Color Reorder View
 
-struct CustomThemeBuilderView: View {
+struct ColorReorderView: View {
+    @Environment(AuthViewModel.self) private var authViewModel
     @Environment(\.dismiss) private var dismiss
     
-    let existingTheme: ColorPalette?
-    let onSave: (ColorPalette) -> Void
+    @State private var sectorColorOrder: [Int] = []
+    @State private var categoryColorOrder: [Int] = []
+    @State private var selectedTab: AppliedThemeManager.ColorType = .sector
+    @State private var showResetConfirmation = false
+    @State private var isApplying = false
+    @State private var showSuccess = false
     
-    @State private var themeName = ""
-    @State private var themeDescription = ""
-    @State private var sectorColors: [String] = ["#E53935", "#F57C00", "#FDD835", "#43A047", "#1E88E5", "#5E35B1", "#D81B60", "#00ACC1"]
-    @State private var categoryColors: [String] = ["#EF5350", "#FF9800", "#FFEE58", "#66BB6A", "#42A5F5", "#7E57C2", "#EC407A", "#26C6DA"]
+    private let dataService = DataService()
     
-    @State private var editingColorIndex: Int?
-    @State private var editingColorType: ColorType = .sector
-    @State private var showColorPicker = false
-    @State private var tempColor = Color.red
-    @State private var hexInput = ""
-    
-    @FocusState private var isAnyFieldFocused: Bool
-    
-    enum ColorType {
-        case sector
-        case category
+    private var currentPalette: ColorPalette? {
+        AppliedThemeManager.shared.getCurrentPalette()
     }
     
-    init(existingTheme: ColorPalette?, onSave: @escaping (ColorPalette) -> Void) {
-        self.existingTheme = existingTheme
-        self.onSave = onSave
-        
-        if let theme = existingTheme {
-            _themeName = State(initialValue: theme.name)
-            _themeDescription = State(initialValue: theme.description)
-            _sectorColors = State(initialValue: theme.sectorColors)
-            _categoryColors = State(initialValue: theme.categoryColors)
+    private var orderedSectorColors: [String] {
+        guard let palette = currentPalette else { return [] }
+        return sectorColorOrder.compactMap { index in
+            guard index >= 0, index < palette.sectorColors.count else { return nil }
+            return palette.sectorColors[index]
         }
     }
     
-    private var isValid: Bool {
-        !themeName.trimmingCharacters(in: .whitespaces).isEmpty
+    private var orderedCategoryColors: [String] {
+        guard let palette = currentPalette else { return [] }
+        return categoryColorOrder.compactMap { index in
+            guard index >= 0, index < palette.categoryColors.count else { return nil }
+            return palette.categoryColors[index]
+        }
     }
     
     var body: some View {
@@ -871,80 +736,76 @@ struct CustomThemeBuilderView: View {
             ZStack {
                 Theme.Colors.backgroundPrimary
                     .ignoresSafeArea()
-                    .onTapGesture {
-                        isAnyFieldFocused = false
-                    }
                 
-                ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
-                        // Preview
-                        themePreview
-                        
-                        // Name & Description
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Text("Theme Details")
-                                .font(.headline)
-                                .foregroundStyle(Theme.Colors.textPrimary)
-                            
-                            TextField("Theme Name", text: $themeName)
-                                .inputFieldStyle()
-                                .focused($isAnyFieldFocused)
-                            
-                            TextField("Description (optional)", text: $themeDescription)
-                                .inputFieldStyle()
-                                .focused($isAnyFieldFocused)
+                VStack(spacing: 0) {
+                    // Tab Picker
+                    Picker("Color Type", selection: $selectedTab) {
+                        Text("Sector Colors").tag(AppliedThemeManager.ColorType.sector)
+                        Text("Category Colors").tag(AppliedThemeManager.ColorType.category)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(Theme.Spacing.md)
+                    
+                    // Instructions
+                    HStack {
+                        Image(systemName: "hand.draw.fill")
+                            .foregroundStyle(Theme.Colors.accent)
+                        Text("Drag colors to reorder • New items use this order")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                    .padding(.horizontal, Theme.Spacing.md)
+                    .padding(.bottom, Theme.Spacing.sm)
+                    
+                    // Color List
+                    ScrollView {
+                        VStack(spacing: Theme.Spacing.sm) {
+                            if selectedTab == .sector {
+                                ReorderableColorList(
+                                    colors: orderedSectorColors,
+                                    onMove: { from, to in
+                                        sectorColorOrder.move(fromOffsets: from, toOffset: to)
+                                    }
+                                )
+                            } else {
+                                ReorderableColorList(
+                                    colors: orderedCategoryColors,
+                                    onMove: { from, to in
+                                        categoryColorOrder.move(fromOffsets: from, toOffset: to)
+                                    }
+                                )
+                            }
                         }
-                        .padding(.horizontal, Theme.Spacing.md)
-                        
-                        // Sector Colors
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Text("Sector Colors")
-                                .font(.headline)
-                                .foregroundStyle(Theme.Colors.textPrimary)
-                            
-                            Text("Used for main sector groupings in charts")
-                                .font(.caption)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                            
-                            colorGrid(colors: $sectorColors, type: .sector)
-                        }
-                        .padding(.horizontal, Theme.Spacing.md)
-                        
-                        // Category Colors
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Text("Category Colors")
-                                .font(.headline)
-                                .foregroundStyle(Theme.Colors.textPrimary)
-                            
-                            Text("Used for categories within sectors")
-                                .font(.caption)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                            
-                            colorGrid(colors: $categoryColors, type: .category)
-                        }
-                        .padding(.horizontal, Theme.Spacing.md)
-                        
-                        // Save Button
+                        .padding(Theme.Spacing.md)
+                    }
+                    
+                    // Action Buttons
+                    VStack(spacing: Theme.Spacing.sm) {
                         Button {
-                            saveTheme()
+                            applyColorOrder()
                         } label: {
-                            Text(existingTheme != nil ? "Update Theme" : "Save Theme")
+                            if isApplying {
+                                ProgressView()
+                                    .tint(Theme.Colors.textInverse)
+                            } else {
+                                Label("Apply Color Order", systemImage: "checkmark.circle.fill")
+                            }
                         }
                         .buttonStyle(PrimaryButtonStyle())
-                        .disabled(!isValid)
-                        .padding(.horizontal, Theme.Spacing.md)
-                        .padding(.top, Theme.Spacing.md)
+                        .disabled(isApplying)
                         
-                        Spacer(minLength: 100)
+                        Button {
+                            showResetConfirmation = true
+                        } label: {
+                            Label("Reset to Default Order", systemImage: "arrow.counterclockwise")
+                                .font(.subheadline)
+                        }
+                        .foregroundStyle(Theme.Colors.textSecondary)
                     }
-                    .padding(.top, Theme.Spacing.lg)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .onTapGesture {
-                    isAnyFieldFocused = false
+                    .padding(Theme.Spacing.md)
                 }
             }
-            .navigationTitle(existingTheme != nil ? "Edit Theme" : "Create Theme")
+            .navigationTitle("Customize Colors")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
@@ -956,409 +817,172 @@ struct CustomThemeBuilderView: View {
                     .foregroundStyle(Theme.Colors.textSecondary)
                 }
                 
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        isAnyFieldFocused = false
-                    }
-                }
-            }
-            .sheet(isPresented: $showColorPicker) {
-                ColorPickerSheet(
-                    color: $tempColor,
-                    hexInput: $hexInput,
-                    onSave: {
-                        if let index = editingColorIndex {
-                            let hexColor = hexInput.hasPrefix("#") ? hexInput : "#\(hexInput)"
-                            switch editingColorType {
-                            case .sector:
-                                sectorColors[index] = hexColor.uppercased()
-                            case .category:
-                                categoryColors[index] = hexColor.uppercased()
-                            }
-                        }
-                        showColorPicker = false
-                    }
-                )
-                .presentationDetents([.large])
-            }
-        }
-    }
-    
-    private var themePreview: some View {
-        VStack(spacing: Theme.Spacing.sm) {
-            // Gradient preview
-            RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
-                .fill(
-                    LinearGradient(
-                        colors: sectorColors.prefix(3).map { Color(hex: $0.replacingOccurrences(of: "#", with: "")) },
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(height: 80)
-                .overlay(
-                    VStack {
-                        Text(themeName.isEmpty ? "Theme Preview" : themeName)
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                            .shadow(radius: 2)
-                        
-                        if !themeDescription.isEmpty {
-                            Text(themeDescription)
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.8))
-                                .shadow(radius: 1)
-                        }
-                    }
-                )
-            
-            // Color dots preview
-            HStack(spacing: 8) {
-                ForEach(0..<min(8, sectorColors.count), id: \.self) { index in
-                    Circle()
-                        .fill(Color(hex: sectorColors[index].replacingOccurrences(of: "#", with: "")))
-                        .frame(width: 24, height: 24)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white.opacity(0.3), lineWidth: 1)
-                        )
-                }
-            }
-        }
-        .padding(Theme.Spacing.md)
-        .background(Theme.Colors.backgroundCard)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
-        .padding(.horizontal, Theme.Spacing.md)
-    }
-    
-    private func colorGrid(colors: Binding<[String]>, type: ColorType) -> some View {
-        VStack(spacing: Theme.Spacing.sm) {
-            // Hint text
-            Text("Tap to edit color • Drag to reorder")
-                .font(.caption2)
-                .foregroundStyle(Theme.Colors.textMuted)
-            
-            // Reorderable color list with drag & drop
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: Theme.Spacing.sm) {
-                ForEach(Array(colors.wrappedValue.enumerated()), id: \.offset) { index, color in
-                    ColorGridItem(
-                        color: color,
-                        index: index,
-                        onEdit: {
-                            editingColorIndex = index
-                            editingColorType = type
-                            let colorHex = colors.wrappedValue[index].replacingOccurrences(of: "#", with: "")
-                            tempColor = Color(hex: colorHex)
-                            hexInput = colorHex
-                            showColorPicker = true
-                        },
-                        onDelete: colors.wrappedValue.count > 2 ? {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                _ = colors.wrappedValue.remove(at: index)
-                            }
-                        } : nil
-                    )
-                    .draggable("\(index):\(color)") {
-                        // Drag preview
-                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
-                            .fill(Color(hex: color.replacingOccurrences(of: "#", with: "")))
-                            .frame(width: 50, height: 50)
-                            .opacity(0.8)
-                    }
-                    .dropDestination(for: String.self) { items, _ in
-                        guard let draggedItem = items.first,
-                              let fromIndexStr = draggedItem.split(separator: ":").first,
-                              let fromIndex = Int(fromIndexStr),
-                              fromIndex != index,
-                              fromIndex >= 0,
-                              fromIndex < colors.wrappedValue.count else {
-                            return false
-                        }
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            colors.wrappedValue.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: index > fromIndex ? index + 1 : index)
-                        }
-                        return true
-                    }
-                }
-                
-                // Add color button
-                if colors.wrappedValue.count < 12 {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            colors.wrappedValue.append("#808080")
-                        }
+                        shuffleColors()
                     } label: {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
-                                .fill(Theme.Colors.backgroundInput)
-                                .frame(height: 50)
-                            
-                            Image(systemName: "plus")
-                                .font(.title3)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                        }
+                        Image(systemName: "shuffle")
                     }
-                }
-            }
-            
-            // Shuffle button
-            Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    colors.wrappedValue.shuffle()
-                }
-            } label: {
-                Label("Shuffle Order", systemImage: "shuffle")
-                    .font(.caption)
                     .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            .onAppear {
+                loadCurrentOrder()
+            }
+            .alert("Reset Color Order?", isPresented: $showResetConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Reset") {
+                    resetColorOrder()
+                }
+            } message: {
+                Text("This will restore the default color order for \(currentPalette?.name ?? "this theme").")
+            }
+            .alert("Colors Updated!", isPresented: $showSuccess) {
+                Button("Done") {
+                    dismiss()
+                }
+            } message: {
+                Text("Your sectors and categories have been updated with the new color order.")
             }
         }
     }
     
-    private func saveTheme() {
-        let id = existingTheme?.id ?? UUID().uuidString
-        let theme = ColorPalette(
-            id: id,
-            name: themeName.trimmingCharacters(in: .whitespaces),
-            description: themeDescription.trimmingCharacters(in: .whitespaces).isEmpty ? "Custom theme" : themeDescription.trimmingCharacters(in: .whitespaces),
-            sectorColors: sectorColors,
-            categoryColors: categoryColors,
-            isCustom: true
-        )
-        onSave(theme)
-    }
-}
-
-// MARK: - Color Grid Item
-
-struct ColorGridItem: View {
-    let color: String
-    let index: Int
-    let onEdit: () -> Void
-    var onDelete: (() -> Void)?
-    
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
-                .fill(Color(hex: color.replacingOccurrences(of: "#", with: "")))
-                .frame(height: 50)
-                .overlay(
-                    // Position indicator
-                    Text("\(index + 1)")
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.white)
-                        .shadow(radius: 1)
-                )
-            
-            // Delete button
-            if let delete = onDelete {
-                Button {
-                    delete()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 18, height: 18)
-                        .background(Theme.Colors.error)
-                        .clipShape(Circle())
-                }
-                .offset(x: 4, y: -4)
-            }
-        }
-        .contentShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
-        .onTapGesture {
-            onEdit()
-        }
-    }
-}
-
-// MARK: - Color Picker Sheet
-
-struct ColorPickerSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @Binding var color: Color
-    @Binding var hexInput: String
-    let onSave: () -> Void
-    
-    @State private var showInvalidHex = false
-    @FocusState private var isHexFieldFocused: Bool
-    
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Theme.Colors.backgroundPrimary
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        isHexFieldFocused = false
-                    }
-                
-                VStack(spacing: Theme.Spacing.lg) {
-                    // Color preview
-                    RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
-                        .fill(color)
-                        .frame(height: 100)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
-                                .stroke(Color.white.opacity(0.3), lineWidth: 2)
-                        )
-                        .padding(.horizontal, Theme.Spacing.md)
-                    
-                    // Color Wheel
-                    ColorPicker("Select Color", selection: $color, supportsOpacity: false)
-                        .labelsHidden()
-                        .scaleEffect(1.5)
-                        .frame(height: 60)
-                        .onChange(of: color) { _, newColor in
-                            hexInput = newColor.toHex() ?? "000000"
-                        }
-                    
-                    // Hex Input
-                    VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                        Text("Or enter hex code:")
-                            .font(.caption)
-                            .foregroundStyle(Theme.Colors.textSecondary)
-                        
-                        HStack {
-                            Text("#")
-                                .font(.headline)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                            
-                            TextField("FFFFFF", text: $hexInput)
-                                .font(.system(.body, design: .monospaced))
-                                .textInputAutocapitalization(.characters)
-                                .focused($isHexFieldFocused)
-                                .onChange(of: hexInput) { _, newValue in
-                                    // Clean input
-                                    let cleaned = newValue.replacingOccurrences(of: "#", with: "").uppercased()
-                                    if cleaned.count <= 6 {
-                                        hexInput = cleaned
-                                    }
-                                    
-                                    // Update color if valid
-                                    if cleaned.count == 6, isValidHex(cleaned) {
-                                        color = Color(hex: cleaned)
-                                        showInvalidHex = false
-                                    } else if cleaned.count == 6 {
-                                        showInvalidHex = true
-                                    }
-                                }
-                        }
-                        .padding(Theme.Spacing.md)
-                        .background(Theme.Colors.backgroundInput)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
-                        
-                        if showInvalidHex {
-                            Text("Invalid hex code")
-                                .font(.caption)
-                                .foregroundStyle(Theme.Colors.error)
-                        }
-                    }
-                    .padding(.horizontal, Theme.Spacing.md)
-                    
-                    // Quick Colors
-                    VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                        Text("Quick colors:")
-                            .font(.caption)
-                            .foregroundStyle(Theme.Colors.textSecondary)
-                            .padding(.horizontal, Theme.Spacing.md)
-                        
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: Theme.Spacing.sm) {
-                            ForEach(quickColors, id: \.self) { hex in
-                                Button {
-                                    hexInput = hex
-                                    color = Color(hex: hex)
-                                } label: {
-                                    Circle()
-                                        .fill(Color(hex: hex))
-                                        .frame(width: 32, height: 32)
-                                        .overlay(
-                                            Circle()
-                                                .stroke(hexInput.uppercased() == hex.uppercased() ? Color.white : Color.clear, lineWidth: 2)
-                                        )
-                                }
-                            }
-                        }
-                        .padding(.horizontal, Theme.Spacing.md)
-                    }
-                    
-                    Spacer()
-                    
-                    // Save Button
-                    Button {
-                        onSave()
-                    } label: {
-                        Text("Apply Color")
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(hexInput.count != 6 || !isValidHex(hexInput))
-                    .padding(.horizontal, Theme.Spacing.md)
-                    .padding(.bottom, Theme.Spacing.lg)
-                }
-                .padding(.top, Theme.Spacing.lg)
-            }
-            .navigationTitle("Choose Color")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .foregroundStyle(Theme.Colors.textSecondary)
-                }
-                
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        isHexFieldFocused = false
-                    }
-                }
-            }
-            .onTapGesture {
-                isHexFieldFocused = false
-            }
-        }
-    }
-    
-    private let quickColors = [
-        "E53935", "F57C00", "FDD835", "43A047",
-        "1E88E5", "5E35B1", "D81B60", "00ACC1",
-        "00E676", "FF1744", "651FFF", "FFEA00",
-        "795548", "607D8B", "000000", "FFFFFF"
-    ]
-    
-    private func isValidHex(_ hex: String) -> Bool {
-        let hexSet = CharacterSet(charactersIn: "0123456789ABCDEFabcdef")
-        return hex.unicodeScalars.allSatisfy { hexSet.contains($0) }
-    }
-}
-
-// MARK: - Color Extension for Hex Output
-
-extension Color {
-    func toHex() -> String? {
-        guard let components = UIColor(self).cgColor.components else { return nil }
+    private func loadCurrentOrder() {
+        guard let palette = currentPalette else { return }
         
-        let r: CGFloat
-        let g: CGFloat
-        let b: CGFloat
-        
-        if components.count >= 3 {
-            r = components[0]
-            g = components[1]
-            b = components[2]
+        // Load existing order or create default
+        if let existingOrder = AppliedThemeManager.shared.getCustomColorOrder(for: palette.id, colorType: .sector) {
+            sectorColorOrder = existingOrder
         } else {
-            r = components[0]
-            g = components[0]
-            b = components[0]
+            sectorColorOrder = Array(0..<palette.sectorColors.count)
         }
         
-        return String(
-            format: "%02X%02X%02X",
-            Int(r * 255),
-            Int(g * 255),
-            Int(b * 255)
-        )
+        if let existingOrder = AppliedThemeManager.shared.getCustomColorOrder(for: palette.id, colorType: .category) {
+            categoryColorOrder = existingOrder
+        } else {
+            categoryColorOrder = Array(0..<palette.categoryColors.count)
+        }
+    }
+    
+    private func shuffleColors() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            if selectedTab == .sector {
+                sectorColorOrder.shuffle()
+            } else {
+                categoryColorOrder.shuffle()
+            }
+        }
+    }
+    
+    private func resetColorOrder() {
+        guard let palette = currentPalette else { return }
+        
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            sectorColorOrder = Array(0..<palette.sectorColors.count)
+            categoryColorOrder = Array(0..<palette.categoryColors.count)
+        }
+        
+        AppliedThemeManager.shared.resetAllColorOrders(for: palette.id)
+    }
+    
+    private func applyColorOrder() {
+        guard let palette = currentPalette else { return }
+        
+        isApplying = true
+        
+        // Save the new order
+        AppliedThemeManager.shared.saveCustomColorOrder(for: palette.id, colorType: .sector, order: sectorColorOrder)
+        AppliedThemeManager.shared.saveCustomColorOrder(for: palette.id, colorType: .category, order: categoryColorOrder)
+        
+        Task {
+            do {
+                // Apply new colors to existing sectors
+                let sectors = authViewModel.sectors
+                for (index, sector) in sectors.enumerated() {
+                    let colorIndex = index % orderedSectorColors.count
+                    let dto = UpdateSectorDTO(color: orderedSectorColors[colorIndex])
+                    _ = try await dataService.updateSector(id: sector.id, dto: dto)
+                }
+                
+                // Apply new colors to existing categories
+                let categories = authViewModel.categories
+                for (index, category) in categories.enumerated() {
+                    let colorIndex = index % orderedCategoryColors.count
+                    let dto = UpdateCategoryDTO(color: orderedCategoryColors[colorIndex])
+                    _ = try await dataService.updateCategory(id: category.id, dto: dto)
+                }
+                
+                await authViewModel.refreshSectors()
+                await authViewModel.refreshCategories()
+                
+                await MainActor.run {
+                    isApplying = false
+                    showSuccess = true
+                }
+            } catch {
+                await MainActor.run {
+                    isApplying = false
+                    print("Failed to apply color order: \(error)")
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Reorderable Color List
+
+struct ReorderableColorList: View {
+    let colors: [String]
+    let onMove: (IndexSet, Int) -> Void
+    
+    var body: some View {
+        ForEach(Array(colors.enumerated()), id: \.offset) { index, color in
+            HStack(spacing: Theme.Spacing.md) {
+                // Position number
+                Text("\(index + 1)")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(Theme.Colors.textMuted)
+                    .frame(width: 24)
+                
+                // Color swatch
+                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                    .fill(Color(hex: color.replacingOccurrences(of: "#", with: "")))
+                    .frame(height: 50)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    )
+                
+                // Drag handle
+                Image(systemName: "line.3.horizontal")
+                    .font(.body)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+            .padding(.horizontal, Theme.Spacing.sm)
+            .padding(.vertical, Theme.Spacing.xs)
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+            .draggable("\(index)") {
+                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                    .fill(Color(hex: color.replacingOccurrences(of: "#", with: "")))
+                    .frame(width: 60, height: 40)
+                    .opacity(0.8)
+            }
+            .dropDestination(for: String.self) { items, _ in
+                guard let draggedItem = items.first,
+                      let fromIndex = Int(draggedItem),
+                      fromIndex != index,
+                      fromIndex >= 0,
+                      fromIndex < colors.count else {
+                    return false
+                }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    onMove(IndexSet(integer: fromIndex), index > fromIndex ? index + 1 : index)
+                }
+                return true
+            }
+        }
     }
 }
 

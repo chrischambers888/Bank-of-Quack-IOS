@@ -38,10 +38,13 @@ struct CategoryExpense: Identifiable {
 struct ExpenseDonutChart: View {
     let sectors: [SectorExpense]
     let totalExpenses: Decimal
+    var filteredTransactions: [TransactionView] = []
+    var sectorCategories: [UUID: [UUID]] = [:] // sectorId -> [categoryId]
     
     @State private var selectedSectorId: UUID?
     @State private var selectedCategoryId: UUID?
     @State private var showingCategoryPopup = false
+    @State private var showingSectorPopup = false
     @State private var hasAnimated = false
     @State private var sliceAnimations: [UUID: Double] = [:]
     @State private var categorySliceAnimations: [UUID: Double] = [:]
@@ -102,12 +105,6 @@ struct ExpenseDonutChart: View {
                             } else {
                                 selectedSectorId = sector.id
                                 selectedCategoryId = nil
-                            }
-                        }
-                        // Animate category slices when sector is selected
-                        if selectedSectorId == sector.id {
-                            Task {
-                                await animateCategorySlicesIn(for: sector)
                             }
                         }
                     }
@@ -192,32 +189,19 @@ struct ExpenseDonutChart: View {
             }
             .padding(.vertical, Theme.Spacing.sm)
             
-            // Legend (always show sector legend when no sector selected)
-            if selectedSector == nil {
-                SectorLegend(sectors: sectors, selectedId: $selectedSectorId)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            
-            // Expanded sector detail
-            if let selected = selectedSector {
-                SectorDetailView(
-                    sector: selected,
-                    onClose: {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                            selectedSectorId = nil
-                            selectedCategoryId = nil
-                        }
-                    },
-                    onCategoryTapped: { category in
-                        selectedCategoryId = category.id
-                        showingCategoryPopup = true
-                    }
-                )
-                .transition(.asymmetric(
-                    insertion: .opacity.combined(with: .move(edge: .bottom)),
-                    removal: .opacity.combined(with: .scale(scale: 0.95))
-                ))
-            }
+            // Accordion list showing all sectors (expandable)
+            SectorAccordionList(
+                sectors: sectors,
+                selectedId: $selectedSectorId,
+                onCategoryTapped: { category in
+                    selectedCategoryId = category.id
+                    showingCategoryPopup = true
+                },
+                onSectorDetailsTapped: { sector in
+                    selectedSectorId = sector.id
+                    showingSectorPopup = true
+                }
+            )
         }
         .cardStyle()
         .task {
@@ -231,17 +215,49 @@ struct ExpenseDonutChart: View {
                 await animateSlicesIn()
             }
         }
+        .onChange(of: selectedSectorId) { _, newId in
+            // Animate category slices when sector is selected (from accordion or donut)
+            if let sectorId = newId, let sector = sectors.first(where: { $0.id == sectorId }) {
+                Task {
+                    await animateCategorySlicesIn(for: sector)
+                }
+            }
+        }
         .sheet(isPresented: $showingCategoryPopup) {
             if let category = selectedCategory, let sector = selectedSector {
+                let categoryTransactions = filteredTransactions.filter { $0.categoryId == category.id && $0.transactionType == .expense }
                 CategoryMemberPopup(
                     category: category,
                     sectorColor: sector.color,
+                    transactions: categoryTransactions,
                     onDismiss: {
                         showingCategoryPopup = false
                         selectedCategoryId = nil
                     }
                 )
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.fraction(0.85), .large])
+                .presentationDragIndicator(.visible)
+            }
+        }
+        .sheet(isPresented: $showingSectorPopup) {
+            if let sector = selectedSector {
+                let sectorCategoryIds = sectorCategories[sector.id] ?? sector.categories.map { $0.id }
+                let sectorTransactions = filteredTransactions.filter { transaction in
+                    guard transaction.transactionType == .expense else { return false }
+                    guard let categoryId = transaction.categoryId else {
+                        // Include uncategorized if this is the "Other" sector
+                        return sector.name == "Other"
+                    }
+                    return sectorCategoryIds.contains(categoryId)
+                }
+                SectorDetailPopup(
+                    sector: sector,
+                    transactions: sectorTransactions,
+                    onDismiss: {
+                        showingSectorPopup = false
+                    }
+                )
+                .presentationDetents([.fraction(0.85), .large])
                 .presentationDragIndicator(.visible)
             }
         }
@@ -383,142 +399,246 @@ struct DonutSliceView: View {
     }
 }
 
-// MARK: - Sector Legend
+// MARK: - Sector Accordion List
 
-struct SectorLegend: View {
+struct SectorAccordionList: View {
     let sectors: [SectorExpense]
     @Binding var selectedId: UUID?
+    var onCategoryTapped: ((CategoryExpense) -> Void)?
+    var onSectorDetailsTapped: ((SectorExpense) -> Void)?
     
     var body: some View {
-        LazyVGrid(columns: [
-            GridItem(.flexible()),
-            GridItem(.flexible())
-        ], spacing: Theme.Spacing.sm) {
+        VStack(spacing: Theme.Spacing.xs) {
             ForEach(sectors) { sector in
-                Button {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                        selectedId = sector.id
-                    }
-                } label: {
-                    HStack(spacing: Theme.Spacing.xs) {
-                        Circle()
-                            .fill(sector.color)
-                            .frame(width: 10, height: 10)
-                        
-                        Text(sector.name)
-                            .font(.caption)
-                            .foregroundStyle(Theme.Colors.textSecondary)
-                            .lineLimit(1)
-                        
-                        Spacer()
-                        
-                        Text("\(Int(sector.percentage))%")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(Theme.Colors.textPrimary)
-                    }
-                    .padding(.vertical, Theme.Spacing.xs)
-                    .padding(.horizontal, Theme.Spacing.sm)
-                    .background(Theme.Colors.backgroundCard)
-                    .cornerRadius(Theme.CornerRadius.sm)
-                }
-                .buttonStyle(.plain)
+                SectorAccordionRow(
+                    sector: sector,
+                    isExpanded: sector.id == selectedId,
+                    onToggle: {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            if selectedId == sector.id {
+                                selectedId = nil
+                            } else {
+                                selectedId = sector.id
+                            }
+                        }
+                    },
+                    onCategoryTapped: onCategoryTapped,
+                    onDetailsTapped: { onSectorDetailsTapped?(sector) }
+                )
             }
         }
     }
 }
 
-// MARK: - Sector Detail View
+// MARK: - Sector Accordion Row
 
-struct SectorDetailView: View {
+struct SectorAccordionRow: View {
     let sector: SectorExpense
-    let onClose: () -> Void
-    var onCategoryTapped: ((CategoryExpense) -> Void)? = nil
+    let isExpanded: Bool
+    let onToggle: () -> Void
+    var onCategoryTapped: ((CategoryExpense) -> Void)?
+    var onDetailsTapped: (() -> Void)?
     
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            // Header
-            HStack {
-                Circle()
-                    .fill(sector.color)
-                    .frame(width: 14, height: 14)
-                
-                Text(sector.name)
-                    .font(.headline)
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                
-                Spacer()
-                
-                Text(sector.amount.doubleValue.formattedAsMoney())
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Theme.Colors.textPrimary)
-                
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Theme.Colors.textMuted)
+        VStack(spacing: 0) {
+            // Header (always visible) - split into left (details) and right (expand/collapse) zones
+            HStack(spacing: 0) {
+                // LEFT SIDE - Opens sector popup
+                Button(action: { onDetailsTapped?() }) {
+                    HStack(spacing: Theme.Spacing.sm) {
+                        // Sector color indicator
+                        Circle()
+                            .fill(sector.color)
+                            .frame(width: 12, height: 12)
+                        
+                        // Sector name
+                        Text(sector.name)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                            .lineLimit(1)
+                        
+                        Spacer()
+                        
+                        // Amount and percentage
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(sector.amount.doubleValue.formattedAsMoney())
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Text("\(Int(sector.percentage))%")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                    }
+                    .contentShape(Rectangle())
                 }
-            }
-            
-            Divider()
-                .background(Theme.Colors.borderLight)
-            
-            // Categories (shown first)
-            if sector.categories.isEmpty && sector.memberBreakdown.isEmpty {
-                HStack {
-                    Spacer()
-                    VStack(spacing: Theme.Spacing.xs) {
-                        Image(systemName: "folder")
-                            .font(.title2)
+                .buttonStyle(.plain)
+                
+                // RIGHT SIDE - Expands/collapses accordion
+                Button(action: onToggle) {
+                    HStack(spacing: Theme.Spacing.xs) {
+                        Divider()
+                            .frame(height: 24)
+                            .background(Theme.Colors.borderLight)
+                        
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .fontWeight(.semibold)
                             .foregroundStyle(Theme.Colors.textMuted)
-                        Text("No categories")
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .padding(.leading, Theme.Spacing.sm)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, Theme.Spacing.sm)
+            .padding(.leading, Theme.Spacing.md)
+            .padding(.trailing, Theme.Spacing.md)
+            .background(isExpanded ? Theme.Colors.backgroundCardSolid.opacity(0.5) : Theme.Colors.backgroundCard)
+            .cornerRadius(isExpanded ? Theme.CornerRadius.md : Theme.CornerRadius.sm)
+            
+            // Expanded content - Categories only
+            if isExpanded {
+                VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                    // Categories as circles
+                    if !sector.categories.isEmpty {
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Text("Categories")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                            
+                            CategoryCircleGrid(
+                                categories: sector.categories,
+                                onCategoryTapped: onCategoryTapped
+                            )
+                        }
+                    } else {
+                        Text("No categories in this sector")
                             .font(.caption)
                             .foregroundStyle(Theme.Colors.textMuted)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Spacing.sm)
                     }
-                    Spacer()
                 }
-                .padding(.vertical, Theme.Spacing.md)
-            } else if !sector.categories.isEmpty {
-                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                    Text("By Category")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(Theme.Colors.textMuted)
+                .padding(Theme.Spacing.md)
+                .background(Theme.Colors.backgroundCardSolid.opacity(0.3))
+                .cornerRadius(Theme.CornerRadius.md)
+                .padding(.top, Theme.Spacing.xs)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .move(edge: .top)),
+                    removal: .opacity.combined(with: .scale(scale: 0.95, anchor: .top))
+                ))
+            }
+        }
+    }
+}
+
+// MARK: - Category Circle Grid
+
+struct CategoryCircleGrid: View {
+    let categories: [CategoryExpense]
+    var onCategoryTapped: ((CategoryExpense) -> Void)?
+    
+    private let columns = [
+        GridItem(.adaptive(minimum: 80, maximum: 100), spacing: Theme.Spacing.sm)
+    ]
+    
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: Theme.Spacing.md) {
+            ForEach(categories) { category in
+                CategoryCircleButton(
+                    category: category,
+                    onTap: { onCategoryTapped?(category) }
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Category Circle Button
+
+struct CategoryCircleButton: View {
+    let category: CategoryExpense
+    var onTap: (() -> Void)?
+    
+    /// Check if a string is a valid SF Symbol name
+    private func isSFSymbol(_ name: String) -> Bool {
+        UIImage(systemName: name) != nil
+    }
+    
+    var body: some View {
+        Button {
+            onTap?()
+        } label: {
+            VStack(spacing: Theme.Spacing.xs) {
+                // Circle with category color outline
+                ZStack {
+                    // Category color outline ring
+                    Circle()
+                        .stroke(category.color, lineWidth: 2.5)
+                        .frame(width: 52, height: 52)
                     
-                    ForEach(sector.categories) { category in
-                        CategoryExpenseRow(
-                            category: category,
-                            sectorTotal: sector.amount,
-                            onTap: onCategoryTapped != nil ? { onCategoryTapped?(category) } : nil
-                        )
+                    // Inner colored circle
+                    Circle()
+                        .fill(category.color.opacity(0.2))
+                        .frame(width: 44, height: 44)
+                    
+                    // Icon or emoji
+                    if let icon = category.icon, !icon.isEmpty {
+                        if isSFSymbol(icon) {
+                            Image(systemName: icon)
+                                .font(.system(size: 18))
+                                .foregroundStyle(category.color)
+                        } else {
+                            Text(icon)
+                                .font(.system(size: 20))
+                        }
+                    } else {
+                        Image(systemName: "tag.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(category.color)
                     }
                 }
                 
-                if !sector.memberBreakdown.isEmpty {
-                    Divider()
-                        .background(Theme.Colors.borderLight)
-                        .padding(.vertical, Theme.Spacing.xs)
-                }
-            }
-            
-            // Member breakdown (shown after categories)
-            if !sector.memberBreakdown.isEmpty {
-                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                    Text("By Member")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(Theme.Colors.textMuted)
+                // Category name
+                Text(category.name)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                
+                // Amount + percentage
+                VStack(spacing: 1) {
+                    Text(category.amount.doubleValue.formattedAsMoney())
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.textPrimary)
                     
-                    ForEach(sector.memberBreakdown) { member in
-                        MemberExpenseRow(member: member, sectorTotal: sector.amount, sectorColor: sector.color)
-                    }
+                    Text("\(Int(category.percentage))%")
+                        .font(.caption2)
+                        .foregroundStyle(category.color)
                 }
             }
+            .frame(minWidth: 70)
+            .contentShape(Rectangle())
         }
-        .padding(Theme.Spacing.md)
-        .background(Theme.Colors.backgroundCardSolid.opacity(0.5))
-        .cornerRadius(Theme.CornerRadius.md)
+        .buttonStyle(CategoryCircleButtonStyle())
+    }
+}
+
+// MARK: - Category Circle Button Style
+
+struct CategoryCircleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+            .animation(.easeInOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 
@@ -700,11 +820,146 @@ struct CategoryExpenseRow: View {
     }
 }
 
+// MARK: - Sector Detail Popup
+
+struct SectorDetailPopup: View {
+    let sector: SectorExpense
+    let transactions: [TransactionView]
+    let onDismiss: () -> Void
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.lg) {
+                        // Sector header
+                        VStack(spacing: Theme.Spacing.sm) {
+                            Circle()
+                                .fill(sector.color)
+                                .frame(width: 60, height: 60)
+                            
+                            Text(sector.name)
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Text(sector.amount.doubleValue.formattedAsMoney())
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundStyle(sector.color)
+                            
+                            Text("\(Int(sector.percentage))% of total expenses")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                        }
+                        .padding(.top, Theme.Spacing.md)
+                        
+                        // Member breakdown
+                        if !sector.memberBreakdown.isEmpty {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                                Text("Expense By Member")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                
+                                VStack(spacing: 0) {
+                                    ForEach(sector.memberBreakdown) { member in
+                                        CategoryMemberRow(
+                                            member: member,
+                                            categoryTotal: sector.amount,
+                                            categoryColor: sector.color
+                                        )
+                                        
+                                        if member.id != sector.memberBreakdown.last?.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                                .padding(.horizontal, Theme.Spacing.md)
+                                        }
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .cornerRadius(Theme.CornerRadius.md)
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
+                        }
+                        
+                        // Transactions
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack {
+                                Text("Transactions")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                
+                                Spacer()
+                                
+                                Text("\(transactions.count)")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Theme.Colors.backgroundCard)
+                                    .clipShape(Capsule())
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
+                            
+                            if transactions.isEmpty {
+                                VStack(spacing: Theme.Spacing.sm) {
+                                    Image(systemName: "tray")
+                                        .font(.title)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                    
+                                    Text("No transactions in this sector")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.xl)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(transactions) { transaction in
+                                        CompactTransactionRow(transaction: transaction)
+                                        
+                                        if transaction.id != transactions.last?.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                                .padding(.leading, 56)
+                                        }
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .cornerRadius(Theme.CornerRadius.md)
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
+                        }
+                        
+                        Spacer(minLength: 40)
+                    }
+                }
+            }
+            .navigationTitle("Sector Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        onDismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Category Member Popup
 
 struct CategoryMemberPopup: View {
     let category: CategoryExpense
     let sectorColor: Color
+    var transactions: [TransactionView] = []
     let onDismiss: () -> Void
     
     /// Check if a string is a valid SF Symbol name
@@ -756,20 +1011,9 @@ struct CategoryMemberPopup: View {
                         .padding(.top, Theme.Spacing.md)
                         
                         // Member breakdown
-                        if category.memberBreakdown.isEmpty {
-                            VStack(spacing: Theme.Spacing.sm) {
-                                Image(systemName: "person.2.slash")
-                                    .font(.largeTitle)
-                                    .foregroundStyle(Theme.Colors.textMuted)
-                                
-                                Text("No member breakdown available")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.Colors.textMuted)
-                            }
-                            .padding(.vertical, Theme.Spacing.xl)
-                        } else {
+                        if !category.memberBreakdown.isEmpty {
                             VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                                Text("Expense For")
+                                Text("Expense By Member")
                                     .font(.headline)
                                     .foregroundStyle(Theme.Colors.textPrimary)
                                     .padding(.horizontal, Theme.Spacing.md)
@@ -786,6 +1030,56 @@ struct CategoryMemberPopup: View {
                                             Divider()
                                                 .background(Theme.Colors.borderLight)
                                                 .padding(.horizontal, Theme.Spacing.md)
+                                        }
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .cornerRadius(Theme.CornerRadius.md)
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
+                        }
+                        
+                        // Transactions
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack {
+                                Text("Transactions")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                
+                                Spacer()
+                                
+                                Text("\(transactions.count)")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Theme.Colors.backgroundCard)
+                                    .clipShape(Capsule())
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
+                            
+                            if transactions.isEmpty {
+                                VStack(spacing: Theme.Spacing.sm) {
+                                    Image(systemName: "tray")
+                                        .font(.title)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                    
+                                    Text("No transactions in this category")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.xl)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(transactions) { transaction in
+                                        CompactTransactionRow(transaction: transaction)
+                                        
+                                        if transaction.id != transactions.last?.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                                .padding(.leading, 56)
                                         }
                                     }
                                 }
@@ -895,6 +1189,85 @@ struct CategoryMemberRow: View {
             .frame(height: 4)
         }
         .padding(Theme.Spacing.md)
+    }
+}
+
+// MARK: - Compact Transaction Row
+
+struct CompactTransactionRow: View {
+    let transaction: TransactionView
+    
+    private var categoryColor: Color {
+        if let colorHex = transaction.categoryColor {
+            return Color(hex: colorHex.replacingOccurrences(of: "#", with: ""))
+        }
+        return transaction.transactionType.color
+    }
+    
+    /// Check if a string is a valid SF Symbol name
+    private func isSFSymbol(_ name: String) -> Bool {
+        UIImage(systemName: name) != nil
+    }
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(categoryColor.opacity(0.2))
+                    .frame(width: 36, height: 36)
+                
+                if let icon = transaction.categoryIcon, !icon.isEmpty {
+                    if isSFSymbol(icon) {
+                        Image(systemName: icon)
+                            .font(.system(size: 14))
+                            .foregroundStyle(categoryColor)
+                    } else {
+                        Text(icon)
+                            .font(.system(size: 16))
+                    }
+                } else {
+                    Image(systemName: transaction.transactionType.icon)
+                        .font(.system(size: 14))
+                        .foregroundStyle(categoryColor)
+                }
+            }
+            
+            // Details
+            VStack(alignment: .leading, spacing: 2) {
+                Text(transaction.description)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .lineLimit(1)
+                
+                HStack(spacing: Theme.Spacing.xs) {
+                    if let paidByName = transaction.paidByName {
+                        Text(paidByName)
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                    
+                    Text("•")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                    
+                    Text(transaction.date.formatted(date: .abbreviated, time: .omitted))
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+            }
+            
+            Spacer()
+            
+            // Amount
+            Text("-\(transaction.amount.doubleValue.formattedAsMoney())")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.Colors.expense)
+        }
+        .padding(.vertical, Theme.Spacing.sm)
+        .padding(.horizontal, Theme.Spacing.md)
     }
 }
 

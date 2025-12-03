@@ -628,7 +628,9 @@ struct DashboardView: View {
                                 
                                 ExpenseDonutChart(
                                     sectors: sectorExpenses,
-                                    totalExpenses: filteredTotalExpenses
+                                    totalExpenses: filteredTotalExpenses,
+                                    filteredTransactions: filteredTransactions,
+                                    sectorCategories: sectorCategories
                                 )
                                 .padding(.horizontal, Theme.Spacing.md)
                             }

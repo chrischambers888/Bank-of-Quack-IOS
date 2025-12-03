@@ -23,8 +23,6 @@ struct CategoryFormView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(\.dismiss) private var dismiss
     
-    @StateObject private var customThemeStorage = CustomThemeStorage()
-    
     let mode: Mode
     
     @State private var name = ""
@@ -34,8 +32,6 @@ struct CategoryFormView: View {
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
-    @State private var useThemeColor = true
-    @State private var showColorPicker = false
     
     @FocusState private var focusedField: Field?
     
@@ -45,18 +41,6 @@ struct CategoryFormView: View {
     }
     
     private let dataService = DataService()
-    
-    // Color options for categories
-    private let colorOptions = [
-        "#26A69A", "#00897B", "#00796B", "#00695C",
-        "#42A5F5", "#1E88E5", "#1565C0", "#0D47A1",
-        "#66BB6A", "#43A047", "#2E7D32", "#1B5E20",
-        "#FFCA28", "#FFB300", "#FF8F00", "#FF6F00",
-        "#EF5350", "#E53935", "#D32F2F", "#C62828",
-        "#AB47BC", "#8E24AA", "#7B1FA2", "#6A1B9A",
-        "#EC407A", "#D81B60", "#C2185B", "#AD1457",
-        "#78909C", "#607D8B", "#546E7A", "#455A64"
-    ]
     
     private var isFormValid: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty && !isDuplicateName
@@ -90,25 +74,17 @@ struct CategoryFormView: View {
         return nil
     }
     
-    private var hasAppliedTheme: Bool {
-        AppliedThemeManager.shared.appliedThemeId != nil
-    }
-    
     private var appliedThemeName: String {
         AppliedThemeManager.shared.appliedThemeName ?? "Theme"
     }
     
     private var themeColor: String? {
-        AppliedThemeManager.shared.getNextCategoryColor(
-            categoryCount: authViewModel.categories.count,
-            customStorage: customThemeStorage
-        )
+        AppliedThemeManager.shared.getNextCategoryColor(categoryCount: authViewModel.categories.count)
     }
     
-    // Extract just the first emoji from input
-    private var firstEmoji: String {
-        guard let first = icon.first, first.isEmoji else { return "" }
-        return String(first)
+    private var isEditing: Bool {
+        if case .edit = mode { return true }
+        return false
     }
     
     init(mode: Mode) {
@@ -118,8 +94,6 @@ struct CategoryFormView: View {
             _name = State(initialValue: category.name)
             _icon = State(initialValue: category.icon ?? "")
             _selectedColor = State(initialValue: category.color)
-            _useThemeColor = State(initialValue: false) // Editing always shows manual
-            _showColorPicker = State(initialValue: true)
         }
     }
     
@@ -197,8 +171,8 @@ struct CategoryFormView: View {
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Color Section
-                        colorSection
+                        // Color Display (read-only)
+                        colorDisplaySection
                         
                         // Sector Selection (only show if sectors exist)
                         if !authViewModel.sectors.isEmpty {
@@ -247,7 +221,7 @@ struct CategoryFormView: View {
                 }
             }
             .onAppear {
-                // Set theme color if creating and theme is applied
+                // Set theme color if creating
                 if case .create = mode, let color = themeColor {
                     selectedColor = color
                 }
@@ -336,130 +310,68 @@ struct CategoryFormView: View {
     }
     
     @ViewBuilder
-    private var colorSection: some View {
+    private var colorDisplaySection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             Text("Color")
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
                 .padding(.horizontal, Theme.Spacing.md)
             
-            if hasAppliedTheme && !showColorPicker {
-                // Theme color inherited indicator
-                VStack(spacing: Theme.Spacing.md) {
-                    HStack(spacing: Theme.Spacing.md) {
-                        // Color preview with theme badge
-                        ZStack(alignment: .bottomTrailing) {
+            HStack(spacing: Theme.Spacing.md) {
+                // Color preview with theme badge
+                ZStack(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")))
+                        .frame(width: 48, height: 48)
+                        .overlay(
                             Circle()
-                                .fill(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")))
-                                .frame(width: 48, height: 48)
-                                .overlay(
-                                    Circle()
-                                        .stroke(Color.white.opacity(0.3), lineWidth: 2)
-                                )
-                            
-                            // Theme badge
-                            Image(systemName: "paintpalette.fill")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.white)
-                                .padding(4)
-                                .background(Theme.Colors.accent)
-                                .clipShape(Circle())
-                                .offset(x: 4, y: 4)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Inherited from Theme")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(Theme.Colors.textPrimary)
-                            
-                            Text("Using \(appliedThemeName) palette")
-                                .font(.caption)
-                                .foregroundStyle(Theme.Colors.accent)
-                        }
-                        
-                        Spacer()
-                    }
-                    .padding(Theme.Spacing.md)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
-                            .fill(Theme.Colors.backgroundCard)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
-                                    .stroke(Theme.Colors.accent.opacity(0.3), lineWidth: 1)
-                            )
-                    )
+                                .stroke(Color.white.opacity(0.3), lineWidth: 2)
+                        )
                     
-                    // Override button
-                    Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            showColorPicker = true
-                            useThemeColor = false
-                        }
-                    } label: {
-                        HStack(spacing: Theme.Spacing.xs) {
-                            Image(systemName: "paintbrush.pointed.fill")
-                                .font(.caption)
-                            Text("Override Theme Color")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                        }
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                        .padding(.vertical, Theme.Spacing.xs)
-                        .padding(.horizontal, Theme.Spacing.sm)
-                        .background(Theme.Colors.backgroundCard.opacity(0.5))
-                        .clipShape(Capsule())
-                    }
+                    // Theme badge
+                    Image(systemName: "paintpalette.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white)
+                        .padding(4)
+                        .background(Theme.Colors.accent)
+                        .clipShape(Circle())
+                        .offset(x: 4, y: 4)
                 }
-                .padding(.horizontal, Theme.Spacing.md)
-            } else {
-                // Full color picker
-                VStack(spacing: Theme.Spacing.sm) {
-                    if hasAppliedTheme {
-                        // Option to revert to theme color
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                if let color = themeColor {
-                                    selectedColor = color
-                                }
-                                showColorPicker = false
-                                useThemeColor = true
-                            }
-                        } label: {
-                            HStack(spacing: Theme.Spacing.xs) {
-                                Image(systemName: "paintpalette.fill")
-                                    .font(.caption)
-                                Text("Use \(appliedThemeName) Color Instead")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                            }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    if isEditing {
+                        Text("Current Color")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                        
+                        Text("Managed by theme settings")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    } else {
+                        Text("From Theme")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                        
+                        Text("Using \(appliedThemeName) palette")
+                            .font(.caption)
                             .foregroundStyle(Theme.Colors.accent)
-                            .padding(.vertical, Theme.Spacing.xs)
-                            .padding(.horizontal, Theme.Spacing.sm)
-                            .background(Theme.Colors.accent.opacity(0.15))
-                            .clipShape(Capsule())
-                        }
-                        .padding(.bottom, Theme.Spacing.xs)
-                    }
-                    
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: Theme.Spacing.sm) {
-                        ForEach(colorOptions, id: \.self) { color in
-                            Button {
-                                selectedColor = color
-                            } label: {
-                                Circle()
-                                    .fill(Color(hex: color.replacingOccurrences(of: "#", with: "")))
-                                    .frame(width: 36, height: 36)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.white, lineWidth: selectedColor == color ? 3 : 0)
-                                    )
-                            }
-                        }
                     }
                 }
-                .padding(.horizontal, Theme.Spacing.md)
+                
+                Spacer()
             }
+            .padding(Theme.Spacing.md)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                    .fill(Theme.Colors.backgroundCard)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                            .stroke(Theme.Colors.accent.opacity(0.3), lineWidth: 1)
+                    )
+            )
+            .padding(.horizontal, Theme.Spacing.md)
         }
     }
     
@@ -521,10 +433,11 @@ struct CategoryFormView: View {
                     categoryId = category.id
                     
                 case .edit(let category):
+                    // When editing, don't change the color - it's managed by theme
                     let dto = UpdateCategoryDTO(
                         name: name.trimmingCharacters(in: .whitespaces),
                         icon: icon.isEmpty ? nil : icon,
-                        color: selectedColor
+                        color: nil
                     )
                     _ = try await dataService.updateCategory(id: category.id, dto: dto)
                     categoryId = category.id
