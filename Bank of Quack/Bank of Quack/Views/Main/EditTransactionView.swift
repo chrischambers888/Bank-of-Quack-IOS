@@ -76,6 +76,22 @@ struct EditTransactionView: View {
         Decimal(string: amount) ?? 0
     }
     
+    /// Reimbursements linked to this expense (if it's an expense)
+    private var linkedReimbursements: [TransactionView] {
+        guard transaction.transactionType == .expense else { return [] }
+        return transactionViewModel.reimbursementsForExpense(transaction.id)
+    }
+    
+    /// Total amount reimbursed for this expense
+    private var totalReimbursed: Decimal {
+        linkedReimbursements.reduce(Decimal(0)) { $0 + $1.amount }
+    }
+    
+    /// Whether this expense has any reimbursements
+    private var hasReimbursements: Bool {
+        !linkedReimbursements.isEmpty
+    }
+    
     /// Active members only (for new expenses, income, reimbursements)
     private var activeMembers: [HouseholdMember] {
         authViewModel.members.filter { $0.isActive }
@@ -431,12 +447,16 @@ struct EditTransactionView: View {
             isPresented: $showDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) {
+            Button("Delete\(hasReimbursements ? " All" : "")", role: .destructive) {
                 deleteTransaction()
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Are you sure you want to delete this transaction? This action cannot be undone.")
+            if hasReimbursements {
+                Text("This expense has \(linkedReimbursements.count) linked reimbursement\(linkedReimbursements.count == 1 ? "" : "s") totaling \(totalReimbursed.doubleValue.formattedAsMoney()). Deleting this expense will also delete all linked reimbursements. This action cannot be undone.")
+            } else {
+                Text("Are you sure you want to delete this transaction? This action cannot be undone.")
+            }
         }
         .sheet(isPresented: $showCategoryPicker) {
             CategoryPickerSheet(
@@ -1057,10 +1077,18 @@ struct EditTransactionView: View {
     
     private func deleteTransaction() {
         Task {
-            await transactionViewModel.deleteTransaction(
-                id: transaction.id,
-                householdId: transaction.householdId
-            )
+            // If this is an expense with reimbursements, delete them too
+            if transaction.transactionType == .expense && hasReimbursements {
+                await transactionViewModel.deleteExpenseWithReimbursements(
+                    id: transaction.id,
+                    householdId: transaction.householdId
+                )
+            } else {
+                await transactionViewModel.deleteTransaction(
+                    id: transaction.id,
+                    householdId: transaction.householdId
+                )
+            }
             await MainActor.run {
                 dismiss()
             }

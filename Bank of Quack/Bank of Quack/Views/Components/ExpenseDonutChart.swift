@@ -48,6 +48,19 @@ struct ExpenseDonutChart: View {
     let totalExpenses: Decimal
     var filteredTransactions: [TransactionView] = []
     var sectorCategories: [UUID: [UUID]] = [:] // sectorId -> [categoryId]
+    /// All transactions (including reimbursements) to compute reimbursement amounts
+    var allTransactions: [TransactionView] = []
+    
+    /// Computed reimbursements by expense ID
+    private var reimbursementsByExpense: [UUID: Decimal] {
+        var result: [UUID: Decimal] = [:]
+        for transaction in allTransactions where transaction.transactionType == .reimbursement {
+            if let linkedExpenseId = transaction.reimbursesTransactionId {
+                result[linkedExpenseId, default: 0] += transaction.amount
+            }
+        }
+        return result
+    }
     
     @State private var selectedSectorId: UUID?
     @State private var categoryPopupData: CategoryPopupData?
@@ -226,6 +239,7 @@ struct ExpenseDonutChart: View {
                 category: data.category,
                 sectorColor: data.sectorColor,
                 transactions: data.transactions,
+                reimbursementsByExpense: reimbursementsByExpense,
                 onDismiss: {
                     categoryPopupData = nil
                 }
@@ -247,6 +261,7 @@ struct ExpenseDonutChart: View {
                 SectorDetailPopup(
                     sector: sector,
                     transactions: sectorTransactions,
+                    reimbursementsByExpense: reimbursementsByExpense,
                     onDismiss: {
                         showingSectorPopup = false
                     }
@@ -821,7 +836,11 @@ struct CategoryExpenseRow: View {
 struct SectorDetailPopup: View {
     let sector: SectorExpense
     let transactions: [TransactionView]
+    /// Dictionary mapping expense IDs to their total reimbursed amounts
+    var reimbursementsByExpense: [UUID: Decimal] = [:]
     let onDismiss: () -> Void
+    
+    @State private var selectedTransaction: TransactionView?
     
     var body: some View {
         NavigationStack {
@@ -917,7 +936,15 @@ struct SectorDetailPopup: View {
                             } else {
                                 VStack(spacing: 0) {
                                     ForEach(transactions) { transaction in
-                                        CompactTransactionRow(transaction: transaction)
+                                        Button {
+                                            selectedTransaction = transaction
+                                        } label: {
+                                            CompactTransactionRow(
+                                                transaction: transaction,
+                                                reimbursedAmount: reimbursementsByExpense[transaction.id] ?? 0
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
                                         
                                         if transaction.id != transactions.last?.id {
                                             Divider()
@@ -946,6 +973,9 @@ struct SectorDetailPopup: View {
                     .fontWeight(.semibold)
                 }
             }
+            .sheet(item: $selectedTransaction) { transaction in
+                TransactionDetailView(transaction: transaction)
+            }
         }
     }
 }
@@ -956,7 +986,11 @@ struct CategoryMemberPopup: View {
     let category: CategoryExpense
     let sectorColor: Color
     var transactions: [TransactionView] = []
+    /// Dictionary mapping expense IDs to their total reimbursed amounts
+    var reimbursementsByExpense: [UUID: Decimal] = [:]
     let onDismiss: () -> Void
+    
+    @State private var selectedTransaction: TransactionView?
     
     /// Check if a string is a valid SF Symbol name
     private func isSFSymbol(_ name: String) -> Bool {
@@ -1070,7 +1104,15 @@ struct CategoryMemberPopup: View {
                             } else {
                                 VStack(spacing: 0) {
                                     ForEach(transactions) { transaction in
-                                        CompactTransactionRow(transaction: transaction)
+                                        Button {
+                                            selectedTransaction = transaction
+                                        } label: {
+                                            CompactTransactionRow(
+                                                transaction: transaction,
+                                                reimbursedAmount: reimbursementsByExpense[transaction.id] ?? 0
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
                                         
                                         if transaction.id != transactions.last?.id {
                                             Divider()
@@ -1098,6 +1140,9 @@ struct CategoryMemberPopup: View {
                     }
                     .fontWeight(.semibold)
                 }
+            }
+            .sheet(item: $selectedTransaction) { transaction in
+                TransactionDetailView(transaction: transaction)
             }
         }
     }
@@ -1192,6 +1237,21 @@ struct CategoryMemberRow: View {
 
 struct CompactTransactionRow: View {
     let transaction: TransactionView
+    /// Total amount reimbursed for this expense (if any)
+    var reimbursedAmount: Decimal = 0
+    
+    /// Effective amount after reimbursements
+    private var effectiveAmount: Decimal {
+        if transaction.transactionType == .expense && reimbursedAmount > 0 {
+            return max(transaction.amount - reimbursedAmount, 0)
+        }
+        return transaction.amount
+    }
+    
+    /// Whether this expense has reimbursements
+    private var hasReimbursements: Bool {
+        transaction.transactionType == .expense && reimbursedAmount > 0
+    }
     
     private var categoryColor: Color {
         if let colorHex = transaction.categoryColor {
@@ -1256,11 +1316,19 @@ struct CompactTransactionRow: View {
             
             Spacer()
             
-            // Amount
-            Text("-\(transaction.amount.doubleValue.formattedAsMoney())")
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundStyle(Theme.Colors.expense)
+            // Amount with reimbursement indicator
+            HStack(spacing: 4) {
+                if hasReimbursements {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.reimbursement)
+                }
+                
+                Text("-\(effectiveAmount.doubleValue.formattedAsMoney())")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.Colors.expense)
+            }
         }
         .padding(.vertical, Theme.Spacing.sm)
         .padding(.horizontal, Theme.Spacing.md)

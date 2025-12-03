@@ -39,11 +39,15 @@ struct DashboardFilter: Codable, Equatable, Sendable {
     var customEndDate: Date?
     var selectedSectorIds: Set<UUID> = []
     var selectedCategoryIds: Set<UUID> = []
-    var selectedTransactionTypes: Set<String> = ["expense", "income", "settlement", "reimbursement"]
+    // Note: Reimbursements are not filterable - they always follow their linked expense
+    var selectedTransactionTypes: Set<String> = ["expense", "income", "settlement"]
     var selectedMemberIds: Set<UUID> = []
     var includeShared: Bool = true
     var sharedOnly: Bool = false // Show only shared expenses (no members selected)
     var searchText: String = ""
+    
+    /// Transaction types that can be filtered (excludes reimbursement which always follows expenses)
+    static let filterableTransactionTypes: [TransactionType] = [.expense, .income, .settlement]
     
     /// Default filter state (current month only)
     static var `default`: DashboardFilter {
@@ -56,7 +60,8 @@ struct DashboardFilter: Codable, Equatable, Sendable {
         if datePreset != .thisMonth { return true }
         if !selectedSectorIds.isEmpty { return true }
         if !selectedCategoryIds.isEmpty { return true }
-        if selectedTransactionTypes.count != 4 { return true }
+        // Only 3 filterable types (expense, income, settlement) - reimbursement is not filterable
+        if selectedTransactionTypes.count != Self.filterableTransactionTypes.count { return true }
         if !selectedMemberIds.isEmpty { return true }
         if !includeShared { return true }
         if sharedOnly { return true }
@@ -69,7 +74,8 @@ struct DashboardFilter: Codable, Equatable, Sendable {
         var count = 0
         if datePreset != .thisMonth { count += 1 }
         if !selectedSectorIds.isEmpty || !selectedCategoryIds.isEmpty { count += 1 }
-        if selectedTransactionTypes.count != 4 { count += 1 }
+        // Only 3 filterable types
+        if selectedTransactionTypes.count != Self.filterableTransactionTypes.count { count += 1 }
         if !selectedMemberIds.isEmpty || sharedOnly { count += 1 }
         if !selectedMemberIds.isEmpty && !includeShared { count += 1 }
         if !searchText.isEmpty { count += 1 }
@@ -300,14 +306,13 @@ extension DashboardFilter {
             parts.append("\(selectedCategoryIds.count) categor\(selectedCategoryIds.count == 1 ? "y" : "ies")")
         }
         
-        // Transaction types
-        if selectedTransactionTypes.count < 4 {
+        // Transaction types (only 3 filterable: expense, income, settlement)
+        if selectedTransactionTypes.count < DashboardFilter.filterableTransactionTypes.count {
             let typeNames = selectedTransactionTypes.sorted().map { type -> String in
                 switch type {
                 case "expense": return "Expenses"
                 case "income": return "Income"
                 case "settlement": return "Settlements"
-                case "reimbursement": return "Reimbursements"
                 default: return type.capitalized
                 }
             }

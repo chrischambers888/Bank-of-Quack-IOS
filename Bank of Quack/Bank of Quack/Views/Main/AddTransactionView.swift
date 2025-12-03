@@ -27,6 +27,10 @@ struct AddTransactionView: View {
     @State private var splitValidationError: String?
     @State private var paidByValidationError: String?
     
+    // Member balances (for filtering inactive members in settlements)
+    @State private var memberBalances: [MemberBalance] = []
+    private let dataService = DataService()
+    
     @State private var showDatePicker = false
     @State private var showCategoryPicker = false
     @State private var showPaidByPicker = false
@@ -61,9 +65,20 @@ struct AddTransactionView: View {
         authViewModel.members.filter { $0.isActive }
     }
     
-    /// Members eligible for settlements (includes inactive members for settling balances)
+    /// Members eligible for settlements (includes inactive members only if they have non-zero balance)
     private var settlementEligibleMembers: [HouseholdMember] {
-        authViewModel.members // All members including inactive
+        authViewModel.members.filter { member in
+            // Active members are always eligible
+            if member.isActive { return true }
+            
+            // Inactive members are only eligible if they have a non-zero balance
+            if let balance = memberBalances.first(where: { $0.memberId == member.id }) {
+                return abs(balance.balance.doubleValue) >= 0.01
+            }
+            
+            // If no balance data yet, exclude inactive members
+            return false
+        }
     }
     
     /// Alias for backward compatibility - used for most transaction types
@@ -365,6 +380,10 @@ struct AddTransactionView: View {
             if paidByMemberId == nil {
                 paidByMemberId = authViewModel.currentMember?.id
             }
+        }
+        .task {
+            // Fetch member balances for filtering inactive members in settlements
+            await fetchMemberBalances()
         }
         .onChange(of: approvedMembers.map { $0.id }) { _, newMemberIds in
             // Re-initialize splits when active members change (e.g., member becomes inactive)
@@ -748,6 +767,20 @@ struct AddTransactionView: View {
     }
     
     // MARK: - Helper Methods
+    
+    private func fetchMemberBalances() async {
+        guard let householdId = authViewModel.currentHousehold?.id else { return }
+        
+        do {
+            let balances = try await dataService.fetchMemberBalances(householdId: householdId)
+            await MainActor.run {
+                memberBalances = balances
+            }
+        } catch {
+            // Silently fail - we'll just show all members if balance fetch fails
+            print("Failed to fetch member balances: \(error)")
+        }
+    }
     
     private func switchTransactionType(to newType: TransactionType) {
         let oldType = transactionType

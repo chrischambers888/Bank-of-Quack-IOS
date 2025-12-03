@@ -18,6 +18,17 @@ struct TransactionsListView: View {
         }
     }
     
+    /// Computed reimbursements by expense ID
+    private var reimbursementsByExpense: [UUID: Decimal] {
+        var result: [UUID: Decimal] = [:]
+        for transaction in transactionViewModel.transactions where transaction.transactionType == .reimbursement {
+            if let linkedExpenseId = transaction.reimbursesTransactionId {
+                result[linkedExpenseId, default: 0] += transaction.amount
+            }
+        }
+        return result
+    }
+    
     private var groupedTransactions: [(String, [TransactionView])] {
         let grouped = Dictionary(grouping: filteredTransactions) { transaction in
             transaction.date.formatted(as: .monthYear)
@@ -54,7 +65,10 @@ struct TransactionsListView: View {
                                         Button {
                                             selectedTransaction = transaction
                                         } label: {
-                                            TransactionRow(transaction: transaction)
+                                            TransactionRow(
+                                                transaction: transaction,
+                                                reimbursedAmount: reimbursementsByExpense[transaction.id] ?? 0
+                                            )
                                         }
                                         
                                         if transaction.id != transactions.last?.id {
@@ -180,6 +194,21 @@ struct TransactionDetailView: View {
         }
     }
     
+    /// Total amount reimbursed for this expense
+    private var totalReimbursed: Decimal {
+        linkedReimbursements.reduce(Decimal(0)) { $0 + $1.amount }
+    }
+    
+    /// Cost after reimbursements
+    private var costAfterReimbursements: Decimal {
+        max(currentTransaction.amount - totalReimbursed, 0)
+    }
+    
+    /// Whether this expense has any reimbursements
+    private var hasReimbursements: Bool {
+        !linkedReimbursements.isEmpty
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -197,6 +226,24 @@ struct TransactionDetailView: View {
                             Text(currentTransaction.transactionType.displayName)
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.Colors.textSecondary)
+                            
+                            // Show cost after reimbursements for expenses with reimbursements
+                            if currentTransaction.transactionType == .expense && hasReimbursements {
+                                HStack(spacing: Theme.Spacing.sm) {
+                                    Image(systemName: "arrow.uturn.backward.circle.fill")
+                                        .foregroundStyle(Theme.Colors.reimbursement)
+                                    
+                                    Text("Cost after reimbursements:")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                    
+                                    Text(costAfterReimbursements.doubleValue.formattedAsMoney())
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(Theme.Colors.textPrimary)
+                                }
+                                .padding(.top, Theme.Spacing.sm)
+                            }
                         }
                         .padding(.top, Theme.Spacing.xl)
                         
@@ -319,21 +366,32 @@ struct TransactionDetailView: View {
         .fullScreenCover(isPresented: $showEditSheet) {
             EditTransactionView(transaction: currentTransaction)
         }
-        .alert("Delete Transaction?", isPresented: $showDeleteConfirm) {
+        .alert(hasReimbursements ? "Delete Expense & Reimbursements?" : "Delete Transaction?", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
+            Button(hasReimbursements ? "Delete All" : "Delete", role: .destructive) {
                 if let householdId = authViewModel.currentHousehold?.id {
                     Task {
-                        await transactionViewModel.deleteTransaction(
-                            id: currentTransaction.id,
-                            householdId: householdId
-                        )
+                        if currentTransaction.transactionType == .expense && hasReimbursements {
+                            await transactionViewModel.deleteExpenseWithReimbursements(
+                                id: currentTransaction.id,
+                                householdId: householdId
+                            )
+                        } else {
+                            await transactionViewModel.deleteTransaction(
+                                id: currentTransaction.id,
+                                householdId: householdId
+                            )
+                        }
                         dismiss()
                     }
                 }
             }
         } message: {
-            Text("This action cannot be undone.")
+            if hasReimbursements {
+                Text("This expense has \(linkedReimbursements.count) linked reimbursement\(linkedReimbursements.count == 1 ? "" : "s") totaling \(totalReimbursed.doubleValue.formattedAsMoney()). Deleting this expense will also delete all linked reimbursements. This action cannot be undone.")
+            } else {
+                Text("This action cannot be undone.")
+            }
         }
     }
 }

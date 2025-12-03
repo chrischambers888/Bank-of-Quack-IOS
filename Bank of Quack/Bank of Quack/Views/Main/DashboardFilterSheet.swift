@@ -155,7 +155,8 @@ struct DashboardFilterSheet: View {
                 .foregroundStyle(Theme.Colors.textPrimary)
             
             VStack(spacing: 0) {
-                ForEach(TransactionType.allCases, id: \.self) { type in
+                // Only show filterable types (reimbursements always follow their linked expense)
+                ForEach(DashboardFilter.filterableTransactionTypes, id: \.self) { type in
                     TransactionTypeRow(
                         type: type,
                         isSelected: filter.isTransactionTypeSelected(type)
@@ -165,7 +166,7 @@ struct DashboardFilterSheet: View {
                         }
                     }
                     
-                    if type != TransactionType.allCases.last {
+                    if type != DashboardFilter.filterableTransactionTypes.last {
                         Divider()
                             .background(Theme.Colors.borderLight)
                     }

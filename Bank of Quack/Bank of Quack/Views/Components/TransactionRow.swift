@@ -2,6 +2,21 @@ import SwiftUI
 
 struct TransactionRow: View {
     let transaction: TransactionView
+    /// Total amount reimbursed for this expense (if any)
+    var reimbursedAmount: Decimal = 0
+    
+    /// Effective amount after reimbursements
+    private var effectiveAmount: Decimal {
+        if transaction.transactionType == .expense && reimbursedAmount > 0 {
+            return max(transaction.amount - reimbursedAmount, 0)
+        }
+        return transaction.amount
+    }
+    
+    /// Whether this expense has reimbursements
+    private var hasReimbursements: Bool {
+        transaction.transactionType == .expense && reimbursedAmount > 0
+    }
     
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
@@ -53,10 +68,19 @@ struct TransactionRow: View {
             
             // Amount and Date
             VStack(alignment: .trailing, spacing: 4) {
-                Text(amountText)
-                    .font(.body)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(amountColor)
+                HStack(spacing: 4) {
+                    // Reimbursement indicator
+                    if hasReimbursements {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.reimbursement)
+                    }
+                    
+                    Text(amountText)
+                        .font(.body)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(amountColor)
+                }
                 
                 Text(transaction.date.formatted(as: .dayMonth))
                     .font(.caption)
@@ -76,7 +100,7 @@ struct TransactionRow: View {
     }
     
     private var amountText: String {
-        let formatted = transaction.amount.doubleValue.formattedAsMoney()
+        let formatted = effectiveAmount.doubleValue.formattedAsMoney()
         switch transaction.transactionType {
         case .expense:
             return "-\(formatted)"

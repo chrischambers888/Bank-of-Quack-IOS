@@ -35,10 +35,16 @@ struct DashboardView: View {
             balancesByMember[member.id] = (paid: 0, owed: 0, name: member.displayName)
         }
         
-        // Process filtered transactions
+        // Track visible expense IDs for reimbursement processing
+        var visibleExpenseIds = Set<UUID>()
+        
+        // Process filtered transactions (expenses, settlements, income - but NOT reimbursements yet)
         for transaction in filteredTransactions {
             switch transaction.transactionType {
             case .expense:
+                // Track this expense as visible
+                visibleExpenseIds.insert(transaction.id)
+                
                 // Use splits to determine paid and owed amounts
                 if let splits = allSplits[transaction.id] {
                     for split in splits {
@@ -65,34 +71,74 @@ struct DashboardView: View {
                 }
                 
             case .reimbursement:
-                // Linked reimbursements affect balances inversely
-                if let linkedExpenseId = transaction.reimbursesTransactionId,
-                   let linkedSplits = allSplits[linkedExpenseId],
-                   let recipientId = transaction.paidByMemberId {
-                    let reimbursementAmount = transaction.amount
-                    
-                    for split in linkedSplits {
-                        guard let owedPct = split.owedPercentage else { continue }
-                        let owedPercentage = owedPct / 100
-                        let owedReduction = reimbursementAmount * owedPercentage
-                        
-                        if var memberData = balancesByMember[split.memberId] {
-                            if split.memberId == recipientId {
-                                // Recipient: paid goes down, owed goes down
-                                memberData.paid -= reimbursementAmount
-                                memberData.owed -= owedReduction
-                            } else {
-                                // Others: only owed goes down
-                                memberData.owed -= owedReduction
-                            }
-                            balancesByMember[split.memberId] = memberData
-                        }
-                    }
-                }
+                // Reimbursements are processed separately below to include ALL reimbursements
+                // linked to visible expenses (regardless of filters)
+                break
                 
             case .income:
                 // Income doesn't affect member balances
                 break
+            }
+        }
+        
+        // Process ALL reimbursements linked to visible expenses (from ALL transactions, not just filtered)
+        // Reimbursements always follow their linked expense - if expense is visible, include all its reimbursements
+        for transaction in transactionViewModel.transactions {
+            guard transaction.transactionType == .reimbursement,
+                  let linkedExpenseId = transaction.reimbursesTransactionId,
+                  visibleExpenseIds.contains(linkedExpenseId),
+                  let linkedSplits = allSplits[linkedExpenseId],
+                  let recipientId = transaction.paidByMemberId else {
+                continue
+            }
+            
+            // Reimbursements always affect balances when linked to an expense
+            // The logic depends on whether the recipient was a payer:
+            //
+            // Example 1: A pays $100 for A,B (50/50); B gets $100 reimbursement
+            //   - Expense reduced to $0, everyone's owed reduced proportionally
+            //   - But B received $100 that "belonged" to the payers (A paid it all)
+            //   - So B now owes A $100 → A: +$100, B: -$100
+            //
+            // Example 2: A pays $100 for A,B (50/50); A gets $100 reimbursement
+            //   - A's paid reduced by $100, expense effectively $0
+            //   - Everyone's owed reduced proportionally
+            //   - → A: $0, B: $0 (all settled)
+            
+            let reimbursementAmount = transaction.amount
+            let totalOwed = linkedSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
+            
+            // Step 1: Reduce everyone's owed proportionally (expense is smaller)
+            for split in linkedSplits {
+                let owedPercentage = totalOwed > 0 ? split.owedAmount / totalOwed : 0
+                let owedReduction = reimbursementAmount * owedPercentage
+                
+                if var memberData = balancesByMember[split.memberId] {
+                    memberData.owed -= owedReduction
+                    balancesByMember[split.memberId] = memberData
+                }
+            }
+            
+            // Step 2: If recipient was a payer, reduce their paid
+            let recipientSplit = linkedSplits.first { $0.memberId == recipientId }
+            let recipientPaidAmount = recipientSplit?.paidAmount ?? 0
+            let effectivePaidReduction = min(reimbursementAmount, recipientPaidAmount)
+            
+            if effectivePaidReduction > 0 {
+                if var recipientData = balancesByMember[recipientId] {
+                    recipientData.paid -= effectivePaidReduction
+                    balancesByMember[recipientId] = recipientData
+                }
+            }
+            
+            // Step 3: Remaining reimbursement (what recipient got but didn't pay for)
+            // is owed to the original payers
+            let remainingReimbursement = reimbursementAmount - effectivePaidReduction
+            if remainingReimbursement > 0 {
+                if var recipientData = balancesByMember[recipientId] {
+                    recipientData.owed += remainingReimbursement
+                    balancesByMember[recipientId] = recipientData
+                }
             }
         }
         
@@ -288,11 +334,16 @@ struct DashboardView: View {
     
     /// Filtered totals for expenses
     private var filteredTotalExpenses: Decimal {
-        // Build reimbursement map for filtered transactions
+        // Get IDs of expenses that are visible in the filtered view
+        let visibleExpenseIds = Set(filteredTransactions.filter { $0.transactionType == .expense }.map { $0.id })
+        
+        // Build reimbursement map from ALL transactions (not just filtered)
+        // Reimbursements always follow their linked expense - if expense is visible, include all its reimbursements
         var reimbursementsByExpense: [UUID: Decimal] = [:]
-        for transaction in filteredTransactions {
+        for transaction in transactionViewModel.transactions {
             if transaction.transactionType == .reimbursement,
-               let linkedExpenseId = transaction.reimbursesTransactionId {
+               let linkedExpenseId = transaction.reimbursesTransactionId,
+               visibleExpenseIds.contains(linkedExpenseId) {
                 reimbursementsByExpense[linkedExpenseId, default: 0] += transaction.amount
             }
         }
@@ -317,6 +368,20 @@ struct DashboardView: View {
         // Get only expense transactions from filtered set
         let expenses = filteredTransactions.filter { $0.transactionType == .expense }
         
+        // Get IDs of visible expenses
+        let visibleExpenseIds = Set(expenses.map { $0.id })
+        
+        // Build reimbursement map from ALL transactions (not just filtered)
+        // Reimbursements always follow their linked expense - if expense is visible, include all its reimbursements
+        var reimbursementsByExpense: [UUID: Decimal] = [:]
+        for transaction in transactionViewModel.transactions {
+            if transaction.transactionType == .reimbursement,
+               let linkedExpenseId = transaction.reimbursesTransactionId,
+               visibleExpenseIds.contains(linkedExpenseId) {
+                reimbursementsByExpense[linkedExpenseId, default: 0] += transaction.amount
+            }
+        }
+        
         // Group expenses by categoryId
         var expensesByCategory: [UUID: Decimal] = [:]
         var uncategorizedAmount: Decimal = 0
@@ -325,23 +390,41 @@ struct DashboardView: View {
         var expensesByCategoryAndMember: [UUID: [UUID: Decimal]] = [:] // categoryId -> (memberId -> amount)
         var uncategorizedByMember: [UUID: Decimal] = [:]
         
+        // Track total adjusted expense for percentage calculation
+        var totalAdjustedExpense: Decimal = 0
+        
         for expense in expenses {
+            // Calculate the effective amount after reimbursements
+            let reimbursedAmount = reimbursementsByExpense[expense.id] ?? 0
+            let effectiveAmount = max(expense.amount - reimbursedAmount, 0)
+            
+            // Skip fully reimbursed expenses
+            guard effectiveAmount > 0 else { continue }
+            
+            // Add to total adjusted expense
+            totalAdjustedExpense += effectiveAmount
+            
+            // Calculate the reimbursement ratio to apply to member splits
+            let reimbursementRatio = expense.amount > 0 ? effectiveAmount / expense.amount : 1
+            
             if let categoryId = expense.categoryId {
-                expensesByCategory[categoryId, default: 0] += expense.amount
+                expensesByCategory[categoryId, default: 0] += effectiveAmount
                 
-                // Use splits to determine who the expense is FOR (owedAmount)
+                // Use splits to determine who the expense is FOR (owedAmount), adjusted for reimbursements
                 if let splits = allSplits[expense.id] {
                     for split in splits where split.owedAmount > 0 {
-                        expensesByCategoryAndMember[categoryId, default: [:]][split.memberId, default: 0] += split.owedAmount
+                        let adjustedOwedAmount = split.owedAmount * reimbursementRatio
+                        expensesByCategoryAndMember[categoryId, default: [:]][split.memberId, default: 0] += adjustedOwedAmount
                     }
                 }
             } else {
-                uncategorizedAmount += expense.amount
+                uncategorizedAmount += effectiveAmount
                 
-                // Use splits for uncategorized expenses too
+                // Use splits for uncategorized expenses too, adjusted for reimbursements
                 if let splits = allSplits[expense.id] {
                     for split in splits where split.owedAmount > 0 {
-                        uncategorizedByMember[split.memberId, default: 0] += split.owedAmount
+                        let adjustedOwedAmount = split.owedAmount * reimbursementRatio
+                        uncategorizedByMember[split.memberId, default: 0] += adjustedOwedAmount
                     }
                 }
             }
@@ -350,9 +433,8 @@ struct DashboardView: View {
         // Build category lookup
         let categoryLookup = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
         
-        // Calculate total expenses for percentage calculation
-        let totalExpense = expenses.reduce(Decimal(0)) { $0 + $1.amount }
-        guard totalExpense > 0 else { return [] }
+        // Use total adjusted expense (after reimbursements) for percentage calculation
+        guard totalAdjustedExpense > 0 else { return [] }
         
         // Build sector expenses
         var sectorExpenseList: [SectorExpense] = []
@@ -423,7 +505,7 @@ struct DashboardView: View {
                 name: sector.name,
                 color: sector.swiftUIColor,
                 amount: sectorTotal,
-                percentage: (sectorTotal.doubleValue / totalExpense.doubleValue) * 100,
+                percentage: (sectorTotal.doubleValue / totalAdjustedExpense.doubleValue) * 100,
                 categories: categoryExpenses,
                 memberBreakdown: memberBreakdown
             ))
@@ -492,7 +574,7 @@ struct DashboardView: View {
                 name: "Other",
                 color: Theme.Colors.textSecondary,
                 amount: otherTotal,
-                percentage: (otherTotal.doubleValue / totalExpense.doubleValue) * 100,
+                percentage: (otherTotal.doubleValue / totalAdjustedExpense.doubleValue) * 100,
                 categories: otherCategories,
                 memberBreakdown: otherMemberBreakdown
             ))
@@ -517,18 +599,21 @@ struct DashboardView: View {
         }.sorted { $0.amount > $1.amount }
     }
     
-    /// Returns filtered transactions that impact member balances (expenses where paid != owed, settlements, and linked reimbursements)
+    /// Returns filtered transactions that impact member balances (expenses where paid != owed, and settlements)
     private var balanceImpactingTransactions: [TransactionView] {
-        filteredTransactions.filter { transaction in
+        // First, get the set of expense IDs that are showing (after filters)
+        let showingExpenseIds = Set(filteredTransactions.filter { $0.transactionType == .expense }.map { $0.id })
+        
+        // Get expenses and settlements from filtered transactions
+        var result = filteredTransactions.filter { transaction in
             // Settlements always impact balances - they transfer money between members
             if transaction.transactionType == .settlement {
                 return true
             }
             
-            // Linked reimbursements impact balances (they inversely affect the original expense's balance impact)
+            // Skip reimbursements here - we'll add them separately based on linked expense visibility
             if transaction.transactionType == .reimbursement {
-                // Only linked reimbursements affect balances
-                return transaction.reimbursesTransactionId != nil
+                return false
             }
             
             // Only expenses affect balances (income doesn't)
@@ -572,6 +657,19 @@ struct DashboardView: View {
             // If we don't have split data yet, include it to be safe (will be filtered when data loads)
             return true
         }
+        
+        // Now add reimbursements that are linked to showing expenses (from ALL transactions, not filtered)
+        let linkedReimbursements = transactionViewModel.transactions.filter { transaction in
+            guard transaction.transactionType == .reimbursement,
+                  let linkedExpenseId = transaction.reimbursesTransactionId else {
+                return false
+            }
+            // Only include if the linked expense is showing
+            return showingExpenseIds.contains(linkedExpenseId)
+        }
+        
+        result.append(contentsOf: linkedReimbursements)
+        return result
     }
     
     var body: some View {
@@ -666,7 +764,8 @@ struct DashboardView: View {
                                     sectors: sectorExpenses,
                                     totalExpenses: filteredTotalExpenses,
                                     filteredTransactions: filteredTransactions,
-                                    sectorCategories: sectorCategories
+                                    sectorCategories: sectorCategories,
+                                    allTransactions: transactionViewModel.transactions
                                 )
                                 .padding(.horizontal, Theme.Spacing.md)
                             }
@@ -1123,8 +1222,9 @@ struct BalanceTransactionRow: View {
     }
     
     /// Reimbursement balance impacts based on linked expense splits
-    /// - Recipient: paid decreases by full amount, owed decreases by their percentage
-    /// - Others: only owed decreases by their percentage
+    /// - All members: owed decreases proportionally (expense is smaller)
+    /// - Recipient who paid: paid also decreases
+    /// - Recipient who didn't pay: owes the remaining to payers
     private var reimbursementBalanceImpacts: [(name: String, net: Decimal)] {
         guard let linkedExpenseId = transaction.reimbursesTransactionId,
               let linkedSplits = allSplits[linkedExpenseId],
@@ -1133,21 +1233,28 @@ struct BalanceTransactionRow: View {
         }
         
         let reimbursementAmount = transaction.amount
+        let totalOwed = linkedSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
+        
+        // Calculate how much of the reimbursement the recipient "absorbed" via their paid amount
+        let recipientSplit = linkedSplits.first { $0.memberId == recipientId }
+        let recipientPaidAmount = recipientSplit?.paidAmount ?? 0
+        let effectivePaidReduction = min(reimbursementAmount, recipientPaidAmount)
+        let remainingReimbursement = reimbursementAmount - effectivePaidReduction
         
         return linkedSplits.compactMap { split -> (String, Decimal)? in
-            guard let owedPct = split.owedPercentage else { return nil }
-            let owedPercentage = owedPct / 100
+            // Everyone's owed decreases proportionally
+            let owedPercentage = totalOwed > 0 ? split.owedAmount / totalOwed : 0
             let owedReduction = reimbursementAmount * owedPercentage
             
-            let balanceChange: Decimal
+            // Balance = paid - owed
+            // When owed decreases, balance increases by that amount
+            var balanceChange: Decimal = owedReduction
+            
             if split.memberId == recipientId {
-                // Recipient: paid goes down by full amount, owed goes down by their percentage
-                // balance change = -reimbursement + owedReduction
-                balanceChange = -reimbursementAmount + owedReduction
-            } else {
-                // Others: only owed goes down by their percentage
-                // balance change = 0 - (-owedReduction) = +owedReduction
-                balanceChange = owedReduction
+                // Recipient: paid decreases (if they paid), and may owe remaining to payers
+                // paid decrease → balance decreases
+                // remaining owed → balance decreases
+                balanceChange = owedReduction - effectivePaidReduction - remainingReimbursement
             }
             
             // Only include if there's a meaningful impact

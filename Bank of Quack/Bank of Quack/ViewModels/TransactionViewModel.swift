@@ -212,6 +212,40 @@ final class TransactionViewModel {
         totalIncome = income
     }
     
+    // MARK: - Reimbursements
+    
+    /// Returns all reimbursements linked to a specific expense
+    func reimbursementsForExpense(_ expenseId: UUID) -> [TransactionView] {
+        transactions.filter { $0.transactionType == .reimbursement && $0.reimbursesTransactionId == expenseId }
+    }
+    
+    /// Returns the total amount reimbursed for an expense
+    func totalReimbursedAmount(for expenseId: UUID) -> Decimal {
+        reimbursementsForExpense(expenseId).reduce(Decimal(0)) { $0 + $1.amount }
+    }
+    
+    /// Deletes an expense and all its linked reimbursements
+    @MainActor
+    func deleteExpenseWithReimbursements(id: UUID, householdId: UUID) async {
+        do {
+            // First delete all linked reimbursements
+            let linkedReimbursements = reimbursementsForExpense(id)
+            for reimbursement in linkedReimbursements {
+                try await dataService.deleteTransaction(id: reimbursement.id)
+                transactions.removeAll { $0.id == reimbursement.id }
+                transactionSplits.removeValue(forKey: reimbursement.id)
+            }
+            
+            // Then delete the expense itself
+            try await dataService.deleteTransaction(id: id)
+            transactions.removeAll { $0.id == id }
+            transactionSplits.removeValue(forKey: id)
+            calculateTotals()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+    
     // MARK: - Filtering
     
     func recentTransactions(limit: Int = 5) -> [TransactionView] {
