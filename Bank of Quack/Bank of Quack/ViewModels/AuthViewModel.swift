@@ -442,6 +442,141 @@ final class AuthViewModel {
         try await authService.resendConfirmation(email: email)
     }
     
+    // MARK: - Managed Members
+    
+    @MainActor
+    func createManagedMember(displayName: String, color: String) async -> HouseholdMember? {
+        guard let householdId = currentHousehold?.id else { 
+            print("DEBUG AuthVM: No current household")
+            return nil 
+        }
+        
+        isLoading = true
+        error = nil
+        
+        do {
+            print("DEBUG AuthVM: Calling dataService.createManagedMember...")
+            let memberId = try await dataService.createManagedMember(
+                householdId: householdId,
+                displayName: displayName,
+                color: color
+            )
+            print("DEBUG AuthVM: Got memberId: \(memberId)")
+            
+            // Refresh members to get the new one
+            if let household = currentHousehold {
+                await selectHousehold(household)
+            }
+            
+            // Find and return the newly created member
+            isLoading = false
+            let member = members.first(where: { $0.id == memberId })
+            print("DEBUG AuthVM: Found member: \(String(describing: member))")
+            return member
+        } catch {
+            print("DEBUG AuthVM: Error: \(error)")
+            self.error = error.localizedDescription
+            isLoading = false
+            return nil
+        }
+    }
+    
+    @MainActor
+    func claimManagedMember(claimCode: String) async -> Bool {
+        isLoading = true
+        error = nil
+        
+        do {
+            let householdId = try await dataService.claimManagedMember(claimCode: claimCode)
+            
+            // Reload user data
+            await loadUserData()
+            
+            // Select the household they joined
+            if let household = households.first(where: { $0.id == householdId }) {
+                await selectHousehold(household)
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    @MainActor
+    func regenerateClaimCode(memberId: UUID) async -> String? {
+        isLoading = true
+        error = nil
+        
+        do {
+            let newCode = try await dataService.regenerateClaimCode(memberId: memberId)
+            
+            // Refresh members to get the updated claim code
+            if let household = currentHousehold {
+                await selectHousehold(household)
+            }
+            
+            isLoading = false
+            return newCode
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return nil
+        }
+    }
+    
+    @MainActor
+    func deleteManagedMember(memberId: UUID) async -> Bool {
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.deleteManagedMember(memberId: memberId)
+            
+            // Refresh members
+            if let household = currentHousehold {
+                await selectHousehold(household)
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    @MainActor
+    func updateManagedMemberProfile(memberId: UUID, displayName: String?, emoji: String?, color: String?) async -> Bool {
+        isLoading = true
+        error = nil
+        
+        do {
+            let updatedMember = try await dataService.updateMemberProfile(
+                memberId: memberId,
+                displayName: displayName,
+                avatarEmoji: emoji,
+                color: color
+            )
+            
+            // Update in members list
+            if let index = members.firstIndex(where: { $0.id == updatedMember.id }) {
+                members[index] = updatedMember
+            }
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
     // MARK: - Helpers
     
     func clearError() {

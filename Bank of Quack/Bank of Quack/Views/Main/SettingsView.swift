@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var deleteConfirmationText = ""
     @State private var showEditProfile = false
     @State private var showLeaveHouseholdConfirm = false
+    @State private var showMemberManagement = false
     
     var body: some View {
         NavigationStack {
@@ -195,11 +196,24 @@ struct SettingsView: View {
                         
                         // Members Section
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Text("MEMBERS (\(authViewModel.members.count))")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                                .padding(.horizontal, Theme.Spacing.md)
+                            HStack {
+                                Text("MEMBERS (\(authViewModel.members.count))")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                
+                                Spacer()
+                                
+                                Button {
+                                    showMemberManagement = true
+                                } label: {
+                                    Text("Manage")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(Theme.Colors.accent)
+                                }
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
                             
                             VStack(spacing: 0) {
                                 ForEach(authViewModel.members) { member in
@@ -391,6 +405,9 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showEditProfile) {
             EditProfileView()
+        }
+        .sheet(isPresented: $showMemberManagement) {
+            MemberManagementView()
         }
         .alert("Leave Household?", isPresented: $showLeaveHouseholdConfirm) {
             Button("Cancel", role: .cancel) { }
@@ -844,6 +861,15 @@ struct MemberRow: View {
                             .padding(.vertical, 2)
                             .background(Theme.Colors.textMuted.opacity(0.2))
                             .clipShape(Capsule())
+                    } else if member.isManaged {
+                        Text("Managed")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.Colors.accent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Theme.Colors.accent.opacity(0.2))
+                            .clipShape(Capsule())
                     }
                 }
                 
@@ -944,6 +970,7 @@ struct SwitchHouseholdView: View {
     
     @State private var showCreateSheet = false
     @State private var showJoinSheet = false
+    @State private var showClaimSheet = false
     @State private var showInviteCodeWarning = false
     @State private var revealedHouseholdId: UUID? = nil
     @State private var pendingRevealHouseholdId: UUID? = nil
@@ -1080,6 +1107,15 @@ struct SwitchHouseholdView: View {
                             Label("Join Another Household", systemImage: "person.badge.plus")
                         }
                         .buttonStyle(SecondaryButtonStyle())
+                        
+                        Button {
+                            showClaimSheet = true
+                        } label: {
+                            Label("Claim Managed Account", systemImage: "person.crop.circle.badge.checkmark")
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.Colors.accent)
+                        }
+                        .padding(.top, Theme.Spacing.xs)
                     }
                     .padding(.horizontal, Theme.Spacing.md)
                     .padding(.bottom, Theme.Spacing.lg)
@@ -1104,6 +1140,9 @@ struct SwitchHouseholdView: View {
         }
         .sheet(isPresented: $showJoinSheet) {
             JoinHouseholdView()
+        }
+        .sheet(isPresented: $showClaimSheet) {
+            ClaimAccountView()
         }
         .alert("Reveal Invite Code?", isPresented: $showInviteCodeWarning) {
             Button("Cancel", role: .cancel) {

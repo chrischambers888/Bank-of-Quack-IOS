@@ -27,7 +27,7 @@ struct Household: Identifiable, Codable, Hashable, Sendable {
 struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let householdId: UUID
-    let userId: UUID
+    let userId: UUID?  // Optional for managed members
     var displayName: String
     var avatarUrl: String?
     var role: MemberRole
@@ -35,6 +35,8 @@ struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
     var status: MemberStatus
     let createdAt: Date
     var updatedAt: Date
+    var managedByUserId: UUID?  // Who manages this member (if managed)
+    var claimCode: String?  // Code for claiming this managed member
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -45,13 +47,15 @@ struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
         case role, color, status
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case managedByUserId = "managed_by_user_id"
+        case claimCode = "claim_code"
     }
     
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         householdId = try container.decode(UUID.self, forKey: .householdId)
-        userId = try container.decode(UUID.self, forKey: .userId)
+        userId = try container.decodeIfPresent(UUID.self, forKey: .userId)
         displayName = try container.decode(String.self, forKey: .displayName)
         avatarUrl = try container.decodeIfPresent(String.self, forKey: .avatarUrl)
         role = try container.decode(MemberRole.self, forKey: .role)
@@ -59,6 +63,8 @@ struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
         status = try container.decodeIfPresent(MemberStatus.self, forKey: .status) ?? .approved
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        managedByUserId = try container.decodeIfPresent(UUID.self, forKey: .managedByUserId)
+        claimCode = try container.decodeIfPresent(String.self, forKey: .claimCode)
     }
     
     var isPending: Bool {
@@ -76,6 +82,16 @@ struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
     /// Returns true if member is active (approved) and can be used for new transactions
     var isActive: Bool {
         status == .approved
+    }
+    
+    /// Returns true if this is a managed member (no linked user account)
+    var isManaged: Bool {
+        userId == nil && managedByUserId != nil
+    }
+    
+    /// Returns true if the given user manages this member
+    func isManagedBy(userId: UUID) -> Bool {
+        managedByUserId == userId
     }
 }
 
@@ -272,6 +288,91 @@ struct LeaveHouseholdRequest: Encodable, Sendable {
     nonisolated func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(pHouseholdId, forKey: .pHouseholdId)
+    }
+}
+
+// MARK: - Managed Members
+
+struct CreateManagedMemberRequest: Encodable, Sendable {
+    let pHouseholdId: UUID
+    let pDisplayName: String
+    let pColor: String
+    
+    enum CodingKeys: String, CodingKey {
+        case pHouseholdId = "p_household_id"
+        case pDisplayName = "p_display_name"
+        case pColor = "p_color"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pHouseholdId, forKey: .pHouseholdId)
+        try container.encode(pDisplayName, forKey: .pDisplayName)
+        try container.encode(pColor, forKey: .pColor)
+    }
+}
+
+struct ClaimManagedMemberRequest: Encodable, Sendable {
+    let pClaimCode: String
+    
+    enum CodingKeys: String, CodingKey {
+        case pClaimCode = "p_claim_code"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pClaimCode, forKey: .pClaimCode)
+    }
+}
+
+struct RegenerateClaimCodeRequest: Encodable, Sendable {
+    let pMemberId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pMemberId = "p_member_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pMemberId, forKey: .pMemberId)
+    }
+}
+
+struct DeleteManagedMemberRequest: Encodable, Sendable {
+    let pMemberId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pMemberId = "p_member_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pMemberId, forKey: .pMemberId)
+    }
+}
+
+struct CheckInactiveMembershipRequest: Encodable, Sendable {
+    let pInviteCode: String
+    
+    enum CodingKeys: String, CodingKey {
+        case pInviteCode = "p_invite_code"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pInviteCode, forKey: .pInviteCode)
+    }
+}
+
+struct InactiveMemberInfo: Codable, Sendable {
+    let memberId: UUID
+    let displayName: String
+    let householdName: String
+    
+    enum CodingKeys: String, CodingKey {
+        case memberId = "member_id"
+        case displayName = "display_name"
+        case householdName = "household_name"
     }
 }
 

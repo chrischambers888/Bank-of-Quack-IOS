@@ -72,5 +72,12 @@ enum RPCFunction: String {
     case leaveHousehold = "leave_household"
     case createTransactionWithSplits = "create_transaction_with_splits"
     case updateTransactionWithSplits = "update_transaction_with_splits"
+    
+    // Managed members
+    case createManagedMember = "create_managed_member"
+    case claimManagedMember = "claim_managed_member"
+    case regenerateClaimCode = "regenerate_claim_code"
+    case deleteManagedMember = "delete_managed_member"
+    case checkInactiveMembership = "check_inactive_membership"
 }
 

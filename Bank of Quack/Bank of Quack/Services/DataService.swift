@@ -167,6 +167,75 @@ actor DataService {
             .value
     }
     
+    // MARK: - Managed Members
+    
+    /// Creates a managed member (no user account) that can later be claimed
+    func createManagedMember(householdId: UUID, displayName: String, color: String) async throws -> UUID {
+        let request = CreateManagedMemberRequest(
+            pHouseholdId: householdId,
+            pDisplayName: displayName,
+            pColor: color
+        )
+        
+        return try await supabase.client
+            .rpc(RPCFunction.createManagedMember.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Claims a managed member using the claim code, linking it to the current user
+    func claimManagedMember(claimCode: String) async throws -> UUID {
+        let request = ClaimManagedMemberRequest(pClaimCode: claimCode)
+        
+        return try await supabase.client
+            .rpc(RPCFunction.claimManagedMember.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Regenerates the claim code for a managed member
+    func regenerateClaimCode(memberId: UUID) async throws -> String {
+        let request = RegenerateClaimCodeRequest(pMemberId: memberId)
+        
+        return try await supabase.client
+            .rpc(RPCFunction.regenerateClaimCode.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Deletes a managed member (or sets to inactive if they have transaction history)
+    func deleteManagedMember(memberId: UUID) async throws {
+        let request = DeleteManagedMemberRequest(pMemberId: memberId)
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.deleteManagedMember.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Fetches all managed members for the current user across all households
+    func fetchManagedMembers(userId: UUID) async throws -> [HouseholdMember] {
+        try await supabase
+            .from(.householdMembers)
+            .select()
+            .eq("managed_by_user_id", value: userId.uuidString)
+            .order("created_at")
+            .execute()
+            .value
+    }
+    
+    /// Checks if the current user has an inactive membership for the given invite code
+    func checkInactiveMembership(inviteCode: String) async throws -> InactiveMemberInfo? {
+        let request = CheckInactiveMembershipRequest(pInviteCode: inviteCode)
+        
+        let results: [InactiveMemberInfo] = try await supabase.client
+            .rpc(RPCFunction.checkInactiveMembership.rawValue, params: request)
+            .execute()
+            .value
+        
+        return results.first
+    }
+    
     // MARK: - Household Management
     
     func deleteHousehold(householdId: UUID) async throws {

@@ -7,10 +7,23 @@ struct JoinHouseholdView: View {
     @State private var inviteCode = ""
     @State private var displayName = ""
     @State private var requestSubmitted = false
+    @State private var rejoined = false
+    @State private var showClaimSheet = false
+    @State private var isCheckingCode = false
+    @State private var inactiveMemberInfo: InactiveMemberInfo?
+    @State private var checkTask: Task<Void, Never>?
+    @State private var errorMessage: String?
+    @State private var isProcessing = false
     
     private var isFormValid: Bool {
-        !inviteCode.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !displayName.trimmingCharacters(in: .whitespaces).isEmpty
+        let codeValid = !inviteCode.trimmingCharacters(in: .whitespaces).isEmpty
+        if inactiveMemberInfo != nil {
+            // For returning members, just need the code
+            return codeValid
+        } else {
+            // For new members, need code and name
+            return codeValid && !displayName.trimmingCharacters(in: .whitespaces).isEmpty
+        }
     }
     
     var body: some View {
@@ -19,7 +32,40 @@ struct JoinHouseholdView: View {
                 Theme.Colors.backgroundPrimary
                     .ignoresSafeArea()
                 
-                if requestSubmitted {
+                if rejoined {
+                    // Success State - Rejoined immediately
+                    VStack(spacing: Theme.Spacing.xl) {
+                        Spacer()
+                        
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 80))
+                            .foregroundStyle(Theme.Colors.success)
+                        
+                        VStack(spacing: Theme.Spacing.sm) {
+                            Text("Welcome Back!")
+                                .font(.title)
+                                .fontWeight(.bold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Text("You've rejoined the household. All your previous transaction history is still here.")
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, Theme.Spacing.lg)
+                        }
+                        
+                        Spacer()
+                        
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Continue")
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .padding(.horizontal, Theme.Spacing.lg)
+                        .padding(.bottom, Theme.Spacing.xxl)
+                    }
+                } else if requestSubmitted {
                     // Success State - Awaiting Approval
                     VStack(spacing: Theme.Spacing.xl) {
                         Spacer()
@@ -69,21 +115,56 @@ struct JoinHouseholdView: View {
                         VStack(spacing: Theme.Spacing.xl) {
                             // Header
                             VStack(spacing: Theme.Spacing.sm) {
-                                Image(systemName: "person.badge.plus")
+                                Image(systemName: inactiveMemberInfo != nil ? "hand.wave.fill" : "person.badge.plus")
                                     .font(.system(size: 60))
                                     .foregroundStyle(Theme.Colors.accent)
                                 
-                                Text("Join Household")
+                                Text(inactiveMemberInfo != nil ? "Welcome Back!" : "Join Household")
                                     .font(.title)
                                     .fontWeight(.bold)
                                     .foregroundStyle(Theme.Colors.textPrimary)
                                 
-                                Text("Enter the invite code shared with you")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.Colors.textSecondary)
-                                    .multilineTextAlignment(.center)
+                                if inactiveMemberInfo != nil {
+                                    Text("We found your previous account")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                        .multilineTextAlignment(.center)
+                                } else {
+                                    Text("Enter the invite code shared with you")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                        .multilineTextAlignment(.center)
+                                }
                             }
                             .padding(.top, Theme.Spacing.xl)
+                            
+                            // Welcome Back Card (for returning members)
+                            if let info = inactiveMemberInfo {
+                                VStack(spacing: Theme.Spacing.md) {
+                                    Text("You'll rejoin as")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                    
+                                    Text(info.displayName)
+                                        .font(.title2)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(Theme.Colors.textPrimary)
+                                    
+                                    Text("in \(info.householdName)")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                    
+                                    Text("Your previous transaction history will be preserved")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Colors.success)
+                                        .padding(.top, Theme.Spacing.xs)
+                                }
+                                .padding(Theme.Spacing.lg)
+                                .frame(maxWidth: .infinity)
+                                .background(Theme.Colors.success.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                                .padding(.horizontal, Theme.Spacing.lg)
+                            }
                             
                             // Form
                             VStack(spacing: Theme.Spacing.md) {
@@ -93,75 +174,100 @@ struct JoinHouseholdView: View {
                                         .font(.caption)
                                         .foregroundStyle(Theme.Colors.textSecondary)
                                     
-                                    TextField("Enter code", text: $inviteCode)
-                                        .textInputAutocapitalization(.never)
-                                        .autocorrectionDisabled()
-                                        .inputFieldStyle()
+                                    HStack {
+                                        TextField("Enter code", text: $inviteCode)
+                                            .textInputAutocapitalization(.never)
+                                            .autocorrectionDisabled()
+                                        
+                                        if isCheckingCode {
+                                            ProgressView()
+                                                .scaleEffect(0.8)
+                                        }
+                                    }
+                                    .inputFieldStyle()
                                 }
                                 
-                                // Display Name
-                                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                                    Text("Your Display Name")
+                                // Display Name (only for new members)
+                                if inactiveMemberInfo == nil {
+                                    VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                                        Text("Your Display Name")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.textSecondary)
+                                        
+                                        TextField("e.g., John", text: $displayName)
+                                            .inputFieldStyle()
+                                        
+                                        Text("This is how other members will see you")
+                                            .font(.caption2)
+                                            .foregroundStyle(Theme.Colors.textMuted)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, Theme.Spacing.lg)
+                            
+                            // Info Box (only for new members)
+                            if inactiveMemberInfo == nil {
+                                HStack(spacing: Theme.Spacing.sm) {
+                                    Image(systemName: "info.circle.fill")
+                                        .foregroundStyle(Theme.Colors.accent)
+                                    
+                                    Text("A household member will need to approve your request before you can join.")
                                         .font(.caption)
                                         .foregroundStyle(Theme.Colors.textSecondary)
-                                    
-                                    TextField("e.g., John", text: $displayName)
-                                        .inputFieldStyle()
-                                    
-                                    Text("This is how other members will see you")
-                                        .font(.caption2)
-                                        .foregroundStyle(Theme.Colors.textMuted)
                                 }
+                                .padding(Theme.Spacing.md)
+                                .background(Theme.Colors.backgroundCard)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                                .padding(.horizontal, Theme.Spacing.lg)
                             }
-                            .padding(.horizontal, Theme.Spacing.lg)
-                            
-                            // Info Box
-                            HStack(spacing: Theme.Spacing.sm) {
-                                Image(systemName: "info.circle.fill")
-                                    .foregroundStyle(Theme.Colors.accent)
-                                
-                                Text("A household member will need to approve your request before you can join.")
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.Colors.textSecondary)
-                            }
-                            .padding(Theme.Spacing.md)
-                            .background(Theme.Colors.backgroundCard)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
-                            .padding(.horizontal, Theme.Spacing.lg)
                             
                             // Error
-                            if let error = authViewModel.error {
-                                Text(error)
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.Colors.error)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal)
+                            if let error = errorMessage {
+                                HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(Theme.Colors.error)
+                                    Text(error)
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Colors.error)
+                                }
+                                .padding(Theme.Spacing.md)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Theme.Colors.error.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                                .padding(.horizontal, Theme.Spacing.lg)
                             }
                             
                             // Join Button
                             Button {
-                                Task {
-                                    let success = await authViewModel.joinHousehold(
-                                        inviteCode: inviteCode.trimmingCharacters(in: .whitespaces),
-                                        displayName: displayName.trimmingCharacters(in: .whitespaces)
-                                    )
-                                    if success {
-                                        withAnimation {
-                                            requestSubmitted = true
-                                        }
-                                    }
-                                }
+                                joinHousehold()
                             } label: {
-                                if authViewModel.isLoading {
+                                if isProcessing {
                                     ProgressView()
                                         .tint(Theme.Colors.textInverse)
                                 } else {
-                                    Text("Request to Join")
+                                    Text(inactiveMemberInfo != nil ? "Rejoin Household" : "Request to Join")
                                 }
                             }
                             .buttonStyle(PrimaryButtonStyle())
-                            .disabled(!isFormValid || authViewModel.isLoading)
+                            .disabled(!isFormValid || isProcessing)
                             .padding(.horizontal, Theme.Spacing.lg)
+                            
+                            // Claim Account Option
+                            VStack(spacing: Theme.Spacing.xs) {
+                                Text("Have a claim code instead?")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                
+                                Button {
+                                    showClaimSheet = true
+                                } label: {
+                                    Text("Claim Managed Account")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(Theme.Colors.accent)
+                                }
+                            }
+                            .padding(.top, Theme.Spacing.md)
                             
                             Spacer()
                         }
@@ -171,7 +277,7 @@ struct JoinHouseholdView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    if !requestSubmitted {
+                    if !requestSubmitted && !rejoined {
                         Button("Cancel") {
                             dismiss()
                         }
@@ -180,7 +286,84 @@ struct JoinHouseholdView: View {
                 }
             }
             .onAppear {
-                authViewModel.clearError()
+                errorMessage = nil
+            }
+            .onChange(of: inviteCode) { _, newValue in
+                checkInactiveStatus(code: newValue)
+            }
+            .sheet(isPresented: $showClaimSheet) {
+                ClaimAccountView()
+            }
+        }
+    }
+    
+    private func checkInactiveStatus(code: String) {
+        // Cancel any existing check
+        checkTask?.cancel()
+        inactiveMemberInfo = nil
+        
+        let trimmedCode = code.trimmingCharacters(in: .whitespaces)
+        guard trimmedCode.count >= 6 else { return }  // Minimum code length
+        
+        isCheckingCode = true
+        
+        checkTask = Task {
+            // Small delay to debounce
+            try? await Task.sleep(nanoseconds: 300_000_000)  // 0.3 seconds
+            
+            guard !Task.isCancelled else { return }
+            
+            do {
+                let info = try await DataService().checkInactiveMembership(inviteCode: trimmedCode)
+                
+                guard !Task.isCancelled else { return }
+                
+                await MainActor.run {
+                    inactiveMemberInfo = info
+                    isCheckingCode = false
+                }
+            } catch {
+                await MainActor.run {
+                    isCheckingCode = false
+                }
+            }
+        }
+    }
+    
+    private func joinHousehold() {
+        isProcessing = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                let trimmedCode = inviteCode.trimmingCharacters(in: .whitespaces)
+                let name = inactiveMemberInfo?.displayName ?? displayName.trimmingCharacters(in: .whitespaces)
+                
+                _ = try await DataService().joinHousehold(inviteCode: trimmedCode, displayName: name)
+                
+                // Reload user data
+                await authViewModel.loadUserData()
+                
+                // Check if this was a rejoin (user is now approved) or new join (pending)
+                if inactiveMemberInfo != nil {
+                    // They were reactivated - select the household
+                    if let household = authViewModel.households.first(where: { $0.name == inactiveMemberInfo?.householdName }) {
+                        await authViewModel.selectHousehold(household)
+                    }
+                    
+                    isProcessing = false
+                    withAnimation {
+                        rejoined = true
+                    }
+                } else {
+                    isProcessing = false
+                    withAnimation {
+                        requestSubmitted = true
+                    }
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+                isProcessing = false
             }
         }
     }

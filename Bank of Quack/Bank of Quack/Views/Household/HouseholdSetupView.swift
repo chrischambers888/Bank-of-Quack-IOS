@@ -5,6 +5,7 @@ struct HouseholdSetupView: View {
     
     @State private var showCreateSheet = false
     @State private var showJoinSheet = false
+    @State private var showClaimSheet = false
     
     var body: some View {
         ZStack {
@@ -96,6 +97,15 @@ struct HouseholdSetupView: View {
                     .buttonStyle(SecondaryButtonStyle())
                     
                     Button {
+                        showClaimSheet = true
+                    } label: {
+                        Label("Claim Managed Account", systemImage: "person.crop.circle.badge.checkmark")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.Colors.accent)
+                    }
+                    .padding(.top, Theme.Spacing.xs)
+                    
+                    Button {
                         Task {
                             await authViewModel.signOut()
                         }
@@ -115,6 +125,9 @@ struct HouseholdSetupView: View {
         }
         .sheet(isPresented: $showJoinSheet) {
             JoinHouseholdView()
+        }
+        .sheet(isPresented: $showClaimSheet) {
+            ClaimAccountView()
         }
         .onAppear {
             // Refresh pending households when view appears
