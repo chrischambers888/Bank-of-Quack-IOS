@@ -37,6 +37,10 @@ class ThemeProvider: ObservableObject {
     var backgroundSecondary: Color { currentPalette.bgSecondary }
     var isLightMode: Bool { currentPalette.isLightMode }
     
+    // Theme-aware semantic colors
+    var success: Color { currentPalette.success }
+    var error: Color { currentPalette.error }
+    
     // Derived colors
     var textTertiary: Color { textSecondary.opacity(0.75) }
     var textMuted: Color { textSecondary.opacity(0.5) }
@@ -112,12 +116,12 @@ enum Theme {
         static var textMuted: Color { ThemeProvider.shared.textMuted }
         static var textInverse: Color { ThemeProvider.shared.textInverse }
         
-        // MARK: - Semantic Colors (static - consistent across themes)
+        // MARK: - Semantic Colors (theme-aware for success/error)
         
-        static let success = Color(hex: "4CAF50")
+        static var success: Color { ThemeProvider.shared.success }
         static let successLight = Color(hex: "81C784")
         static let warning = Color(hex: "FF9800")
-        static let error = Color(hex: "F44336")
+        static var error: Color { ThemeProvider.shared.error }
         static let errorLight = Color(hex: "E57373")
         static let info = Color(hex: "2196F3")
         

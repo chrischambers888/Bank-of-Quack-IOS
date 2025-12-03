@@ -213,6 +213,11 @@ final class DashboardFilterManager {
 extension DashboardFilter {
     /// Formatted date description showing actual month/year names
     var dateDescription: String {
+        dateDescription(firstTransactionDate: nil, lastTransactionDate: nil)
+    }
+    
+    /// Formatted date description with transaction date range for "All Time"
+    func dateDescription(firstTransactionDate: Date?, lastTransactionDate: Date?) -> String {
         let calendar = Calendar.current
         let now = Date()
         let formatter = DateFormatter()
@@ -234,7 +239,36 @@ extension DashboardFilter {
             return formatter.string(from: now)
             
         case .allTime:
-            return "All Time"
+            // Show actual date range if transaction dates are available
+            guard let firstDate = firstTransactionDate else {
+                return "All Time"
+            }
+            
+            formatter.dateFormat = "MMM yyyy"
+            let firstFormatted = formatter.string(from: firstDate)
+            
+            // Determine the end date to display
+            let currentMonthStart = now.startOfMonth
+            let lastDate = lastTransactionDate ?? now
+            
+            // Check if last transaction is in current month or earlier
+            if lastDate < currentMonthStart {
+                // Last transaction is before current month - show actual end date
+                let lastFormatted = formatter.string(from: lastDate)
+                return "\(firstFormatted) – \(lastFormatted)"
+            } else {
+                // Last transaction is in current month or later
+                // Check if it's in the future (past current month)
+                let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: currentMonthStart) ?? now
+                if lastDate >= nextMonthStart {
+                    // Future transaction data exists
+                    let lastFormatted = formatter.string(from: lastDate)
+                    return "\(firstFormatted) – \(lastFormatted)"
+                } else {
+                    // Last transaction is in current month
+                    return "\(firstFormatted) – Present"
+                }
+            }
             
         case .custom:
             guard let start = customStartDate, let end = customEndDate else {
@@ -247,10 +281,15 @@ extension DashboardFilter {
     
     /// Human-readable summary of active filters
     var summary: String {
+        summary(firstTransactionDate: nil, lastTransactionDate: nil)
+    }
+    
+    /// Human-readable summary with transaction date range for "All Time"
+    func summary(firstTransactionDate: Date?, lastTransactionDate: Date?) -> String {
         var parts: [String] = []
         
         // Date - always show with actual month/year
-        parts.append(dateDescription)
+        parts.append(dateDescription(firstTransactionDate: firstTransactionDate, lastTransactionDate: lastTransactionDate))
         
         // Categories/Sectors
         if !selectedSectorIds.isEmpty && !selectedCategoryIds.isEmpty {

@@ -19,6 +19,10 @@ struct ColorPalette: Identifiable, Codable {
     let backgroundSecondary: String
     let isLightMode: Bool
     
+    // Theme-aware semantic colors (optional - falls back to defaults)
+    let successColor: String?
+    let errorColor: String?
+    
     var previewGradient: [Color] {
         [
             Color(hex: gradientStart.replacingOccurrences(of: "#", with: "")),
@@ -39,6 +43,17 @@ struct ColorPalette: Identifiable, Codable {
     var bgPrimary: Color { Color(hex: backgroundPrimary.replacingOccurrences(of: "#", with: "")) }
     var bgSecondary: Color { Color(hex: backgroundSecondary.replacingOccurrences(of: "#", with: "")) }
     
+    // Theme-aware semantic colors with defaults
+    private static let defaultSuccess = "#4CAF50"
+    private static let defaultError = "#F44336"
+    
+    var success: Color {
+        Color(hex: (successColor ?? Self.defaultSuccess).replacingOccurrences(of: "#", with: ""))
+    }
+    var error: Color {
+        Color(hex: (errorColor ?? Self.defaultError).replacingOccurrences(of: "#", with: ""))
+    }
+    
     init(
         id: String,
         name: String,
@@ -51,7 +66,9 @@ struct ColorPalette: Identifiable, Codable {
         secondaryTextColor: String,
         backgroundPrimary: String,
         backgroundSecondary: String,
-        isLightMode: Bool = false
+        isLightMode: Bool = false,
+        successColor: String? = nil,
+        errorColor: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -65,6 +82,8 @@ struct ColorPalette: Identifiable, Codable {
         self.backgroundPrimary = backgroundPrimary
         self.backgroundSecondary = backgroundSecondary
         self.isLightMode = isLightMode
+        self.successColor = successColor
+        self.errorColor = errorColor
     }
 }
 
@@ -385,7 +404,9 @@ enum QuackPalettes {
         secondaryTextColor: "#FFE0B2",
         backgroundPrimary: "#8B2500",
         backgroundSecondary: "#BF360C",
-        isLightMode: false
+        isLightMode: false,
+        successColor: "#69F0AE",  // Bright mint green - high contrast on orange
+        errorColor: "#880E4F"     // Deep magenta - distinct from orange gradient
     )
     
     /// Cool ocean teals - like ripples on a pond
@@ -442,7 +463,9 @@ enum QuackPalettes {
         secondaryTextColor: "#FFCCBC",
         backgroundPrimary: "#8D2B0B",
         backgroundSecondary: "#BF360C",
-        isLightMode: false
+        isLightMode: false,
+        successColor: "#69F0AE",  // Bright mint green - high contrast on orange
+        errorColor: "#880E4F"     // Deep magenta - distinct from orange gradient
     )
     
     /// Electric neon colors - bright as a duck's bill

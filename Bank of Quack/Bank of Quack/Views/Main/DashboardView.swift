@@ -127,6 +127,16 @@ struct DashboardView: View {
         authViewModel.members.filter { $0.isActive }
     }
     
+    /// First transaction date (earliest) for "All Time" filter display
+    private var firstTransactionDate: Date? {
+        transactionViewModel.transactions.map { $0.date }.min()
+    }
+    
+    /// Last transaction date (latest) for "All Time" filter display
+    private var lastTransactionDate: Date? {
+        transactionViewModel.transactions.map { $0.date }.max()
+    }
+    
     /// Count of members with non-zero balances (for display in balance card)
     private var membersWithNonZeroBalance: Int {
         filteredMemberBalances.filter { abs($0.balance.doubleValue) >= 0.01 }.count
@@ -710,12 +720,12 @@ struct DashboardView: View {
                         .foregroundStyle(Theme.Colors.textSecondary)
                     
                     if filterManager.filter.isFiltered {
-                        Text(filterManager.filter.summary)
+                        Text(filterManager.filter.summary(firstTransactionDate: firstTransactionDate, lastTransactionDate: lastTransactionDate))
                             .font(.caption)
                             .foregroundStyle(Theme.Colors.accent)
                             .lineLimit(2)
                     } else {
-                        Text(filterManager.filter.dateDescription)
+                        Text(filterManager.filter.dateDescription(firstTransactionDate: firstTransactionDate, lastTransactionDate: lastTransactionDate))
                             .font(.caption)
                             .foregroundStyle(Theme.Colors.textMuted)
                     }
