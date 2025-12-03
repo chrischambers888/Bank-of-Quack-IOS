@@ -211,12 +211,46 @@ final class DashboardFilterManager {
 // MARK: - Filter Summary
 
 extension DashboardFilter {
+    /// Formatted date description showing actual month/year names
+    var dateDescription: String {
+        let calendar = Calendar.current
+        let now = Date()
+        let formatter = DateFormatter()
+        
+        switch datePreset {
+        case .thisMonth:
+            formatter.dateFormat = "MMMM yyyy"
+            return formatter.string(from: now)
+            
+        case .lastMonth:
+            formatter.dateFormat = "MMMM yyyy"
+            guard let lastMonth = calendar.date(byAdding: .month, value: -1, to: now) else {
+                return "Last Month"
+            }
+            return formatter.string(from: lastMonth)
+            
+        case .thisYear:
+            formatter.dateFormat = "yyyy"
+            return formatter.string(from: now)
+            
+        case .allTime:
+            return "All Time"
+            
+        case .custom:
+            guard let start = customStartDate, let end = customEndDate else {
+                return "Custom"
+            }
+            formatter.dateStyle = .medium
+            return "\(formatter.string(from: start)) – \(formatter.string(from: end))"
+        }
+    }
+    
     /// Human-readable summary of active filters
     var summary: String {
         var parts: [String] = []
         
-        // Date - always show
-        parts.append(datePreset.displayName)
+        // Date - always show with actual month/year
+        parts.append(dateDescription)
         
         // Categories/Sectors
         if !selectedSectorIds.isEmpty && !selectedCategoryIds.isEmpty {

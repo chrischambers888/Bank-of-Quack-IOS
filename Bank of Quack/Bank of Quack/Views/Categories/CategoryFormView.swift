@@ -30,6 +30,7 @@ struct CategoryFormView: View {
     @State private var name = ""
     @State private var icon = ""
     @State private var selectedColor = "#26A69A"
+    @State private var selectedSectorId: UUID? = nil
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
@@ -58,7 +59,35 @@ struct CategoryFormView: View {
     ]
     
     private var isFormValid: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty
+        !name.trimmingCharacters(in: .whitespaces).isEmpty && !isDuplicateName
+    }
+    
+    private var isDuplicateName: Bool {
+        let trimmedName = name.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !trimmedName.isEmpty else { return false }
+        
+        return authViewModel.categories.contains { category in
+            // When editing, exclude the current category from the check
+            if case .edit(let editingCategory) = mode {
+                return category.id != editingCategory.id && 
+                       category.name.lowercased() == trimmedName
+            }
+            return category.name.lowercased() == trimmedName
+        }
+    }
+    
+    // Get sectors that this category can be added to (for create mode)
+    // or the current sector (for edit mode)
+    private var currentSectorId: UUID? {
+        if case .edit(let category) = mode {
+            // Find if category is already in a sector
+            for (sectorId, categoryIds) in authViewModel.sectorCategories {
+                if categoryIds.contains(category.id) {
+                    return sectorId
+                }
+            }
+        }
+        return nil
     }
     
     private var hasAppliedTheme: Bool {
@@ -114,6 +143,16 @@ struct CategoryFormView: View {
                             TextField("Category name", text: $name)
                                 .inputFieldStyle()
                                 .focused($focusedField, equals: .name)
+                            
+                            if isDuplicateName {
+                                HStack(spacing: Theme.Spacing.xs) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.caption)
+                                    Text("A category with this name already exists")
+                                        .font(.caption)
+                                }
+                                .foregroundStyle(Theme.Colors.error)
+                            }
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
@@ -161,6 +200,11 @@ struct CategoryFormView: View {
                         // Color Section
                         colorSection
                         
+                        // Sector Selection (only show if sectors exist)
+                        if !authViewModel.sectors.isEmpty {
+                            sectorSection
+                        }
+                        
                         // Submit Button
                         Button {
                             submit()
@@ -207,12 +251,87 @@ struct CategoryFormView: View {
                 if case .create = mode, let color = themeColor {
                     selectedColor = color
                 }
+                // Load current sector if editing
+                if case .edit = mode {
+                    selectedSectorId = currentSectorId
+                }
             }
         }
         .alert("Error", isPresented: $showError) {
             Button("OK") { }
         } message: {
             Text(errorMessage)
+        }
+    }
+    
+    @ViewBuilder
+    private var sectorSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            HStack {
+                Text("Sector (Optional)")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                
+                Spacer()
+                
+                if selectedSectorId != nil {
+                    Button {
+                        selectedSectorId = nil
+                    } label: {
+                        Text("Clear")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.accent)
+                    }
+                }
+            }
+            .padding(.horizontal, Theme.Spacing.md)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Theme.Spacing.sm) {
+                    ForEach(authViewModel.sectors) { sector in
+                        Button {
+                            if selectedSectorId == sector.id {
+                                selectedSectorId = nil
+                            } else {
+                                selectedSectorId = sector.id
+                            }
+                        } label: {
+                            HStack(spacing: Theme.Spacing.xs) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(sector.swiftUIColor)
+                                    .frame(width: 4, height: 20)
+                                
+                                Text(sector.name)
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                
+                                if selectedSectorId == sector.id {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                }
+                            }
+                            .foregroundStyle(selectedSectorId == sector.id ? .white : Theme.Colors.textPrimary)
+                            .padding(.horizontal, Theme.Spacing.md)
+                            .padding(.vertical, Theme.Spacing.sm)
+                            .background(
+                                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                                    .fill(selectedSectorId == sector.id ? sector.swiftUIColor : Theme.Colors.backgroundCard)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                                    .stroke(selectedSectorId == sector.id ? Color.clear : sector.swiftUIColor.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal, Theme.Spacing.md)
+            }
+            
+            Text("Adding to a sector helps group related categories for budget analysis")
+                .font(.caption2)
+                .foregroundStyle(Theme.Colors.textMuted)
+                .padding(.horizontal, Theme.Spacing.md)
         }
     }
     
@@ -225,50 +344,73 @@ struct CategoryFormView: View {
                 .padding(.horizontal, Theme.Spacing.md)
             
             if hasAppliedTheme && !showColorPicker {
-                // Theme color indicator
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        showColorPicker = true
-                        useThemeColor = false
-                    }
-                } label: {
-                    HStack {
-                        Circle()
-                            .fill(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")))
-                            .frame(width: 36, height: 36)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: 2)
-                            )
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: Theme.Spacing.xs) {
-                                Image(systemName: "paintpalette.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.Colors.accent)
-                                
-                                Text("Using \(appliedThemeName)")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .foregroundStyle(Theme.Colors.textPrimary)
-                            }
+                // Theme color inherited indicator
+                VStack(spacing: Theme.Spacing.md) {
+                    HStack(spacing: Theme.Spacing.md) {
+                        // Color preview with theme badge
+                        ZStack(alignment: .bottomTrailing) {
+                            Circle()
+                                .fill(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")))
+                                .frame(width: 48, height: 48)
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.white.opacity(0.3), lineWidth: 2)
+                                )
                             
-                            Text("Tap to choose a different color")
+                            // Theme badge
+                            Image(systemName: "paintpalette.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white)
+                                .padding(4)
+                                .background(Theme.Colors.accent)
+                                .clipShape(Circle())
+                                .offset(x: 4, y: 4)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Inherited from Theme")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Text("Using \(appliedThemeName) palette")
                                 .font(.caption)
-                                .foregroundStyle(Theme.Colors.textMuted)
+                                .foregroundStyle(Theme.Colors.accent)
                         }
                         
                         Spacer()
-                        
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(Theme.Colors.textMuted)
                     }
                     .padding(Theme.Spacing.md)
-                    .background(Theme.Colors.backgroundCard)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                            .fill(Theme.Colors.backgroundCard)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                                    .stroke(Theme.Colors.accent.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                    
+                    // Override button
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            showColorPicker = true
+                            useThemeColor = false
+                        }
+                    } label: {
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Image(systemName: "paintbrush.pointed.fill")
+                                .font(.caption)
+                            Text("Override Theme Color")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .padding(.vertical, Theme.Spacing.xs)
+                        .padding(.horizontal, Theme.Spacing.sm)
+                        .background(Theme.Colors.backgroundCard.opacity(0.5))
+                        .clipShape(Capsule())
+                    }
                 }
-                .buttonStyle(.plain)
                 .padding(.horizontal, Theme.Spacing.md)
             } else {
                 // Full color picker
@@ -284,14 +426,20 @@ struct CategoryFormView: View {
                                 useThemeColor = true
                             }
                         } label: {
-                            HStack {
+                            HStack(spacing: Theme.Spacing.xs) {
                                 Image(systemName: "paintpalette.fill")
                                     .font(.caption)
-                                Text("Use \(appliedThemeName) color")
+                                Text("Use \(appliedThemeName) Color Instead")
                                     .font(.caption)
+                                    .fontWeight(.medium)
                             }
                             .foregroundStyle(Theme.Colors.accent)
+                            .padding(.vertical, Theme.Spacing.xs)
+                            .padding(.horizontal, Theme.Spacing.sm)
+                            .background(Theme.Colors.accent.opacity(0.15))
+                            .clipShape(Capsule())
                         }
+                        .padding(.bottom, Theme.Spacing.xs)
                     }
                     
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: Theme.Spacing.sm) {
@@ -357,6 +505,8 @@ struct CategoryFormView: View {
         
         Task {
             do {
+                let categoryId: UUID
+                
                 switch mode {
                 case .create:
                     let dto = CreateCategoryDTO(
@@ -367,7 +517,8 @@ struct CategoryFormView: View {
                         imageUrl: nil,
                         sortOrder: authViewModel.categories.count
                     )
-                    _ = try await dataService.createCategory(dto)
+                    let category = try await dataService.createCategory(dto)
+                    categoryId = category.id
                     
                 case .edit(let category):
                     let dto = UpdateCategoryDTO(
@@ -376,9 +527,24 @@ struct CategoryFormView: View {
                         color: selectedColor
                     )
                     _ = try await dataService.updateCategory(id: category.id, dto: dto)
+                    categoryId = category.id
+                }
+                
+                // Handle sector assignment
+                let previousSectorId = currentSectorId
+                
+                // Remove from previous sector if it changed
+                if let prevId = previousSectorId, prevId != selectedSectorId {
+                    try await dataService.removeCategoryFromSector(sectorId: prevId, categoryId: categoryId)
+                }
+                
+                // Add to new sector if selected and different from previous
+                if let newSectorId = selectedSectorId, newSectorId != previousSectorId {
+                    try await dataService.addCategoryToSector(sectorId: newSectorId, categoryId: categoryId)
                 }
                 
                 await authViewModel.refreshCategories()
+                await authViewModel.refreshSectors()
                 
                 await MainActor.run {
                     dismiss()

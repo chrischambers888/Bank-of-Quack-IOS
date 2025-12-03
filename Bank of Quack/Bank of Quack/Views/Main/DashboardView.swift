@@ -687,7 +687,7 @@ struct DashboardView: View {
                             .foregroundStyle(Theme.Colors.accent)
                             .lineLimit(2)
                     } else {
-                        Text("Showing \(filterManager.filter.datePreset.displayName.lowercased())")
+                        Text("Showing \(filterManager.filter.dateDescription)")
                             .font(.caption)
                             .foregroundStyle(Theme.Colors.textMuted)
                     }

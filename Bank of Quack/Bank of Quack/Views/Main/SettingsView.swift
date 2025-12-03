@@ -288,7 +288,7 @@ struct SettingsView: View {
                                     SettingsRow(
                                         icon: "paintpalette.fill",
                                         title: "Color Themes",
-                                        subtitle: "Apply a color palette",
+                                        subtitle: AppliedThemeManager.shared.appliedThemeName ?? "No theme applied",
                                         showChevron: true
                                     )
                                 }

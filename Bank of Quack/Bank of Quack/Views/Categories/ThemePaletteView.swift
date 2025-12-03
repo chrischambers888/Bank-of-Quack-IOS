@@ -397,6 +397,12 @@ enum ColorPalettes {
 
 // MARK: - Theme Palette View
 
+// Helper struct to properly pass theme to sheet
+struct ThemeBuilderItem: Identifiable {
+    let id = UUID()
+    let existingTheme: ColorPalette?
+}
+
 struct ThemePaletteView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @Environment(\.dismiss) private var dismiss
@@ -406,8 +412,7 @@ struct ThemePaletteView: View {
     @State private var isApplying = false
     @State private var showConfirmation = false
     @State private var showSuccess = false
-    @State private var showCustomThemeBuilder = false
-    @State private var editingCustomTheme: ColorPalette?
+    @State private var themeBuilderItem: ThemeBuilderItem?
     @State private var showDeleteConfirmation = false
     @State private var themeToDelete: ColorPalette?
     
@@ -441,8 +446,7 @@ struct ThemePaletteView: View {
                         
                         // Custom Theme Button
                         Button {
-                            editingCustomTheme = nil
-                            showCustomThemeBuilder = true
+                            themeBuilderItem = ThemeBuilderItem(existingTheme: nil)
                         } label: {
                             HStack {
                                 Image(systemName: "plus.circle.fill")
@@ -478,14 +482,14 @@ struct ThemePaletteView: View {
                                             palette: palette,
                                             isSelected: selectedPalette?.id == palette.id,
                                             isCustom: true,
+                                            isApplied: AppliedThemeManager.shared.appliedThemeId == palette.id,
                                             onSelect: {
                                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                                     selectedPalette = palette
                                                 }
                                             },
                                             onEdit: {
-                                                editingCustomTheme = palette
-                                                showCustomThemeBuilder = true
+                                                themeBuilderItem = ThemeBuilderItem(existingTheme: palette)
                                             },
                                             onDelete: {
                                                 themeToDelete = palette
@@ -515,6 +519,7 @@ struct ThemePaletteView: View {
                                         palette: palette,
                                         isSelected: selectedPalette?.id == palette.id,
                                         isCustom: false,
+                                        isApplied: AppliedThemeManager.shared.appliedThemeId == palette.id,
                                         onSelect: {
                                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                                 selectedPalette = palette
@@ -599,12 +604,12 @@ struct ThemePaletteView: View {
             } message: {
                 Text("This will permanently delete \"\(themeToDelete?.name ?? "this theme")\".")
             }
-            .sheet(isPresented: $showCustomThemeBuilder) {
+            .sheet(item: $themeBuilderItem) { item in
                 CustomThemeBuilderView(
-                    existingTheme: editingCustomTheme,
+                    existingTheme: item.existingTheme,
                     onSave: { theme in
                         customStorage.saveTheme(theme)
-                        showCustomThemeBuilder = false
+                        themeBuilderItem = nil
                     }
                 )
             }
@@ -620,8 +625,7 @@ struct ThemePaletteView: View {
             categoryColors: palette.categoryColors,
             isCustom: true
         )
-        editingCustomTheme = newTheme
-        showCustomThemeBuilder = true
+        themeBuilderItem = ThemeBuilderItem(existingTheme: newTheme)
     }
     
     private func applyPalette() {
@@ -671,6 +675,7 @@ struct PaletteCard: View {
     let palette: ColorPalette
     let isSelected: Bool
     var isCustom: Bool = false
+    var isApplied: Bool = false
     let onSelect: () -> Void
     var onEdit: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
@@ -680,7 +685,7 @@ struct PaletteCard: View {
         Button(action: onSelect) {
             VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                 // Gradient preview
-                ZStack(alignment: .topTrailing) {
+                ZStack {
                     RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
                         .fill(
                             LinearGradient(
@@ -706,49 +711,80 @@ struct PaletteCard: View {
                             alignment: .bottomLeading
                         )
                     
-                    // Action buttons
-                    HStack(spacing: 4) {
-                        // Duplicate button (for all themes)
-                        if onDuplicate != nil {
-                            Button {
-                                onDuplicate?()
-                            } label: {
-                                Image(systemName: "doc.on.doc.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.white)
-                                    .padding(6)
-                                    .background(Color.black.opacity(0.3))
-                                    .clipShape(Circle())
-                                    .shadow(radius: 2)
+                    // Applied badge (top-left)
+                    if isApplied {
+                        VStack {
+                            HStack {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.caption2)
+                                    Text("Applied")
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                }
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Theme.Colors.accent)
+                                .clipShape(Capsule())
+                                .shadow(radius: 2)
+                                
+                                Spacer()
+                            }
+                            Spacer()
+                        }
+                        .padding(6)
+                    }
+                    
+                    // Action buttons (top-right)
+                    VStack {
+                        HStack {
+                            Spacer()
+                            HStack(spacing: 4) {
+                                // Duplicate button (for all themes)
+                                if onDuplicate != nil {
+                                    Button {
+                                        onDuplicate?()
+                                    } label: {
+                                        Image(systemName: "doc.on.doc.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.white)
+                                            .padding(6)
+                                            .background(Color.black.opacity(0.3))
+                                            .clipShape(Circle())
+                                            .shadow(radius: 2)
+                                    }
+                                }
+                                
+                                // Edit/Delete buttons for custom themes only
+                                if isCustom {
+                                    Button {
+                                        onEdit?()
+                                    } label: {
+                                        Image(systemName: "pencil")
+                                            .font(.caption)
+                                            .foregroundStyle(.white)
+                                            .padding(6)
+                                            .background(Color.black.opacity(0.3))
+                                            .clipShape(Circle())
+                                            .shadow(radius: 2)
+                                    }
+                                    
+                                    Button {
+                                        onDelete?()
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.caption)
+                                            .foregroundStyle(.white)
+                                            .padding(6)
+                                            .background(Color.black.opacity(0.3))
+                                            .clipShape(Circle())
+                                            .shadow(radius: 2)
+                                    }
+                                }
                             }
                         }
-                        
-                        // Edit/Delete buttons for custom themes only
-                        if isCustom {
-                            Button {
-                                onEdit?()
-                            } label: {
-                                Image(systemName: "pencil")
-                                    .font(.caption)
-                                    .foregroundStyle(.white)
-                                    .padding(6)
-                                    .background(Color.black.opacity(0.3))
-                                    .clipShape(Circle())
-                                    .shadow(radius: 2)
-                            }
-                            
-                            Button {
-                                onDelete?()
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.caption)
-                                    .foregroundStyle(.white)
-                                    .padding(6)
-                                    .background(Color.black.opacity(0.3))
-                                    .clipShape(Circle())
-                                    .shadow(radius: 2)
-                            }
-                        }
+                        Spacer()
                     }
                     .padding(4)
                 }
@@ -780,7 +816,7 @@ struct PaletteCard: View {
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
-                    .stroke(isSelected ? Theme.Colors.accent : Color.clear, lineWidth: 3)
+                    .stroke(isApplied ? Theme.Colors.accent : (isSelected ? Theme.Colors.accent.opacity(0.5) : Color.clear), lineWidth: isApplied ? 3 : 2)
             )
             .scaleEffect(isSelected ? 1.02 : 1.0)
         }
@@ -998,7 +1034,12 @@ struct CustomThemeBuilderView: View {
     
     private func colorGrid(colors: Binding<[String]>, type: ColorType) -> some View {
         VStack(spacing: Theme.Spacing.sm) {
-            // Reorderable color list
+            // Hint text
+            Text("Tap to edit color • Drag to reorder")
+                .font(.caption2)
+                .foregroundStyle(Theme.Colors.textMuted)
+            
+            // Reorderable color list with drag & drop
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: Theme.Spacing.sm) {
                 ForEach(Array(colors.wrappedValue.enumerated()), id: \.offset) { index, color in
                     ColorGridItem(
@@ -1012,22 +1053,33 @@ struct CustomThemeBuilderView: View {
                             hexInput = colorHex
                             showColorPicker = true
                         },
-                        onMoveLeft: index > 0 ? {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                colors.wrappedValue.swapAt(index, index - 1)
-                            }
-                        } : nil,
-                        onMoveRight: index < colors.wrappedValue.count - 1 ? {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                colors.wrappedValue.swapAt(index, index + 1)
-                            }
-                        } : nil,
                         onDelete: colors.wrappedValue.count > 2 ? {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                 _ = colors.wrappedValue.remove(at: index)
                             }
                         } : nil
                     )
+                    .draggable("\(index):\(color)") {
+                        // Drag preview
+                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                            .fill(Color(hex: color.replacingOccurrences(of: "#", with: "")))
+                            .frame(width: 50, height: 50)
+                            .opacity(0.8)
+                    }
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let draggedItem = items.first,
+                              let fromIndexStr = draggedItem.split(separator: ":").first,
+                              let fromIndex = Int(fromIndexStr),
+                              fromIndex != index,
+                              fromIndex >= 0,
+                              fromIndex < colors.wrappedValue.count else {
+                            return false
+                        }
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            colors.wrappedValue.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: index > fromIndex ? index + 1 : index)
+                        }
+                        return true
+                    }
                 }
                 
                 // Add color button
@@ -1083,95 +1135,39 @@ struct ColorGridItem: View {
     let color: String
     let index: Int
     let onEdit: () -> Void
-    var onMoveLeft: (() -> Void)?
-    var onMoveRight: (() -> Void)?
     var onDelete: (() -> Void)?
     
-    @State private var showActions = false
-    
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topTrailing) {
             RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
                 .fill(Color(hex: color.replacingOccurrences(of: "#", with: "")))
                 .frame(height: 50)
+                .overlay(
+                    // Position indicator
+                    Text("\(index + 1)")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.white)
+                        .shadow(radius: 1)
+                )
             
-            if showActions {
-                // Action overlay
-                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
-                    .fill(Color.black.opacity(0.6))
-                    .frame(height: 50)
-                
-                HStack(spacing: 4) {
-                    if let moveLeft = onMoveLeft {
-                        Button {
-                            moveLeft()
-                        } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.white)
-                                .frame(width: 22, height: 22)
-                                .background(Color.white.opacity(0.2))
-                                .clipShape(Circle())
-                        }
-                    }
-                    
-                    Button {
-                        onEdit()
-                        showActions = false
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.white)
-                            .frame(width: 22, height: 22)
-                            .background(Theme.Colors.accent.opacity(0.8))
-                            .clipShape(Circle())
-                    }
-                    
-                    if let moveRight = onMoveRight {
-                        Button {
-                            moveRight()
-                        } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.white)
-                                .frame(width: 22, height: 22)
-                                .background(Color.white.opacity(0.2))
-                                .clipShape(Circle())
-                        }
-                    }
-                    
-                    if let delete = onDelete {
-                        Button {
-                            delete()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.white)
-                                .frame(width: 22, height: 22)
-                                .background(Theme.Colors.error.opacity(0.8))
-                                .clipShape(Circle())
-                        }
-                    }
+            // Delete button
+            if let delete = onDelete {
+                Button {
+                    delete()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(Theme.Colors.error)
+                        .clipShape(Circle())
                 }
-            } else {
-                // Position indicator
-                Text("\(index + 1)")
-                    .font(.caption2)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.white)
-                    .shadow(radius: 1)
+                .offset(x: 4, y: -4)
             }
         }
+        .contentShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
         .onTapGesture {
-            withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
-                showActions.toggle()
-            }
-        }
-        .onLongPressGesture {
             onEdit()
         }
     }
