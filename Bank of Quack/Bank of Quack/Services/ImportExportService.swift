@@ -212,14 +212,21 @@ final class ImportExportService: Sendable {
     
     // MARK: - Import Functions
     
-    /// Parses an XLSX file and returns raw import rows and split rows
-    func parseXLSX(from url: URL) throws -> (transactions: [ImportRow], splits: [ImportSplitRow]) {
+    /// Result type for parsing XLSX files
+    struct ParsedXLSXData: Sendable {
+        var transactions: [ImportRow] = []
+        var splits: [ImportSplitRow] = []
+        var sectors: [ImportSectorRow] = []
+        var sectorCategories: [ImportSectorCategoryRow] = []
+    }
+    
+    /// Parses an XLSX file and returns all import data (transactions, splits, sectors, sector-categories)
+    func parseXLSX(from url: URL) throws -> ParsedXLSXData {
         guard let xlsxFile = XLSXFile(filepath: url.path) else {
             throw ImportError.failedToOpenFile
         }
         
-        var importRows: [ImportRow] = []
-        var splitRows: [ImportSplitRow] = []
+        var result = ParsedXLSXData()
         
         // Get shared strings (may be nil for simple spreadsheets)
         let sharedStrings = try xlsxFile.parseSharedStrings()
@@ -235,14 +242,18 @@ final class ImportExportService: Sendable {
                 let sheetNameLower = sheetName.lowercased()
                 
                 if sheetNameLower == "transactions" {
-                    importRows = parseTransactionsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
+                    result.transactions = parseTransactionsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
                 } else if sheetNameLower == "splits" {
-                    splitRows = parseSplitsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
+                    result.splits = parseSplitsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
+                } else if sheetNameLower == "sectors" {
+                    result.sectors = parseSectorsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
+                } else if sheetNameLower == "sector categories" {
+                    result.sectorCategories = parseSectorCategoriesSheet(worksheet: worksheet, sharedStrings: sharedStrings)
                 }
             }
         }
         
-        return (importRows, splitRows)
+        return result
     }
     
     /// Parses the Transactions sheet
@@ -254,36 +265,34 @@ final class ImportExportService: Sendable {
         
         guard worksheetRows.count > 1 else { return rows }
         
-        // Parse header row to find column mapping
+        // Determine the maximum column count from the header row
         let headerRow = worksheetRows[0]
-        let headers = headerRow.cells.map { getCellValue($0, sharedStrings: sharedStrings) }
+        let maxColumn = getMaxColumnIndex(from: headerRow)
+        
+        // Parse header row using proper column positioning
+        let headers = getRowValues(from: headerRow, columnCount: maxColumn, sharedStrings: sharedStrings)
         let columnMapping = ImportColumn.findColumn(in: headers)
         
         // Parse data rows
         for (index, row) in worksheetRows.dropFirst().enumerated() {
-            let values = row.cells.map { getCellValue($0, sharedStrings: sharedStrings) }
-            
-            // Pad values array to match expected columns
-            var paddedValues = values
-            while paddedValues.count < headers.count {
-                paddedValues.append("")
-            }
+            // Use proper column positioning to handle sparse cells
+            let values = getRowValues(from: row, columnCount: maxColumn, sharedStrings: sharedStrings)
             
             let importRow = ImportRow(
                 rowNumber: index + 2,
-                csvRow: getValue(from: paddedValues, column: .row, mapping: columnMapping),
-                date: getValue(from: paddedValues, column: .date, mapping: columnMapping),
-                description: getValue(from: paddedValues, column: .description, mapping: columnMapping),
-                amount: getValue(from: paddedValues, column: .amount, mapping: columnMapping),
-                type: getValue(from: paddedValues, column: .type, mapping: columnMapping),
-                category: getValue(from: paddedValues, column: .category, mapping: columnMapping),
-                paidBy: getValue(from: paddedValues, column: .paidBy, mapping: columnMapping),
-                paidTo: getValue(from: paddedValues, column: .paidTo, mapping: columnMapping),
-                splitType: getValue(from: paddedValues, column: .splitType, mapping: columnMapping),
-                splitMember: getValue(from: paddedValues, column: .splitMember, mapping: columnMapping),
-                reimbursesRow: getValue(from: paddedValues, column: .reimbursesRow, mapping: columnMapping),
-                excludedFromBudget: getValue(from: paddedValues, column: .excludedFromBudget, mapping: columnMapping),
-                notes: getValue(from: paddedValues, column: .notes, mapping: columnMapping)
+                csvRow: getValue(from: values, column: .row, mapping: columnMapping),
+                date: getValue(from: values, column: .date, mapping: columnMapping),
+                description: getValue(from: values, column: .description, mapping: columnMapping),
+                amount: getValue(from: values, column: .amount, mapping: columnMapping),
+                type: getValue(from: values, column: .type, mapping: columnMapping),
+                category: getValue(from: values, column: .category, mapping: columnMapping),
+                paidBy: getValue(from: values, column: .paidBy, mapping: columnMapping),
+                paidTo: getValue(from: values, column: .paidTo, mapping: columnMapping),
+                splitType: getValue(from: values, column: .splitType, mapping: columnMapping),
+                splitMember: getValue(from: values, column: .splitMember, mapping: columnMapping),
+                reimbursesRow: getValue(from: values, column: .reimbursesRow, mapping: columnMapping),
+                excludedFromBudget: getValue(from: values, column: .excludedFromBudget, mapping: columnMapping),
+                notes: getValue(from: values, column: .notes, mapping: columnMapping)
             )
             
             // Skip completely empty rows
@@ -304,27 +313,26 @@ final class ImportExportService: Sendable {
         
         guard worksheetRows.count > 1 else { return rows }
         
-        // Parse header row
+        // Determine the maximum column count from the header row
         let headerRow = worksheetRows[0]
-        let headers = headerRow.cells.map { getCellValue($0, sharedStrings: sharedStrings) }
+        let maxColumn = getMaxColumnIndex(from: headerRow)
+        
+        // Parse header row using proper column positioning
+        let headers = getRowValues(from: headerRow, columnCount: maxColumn, sharedStrings: sharedStrings)
         let columnMapping = ImportSplitColumn.findColumn(in: headers)
         
         // Parse data rows
         for row in worksheetRows.dropFirst() {
-            let values = row.cells.map { getCellValue($0, sharedStrings: sharedStrings) }
-            
-            var paddedValues = values
-            while paddedValues.count < headers.count {
-                paddedValues.append("")
-            }
+            // Use proper column positioning to handle sparse cells
+            let values = getRowValues(from: row, columnCount: maxColumn, sharedStrings: sharedStrings)
             
             let splitRow = ImportSplitRow(
-                transactionRow: getSplitValue(from: paddedValues, column: .transactionRow, mapping: columnMapping),
-                memberName: getSplitValue(from: paddedValues, column: .memberName, mapping: columnMapping),
-                owedAmount: getSplitValue(from: paddedValues, column: .owedAmount, mapping: columnMapping),
-                owedPercentage: getSplitValue(from: paddedValues, column: .owedPercentage, mapping: columnMapping),
-                paidAmount: getSplitValue(from: paddedValues, column: .paidAmount, mapping: columnMapping),
-                paidPercentage: getSplitValue(from: paddedValues, column: .paidPercentage, mapping: columnMapping)
+                transactionRow: getSplitValue(from: values, column: .transactionRow, mapping: columnMapping),
+                memberName: getSplitValue(from: values, column: .memberName, mapping: columnMapping),
+                owedAmount: getSplitValue(from: values, column: .owedAmount, mapping: columnMapping),
+                owedPercentage: getSplitValue(from: values, column: .owedPercentage, mapping: columnMapping),
+                paidAmount: getSplitValue(from: values, column: .paidAmount, mapping: columnMapping),
+                paidPercentage: getSplitValue(from: values, column: .paidPercentage, mapping: columnMapping)
             )
             
             // Skip empty rows
@@ -334,6 +342,89 @@ final class ImportExportService: Sendable {
         }
         
         return rows
+    }
+    
+    /// Parses the Sectors sheet
+    private func parseSectorsSheet(worksheet: Worksheet, sharedStrings: SharedStrings?) -> [ImportSectorRow] {
+        var rows: [ImportSectorRow] = []
+        
+        guard let sheetData = worksheet.data else { return rows }
+        let worksheetRows = sheetData.rows
+        
+        guard worksheetRows.count > 1 else { return rows }
+        
+        // Determine the maximum column count from the header row
+        let headerRow = worksheetRows[0]
+        let maxColumn = getMaxColumnIndex(from: headerRow)
+        
+        // Parse header row using proper column positioning
+        let headers = getRowValues(from: headerRow, columnCount: maxColumn, sharedStrings: sharedStrings)
+        let columnMapping = ImportSectorColumn.findColumn(in: headers)
+        
+        // Parse data rows
+        for row in worksheetRows.dropFirst() {
+            // Use proper column positioning to handle sparse cells
+            let values = getRowValues(from: row, columnCount: maxColumn, sharedStrings: sharedStrings)
+            
+            let sectorRow = ImportSectorRow(
+                name: getSectorValue(from: values, column: .name, mapping: columnMapping),
+                sortOrder: getSectorValue(from: values, column: .sortOrder, mapping: columnMapping)
+            )
+            
+            // Skip empty rows
+            if !sectorRow.name.trimmingCharacters(in: .whitespaces).isEmpty {
+                rows.append(sectorRow)
+            }
+        }
+        
+        return rows
+    }
+    
+    /// Parses the Sector Categories sheet
+    private func parseSectorCategoriesSheet(worksheet: Worksheet, sharedStrings: SharedStrings?) -> [ImportSectorCategoryRow] {
+        var rows: [ImportSectorCategoryRow] = []
+        
+        guard let sheetData = worksheet.data else { return rows }
+        let worksheetRows = sheetData.rows
+        
+        guard worksheetRows.count > 1 else { return rows }
+        
+        // Determine the maximum column count from the header row
+        let headerRow = worksheetRows[0]
+        let maxColumn = getMaxColumnIndex(from: headerRow)
+        
+        // Parse header row using proper column positioning
+        let headers = getRowValues(from: headerRow, columnCount: maxColumn, sharedStrings: sharedStrings)
+        let columnMapping = ImportSectorCategoryColumn.findColumn(in: headers)
+        
+        // Parse data rows
+        for row in worksheetRows.dropFirst() {
+            // Use proper column positioning to handle sparse cells
+            let values = getRowValues(from: row, columnCount: maxColumn, sharedStrings: sharedStrings)
+            
+            let scRow = ImportSectorCategoryRow(
+                sectorName: getSectorCategoryValue(from: values, column: .sectorName, mapping: columnMapping),
+                categoryName: getSectorCategoryValue(from: values, column: .categoryName, mapping: columnMapping)
+            )
+            
+            // Skip empty rows
+            if !scRow.sectorName.trimmingCharacters(in: .whitespaces).isEmpty &&
+               !scRow.categoryName.trimmingCharacters(in: .whitespaces).isEmpty {
+                rows.append(scRow)
+            }
+        }
+        
+        return rows
+    }
+    
+    private func getSectorValue(from values: [String], column: ImportSectorColumn, mapping: [ImportSectorColumn: Int]) -> String {
+        guard let index = mapping[column], index < values.count else { return "" }
+        return values[index]
+    }
+    
+    private func getSectorCategoryValue(from values: [String], column: ImportSectorCategoryColumn, mapping: [ImportSectorCategoryColumn: Int]) -> String {
+        guard let index = mapping[column], index < values.count else { return "" }
+        return values[index]
     }
     
     /// Gets the string value from a cell, handling shared strings
@@ -352,6 +443,43 @@ final class ImportExportService: Sendable {
             return inlineString
         }
         return ""
+    }
+    
+    /// Extracts cell values into a properly positioned array based on column references.
+    /// This handles sparse rows where empty cells are not included in the cells array.
+    private func getRowValues(from row: CoreXLSX.Row, columnCount: Int, sharedStrings: SharedStrings?) -> [String] {
+        var values = Array(repeating: "", count: columnCount)
+        
+        for cell in row.cells {
+            // Get the column index from the cell reference (e.g., "A1" -> 0, "B1" -> 1)
+            let columnIndex = columnLetterToIndex(cell.reference.column.value)
+            if columnIndex >= 0 && columnIndex < columnCount {
+                values[columnIndex] = getCellValue(cell, sharedStrings: sharedStrings)
+            }
+        }
+        
+        return values
+    }
+    
+    /// Converts a column letter (e.g., "A", "B", "AA") to a 0-based index
+    private func columnLetterToIndex(_ column: String) -> Int {
+        var index = 0
+        for char in column.uppercased() {
+            if let asciiValue = char.asciiValue {
+                index = index * 26 + Int(asciiValue - Character("A").asciiValue!) + 1
+            }
+        }
+        return index - 1  // Convert to 0-based
+    }
+    
+    /// Gets the maximum column index from a row's cells
+    private func getMaxColumnIndex(from row: CoreXLSX.Row) -> Int {
+        var maxIndex = 0
+        for cell in row.cells {
+            let index = columnLetterToIndex(cell.reference.column.value)
+            maxIndex = max(maxIndex, index + 1)  // +1 because we need count, not max index
+        }
+        return maxIndex
     }
     
     /// Validates and parses split rows against existing members
@@ -488,18 +616,31 @@ final class ImportExportService: Sendable {
             }
             
             // Validate category
+            // Note: Categories only apply to expenses - income/settlement/reimbursement don't use categories
             let categoryStr = row.category.trimmingCharacters(in: .whitespaces)
-            if categoryStr.isEmpty {
-                row.validationWarnings.append(.emptyCategory)
-            } else {
-                let categoryLower = categoryStr.lowercased()
-                if categoryNames.contains(categoryLower) {
-                    row.matchedCategoryId = categoryMap[categoryLower]
-                    summary.existingCategoriesUsed.insert(categoryStr)
+            let transactionTypeForCategory = row.parsedType ?? .expense
+            
+            if transactionTypeForCategory == .expense {
+                // Expenses must have categories
+                if categoryStr.isEmpty {
+                    row.validationErrors.append(.missingRequiredField(field: "Category"))
                 } else {
-                    row.validationWarnings.append(.categoryWillBeCreated(name: categoryStr))
-                    summary.newCategoriesToCreate.insert(categoryStr)
+                    let categoryLower = categoryStr.lowercased()
+                    if categoryNames.contains(categoryLower) {
+                        row.matchedCategoryId = categoryMap[categoryLower]
+                        summary.existingCategoriesUsed.insert(categoryStr)
+                    } else {
+                        row.validationWarnings.append(.categoryWillBeCreated(name: categoryStr))
+                        summary.newCategoriesToCreate.insert(categoryStr)
+                    }
                 }
+            } else {
+                // Income, settlement, and reimbursement don't use categories
+                if !categoryStr.isEmpty {
+                    // Warn that category will be ignored
+                    row.validationWarnings.append(.categoryWillBeIgnored(transactionType: transactionTypeForCategory.rawValue))
+                }
+                // Don't set matchedCategoryId - it will remain nil
             }
             
             // Validate paid by member
@@ -513,7 +654,9 @@ final class ImportExportService: Sendable {
                     row.matchedPaidByMemberId = memberMap[paidByLower]
                     summary.membersUsed.insert(paidByStr)
                 } else {
-                    row.validationErrors.append(.unknownMember(name: paidByStr))
+                    // Unknown member - will be created as managed member
+                    row.validationWarnings.append(.memberWillBeCreated(name: paidByStr))
+                    summary.newManagedMembersToCreate.insert(paidByStr)
                 }
             }
             
@@ -525,7 +668,9 @@ final class ImportExportService: Sendable {
                     row.matchedPaidToMemberId = memberMap[paidToLower]
                     summary.membersUsed.insert(paidToStr)
                 } else {
-                    row.validationErrors.append(.unknownMember(name: paidToStr))
+                    // Unknown member - will be created as managed member
+                    row.validationWarnings.append(.memberWillBeCreated(name: paidToStr))
+                    summary.newManagedMembersToCreate.insert(paidToStr)
                 }
             }
             
@@ -552,7 +697,9 @@ final class ImportExportService: Sendable {
                     row.matchedSplitMemberId = memberMap[splitMemberLower]
                     summary.membersUsed.insert(splitMemberStr)
                 } else {
-                    row.validationErrors.append(.unknownMember(name: splitMemberStr))
+                    // Unknown member - will be created as managed member
+                    row.validationWarnings.append(.memberWillBeCreated(name: splitMemberStr))
+                    summary.newManagedMembersToCreate.insert(splitMemberStr)
                 }
             }
             
@@ -586,6 +733,92 @@ final class ImportExportService: Sendable {
         }
         
         return (validatedRows, summary)
+    }
+    
+    /// Validates sector rows against existing sectors
+    func validateSectorRows(
+        _ rows: [ImportSectorRow],
+        existingSectors: [Sector]
+    ) -> ([ImportSectorRow], Set<String>, Set<String>) {
+        let sectorNames = Set(existingSectors.map { $0.name.lowercased() })
+        let sectorMap = Dictionary(uniqueKeysWithValues: existingSectors.map { ($0.name.lowercased(), $0.id) })
+        
+        var validatedRows: [ImportSectorRow] = []
+        var newSectorsToCreate: Set<String> = []
+        var existingSectorsUsed: Set<String> = []
+        
+        for var row in rows {
+            let nameStr = row.name.trimmingCharacters(in: .whitespaces)
+            let nameLower = nameStr.lowercased()
+            
+            // Parse sort order
+            if let sortOrder = Int(row.sortOrder.trimmingCharacters(in: .whitespaces)) {
+                row.parsedSortOrder = sortOrder
+            }
+            
+            // Check if sector exists
+            if sectorNames.contains(nameLower) {
+                row.matchedSectorId = sectorMap[nameLower]
+                existingSectorsUsed.insert(nameStr)
+            } else {
+                newSectorsToCreate.insert(nameStr)
+            }
+            
+            validatedRows.append(row)
+        }
+        
+        return (validatedRows, newSectorsToCreate, existingSectorsUsed)
+    }
+    
+    /// Validates sector-category linkage rows
+    func validateSectorCategoryRows(
+        _ rows: [ImportSectorCategoryRow],
+        existingSectors: [Sector],
+        existingCategories: [Category],
+        existingSectorCategories: [UUID: [UUID]],
+        newSectorsToCreate: Set<String>,
+        newCategoriesToCreate: Set<String>
+    ) -> ([ImportSectorCategoryRow], [(sectorName: String, categoryName: String)], Int) {
+        let sectorMap = Dictionary(uniqueKeysWithValues: existingSectors.map { ($0.name.lowercased(), $0.id) })
+        let categoryMap = Dictionary(uniqueKeysWithValues: existingCategories.map { ($0.name.lowercased(), $0.id) })
+        
+        var validatedRows: [ImportSectorCategoryRow] = []
+        var newLinks: [(sectorName: String, categoryName: String)] = []
+        var existingLinksCount = 0
+        
+        for var row in rows {
+            let sectorNameStr = row.sectorName.trimmingCharacters(in: .whitespaces)
+            let categoryNameStr = row.categoryName.trimmingCharacters(in: .whitespaces)
+            let sectorLower = sectorNameStr.lowercased()
+            let categoryLower = categoryNameStr.lowercased()
+            
+            // Match sector
+            row.matchedSectorId = sectorMap[sectorLower]
+            
+            // Match category
+            row.matchedCategoryId = categoryMap[categoryLower]
+            
+            // Check if this is a new link
+            if let sectorId = row.matchedSectorId, let categoryId = row.matchedCategoryId {
+                // Both exist - check if link already exists
+                let existingCategoryIds = existingSectorCategories[sectorId] ?? []
+                if existingCategoryIds.contains(categoryId) {
+                    row.isNewLink = false
+                    existingLinksCount += 1
+                } else {
+                    row.isNewLink = true
+                    newLinks.append((sectorName: sectorNameStr, categoryName: categoryNameStr))
+                }
+            } else {
+                // Either sector or category is new, so link will be new
+                row.isNewLink = true
+                newLinks.append((sectorName: sectorNameStr, categoryName: categoryNameStr))
+            }
+            
+            validatedRows.append(row)
+        }
+        
+        return (validatedRows, newLinks, existingLinksCount)
     }
     
     /// Generates an XLSX of failed/invalid rows for the user to fix

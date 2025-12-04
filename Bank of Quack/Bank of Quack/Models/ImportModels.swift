@@ -109,16 +109,20 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
 
 enum ImportValidationWarning: Identifiable, Equatable, Sendable {
     case categoryWillBeCreated(name: String)
+    case categoryWillBeIgnored(transactionType: String)
     case emptyCategory
     case emptyPaidBy
     case defaultSplitType
+    case memberWillBeCreated(name: String)
     
     var id: String {
         switch self {
         case .categoryWillBeCreated(let name): return "create_cat_\(name)"
+        case .categoryWillBeIgnored(let type): return "ignore_cat_\(type)"
         case .emptyCategory: return "empty_category"
         case .emptyPaidBy: return "empty_paid_by"
         case .defaultSplitType: return "default_split"
+        case .memberWillBeCreated(let name): return "create_member_\(name)"
         }
     }
     
@@ -126,12 +130,16 @@ enum ImportValidationWarning: Identifiable, Equatable, Sendable {
         switch self {
         case .categoryWillBeCreated(let name):
             return "Category \"\(name)\" will be created"
+        case .categoryWillBeIgnored(let transactionType):
+            return "Category will be ignored for \(transactionType) transactions"
         case .emptyCategory:
             return "No category specified - transaction will be uncategorized"
         case .emptyPaidBy:
             return "No 'Paid By' specified - will be assigned to you"
         case .defaultSplitType:
             return "No split type specified - will use 'Split Equally'"
+        case .memberWillBeCreated(let name):
+            return "Member \"\(name)\" will be created as managed member"
         }
     }
 }
@@ -153,6 +161,15 @@ struct ImportSummary: Sendable {
     var transactionsWithSplits: Int = 0  // Number of transactions that have split data
     var reimbursementsWithReferences: Int = 0  // Number of reimbursements that reference an expense
     
+    // Sector import tracking
+    var newSectorsToCreate: Set<String> = []
+    var existingSectorsUsed: Set<String> = []
+    var newSectorCategoryLinks: [(sectorName: String, categoryName: String)] = []
+    var existingSectorCategoryLinks: Int = 0
+    
+    // Managed member import tracking
+    var newManagedMembersToCreate: Set<String> = []
+    
     var canImportAll: Bool {
         errorRows == 0
     }
@@ -163,6 +180,18 @@ struct ImportSummary: Sendable {
     
     var hasSplitData: Bool {
         totalSplitRows > 0
+    }
+    
+    var hasSectorData: Bool {
+        !newSectorsToCreate.isEmpty || !existingSectorsUsed.isEmpty
+    }
+    
+    var hasSectorCategoryLinks: Bool {
+        !newSectorCategoryLinks.isEmpty || existingSectorCategoryLinks > 0
+    }
+    
+    var hasNewManagedMembers: Bool {
+        !newManagedMembersToCreate.isEmpty
     }
 }
 
@@ -384,12 +413,100 @@ enum ImportSplitColumn: String, CaseIterable, Sendable {
     }
 }
 
+// MARK: - Import Sector Row
+
+struct ImportSectorRow: Identifiable, Sendable {
+    let id = UUID()
+    
+    // Raw string values from XLSX
+    var name: String
+    var sortOrder: String
+    
+    // Parsed values
+    var parsedSortOrder: Int?
+    var matchedSectorId: UUID?  // If sector already exists
+}
+
+enum ImportSectorColumn: String, CaseIterable, Sendable {
+    case name = "name"
+    case sortOrder = "sort order"
+    
+    var alternateNames: [String] {
+        switch self {
+        case .name: return ["name", "sector name", "sector_name", "sectorname"]
+        case .sortOrder: return ["sort order", "sort_order", "sortorder", "order"]
+        }
+    }
+    
+    static func findColumn(in headers: [String]) -> [ImportSectorColumn: Int] {
+        var mapping: [ImportSectorColumn: Int] = [:]
+        let normalizedHeaders = headers.map { $0.lowercased().trimmingCharacters(in: .whitespaces) }
+        
+        for column in ImportSectorColumn.allCases {
+            for (index, header) in normalizedHeaders.enumerated() {
+                if column.alternateNames.contains(header) {
+                    mapping[column] = index
+                    break
+                }
+            }
+        }
+        
+        return mapping
+    }
+}
+
+// MARK: - Import Sector Category Row
+
+struct ImportSectorCategoryRow: Identifiable, Sendable {
+    let id = UUID()
+    
+    // Raw string values from XLSX
+    var sectorName: String
+    var categoryName: String
+    
+    // Parsed values
+    var matchedSectorId: UUID?
+    var matchedCategoryId: UUID?
+    var isNewLink: Bool = false  // True if this link doesn't already exist
+}
+
+enum ImportSectorCategoryColumn: String, CaseIterable, Sendable {
+    case sectorName = "sector name"
+    case categoryName = "category name"
+    
+    var alternateNames: [String] {
+        switch self {
+        case .sectorName: return ["sector name", "sector_name", "sectorname", "sector"]
+        case .categoryName: return ["category name", "category_name", "categoryname", "category"]
+        }
+    }
+    
+    static func findColumn(in headers: [String]) -> [ImportSectorCategoryColumn: Int] {
+        var mapping: [ImportSectorCategoryColumn: Int] = [:]
+        let normalizedHeaders = headers.map { $0.lowercased().trimmingCharacters(in: .whitespaces) }
+        
+        for column in ImportSectorCategoryColumn.allCases {
+            for (index, header) in normalizedHeaders.enumerated() {
+                if column.alternateNames.contains(header) {
+                    mapping[column] = index
+                    break
+                }
+            }
+        }
+        
+        return mapping
+    }
+}
+
 // MARK: - Import Result
 
 struct ImportResult: Sendable {
     let successCount: Int
     let failedCount: Int
     let createdCategories: [String]
+    let createdSectors: [String]
+    let createdSectorCategoryLinks: Int
+    let createdManagedMembers: [String]
     let errors: [String]
     
     var isFullySuccessful: Bool {

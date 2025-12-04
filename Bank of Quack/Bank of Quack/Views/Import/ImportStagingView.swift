@@ -26,7 +26,7 @@ struct ImportStagingView: View {
                     stagingContentView
                 }
             }
-            .navigationTitle("Import Transactions")
+            .navigationTitle("Import Data")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -85,12 +85,12 @@ struct ImportStagingView: View {
                 .foregroundStyle(Theme.Colors.accent)
             
             VStack(spacing: Theme.Spacing.sm) {
-                Text("Import Transactions")
+                Text("Import Data")
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundStyle(Theme.Colors.textPrimary)
                 
-                Text("Select an Excel file (.xlsx) to import transactions into your household.")
+                Text("Select an Excel file (.xlsx) to import transactions, sectors, and members into your bank.")
                     .font(.body)
                     .foregroundStyle(Theme.Colors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -129,13 +129,16 @@ struct ImportStagingView: View {
                 // Summary Card
                 summaryCard
                 
+                // Verification Totals
+                verificationTotalsSection
+                
                 // Split Data Section (auto-detected from xlsx)
                 if viewModel.hasSplitData {
                     splitsDataSection
                 }
                 
-                // New Items Section (Categories to be created)
-                if !viewModel.summary.newCategoriesToCreate.isEmpty {
+                // New Items to Create Section
+                if hasNewItemsToCreate {
                     newItemsSection
                 }
                 
@@ -157,6 +160,14 @@ struct ImportStagingView: View {
             }
             .padding(.top, Theme.Spacing.md)
         }
+    }
+    
+    /// Returns true if there are any new items to create
+    private var hasNewItemsToCreate: Bool {
+        !viewModel.summary.newCategoriesToCreate.isEmpty ||
+        !viewModel.summary.newSectorsToCreate.isEmpty ||
+        !viewModel.summary.newSectorCategoryLinks.isEmpty ||
+        !viewModel.summary.newManagedMembersToCreate.isEmpty
     }
     
     // MARK: - Splits Data Section (auto-detected)
@@ -258,7 +269,137 @@ struct ImportStagingView: View {
         .padding(.horizontal, Theme.Spacing.md)
     }
     
-    // MARK: - New Items Section
+    // MARK: - Verification Totals Section
+    
+    @State private var showVerificationTotals = false
+    
+    private var verificationTotalsSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Button {
+                withAnimation(.spring(response: 0.3)) {
+                    showVerificationTotals.toggle()
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "checkmark.shield")
+                        .foregroundStyle(Theme.Colors.accent)
+                    Text("VERIFICATION TOTALS")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                    
+                    Spacer()
+                    
+                    Image(systemName: showVerificationTotals ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+                .padding(.horizontal, Theme.Spacing.md)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            if showVerificationTotals {
+                VStack(spacing: Theme.Spacing.sm) {
+                    // Calculate totals from valid rows
+                    let validRows = viewModel.validRowsToImport
+                    
+                    let expenseTotal = validRows
+                        .filter { $0.parsedType == .expense || $0.parsedType == nil }
+                        .compactMap { $0.parsedAmount }
+                        .reduce(Decimal(0), +)
+                    
+                    let incomeTotal = validRows
+                        .filter { $0.parsedType == .income }
+                        .compactMap { $0.parsedAmount }
+                        .reduce(Decimal(0), +)
+                    
+                    let settlementTotal = validRows
+                        .filter { $0.parsedType == .settlement }
+                        .compactMap { $0.parsedAmount }
+                        .reduce(Decimal(0), +)
+                    
+                    let reimbursementTotal = validRows
+                        .filter { $0.parsedType == .reimbursement }
+                        .compactMap { $0.parsedAmount }
+                        .reduce(Decimal(0), +)
+                    
+                    let expenseCount = validRows.filter { $0.parsedType == .expense || $0.parsedType == nil }.count
+                    let incomeCount = validRows.filter { $0.parsedType == .income }.count
+                    let settlementCount = validRows.filter { $0.parsedType == .settlement }.count
+                    let reimbursementCount = validRows.filter { $0.parsedType == .reimbursement }.count
+                    
+                    VerificationTotalRow(
+                        icon: "cart.fill",
+                        label: "Expenses",
+                        count: expenseCount,
+                        total: expenseTotal,
+                        color: Theme.Colors.error
+                    )
+                    
+                    VerificationTotalRow(
+                        icon: "arrow.down.circle.fill",
+                        label: "Income",
+                        count: incomeCount,
+                        total: incomeTotal,
+                        color: Theme.Colors.success
+                    )
+                    
+                    if settlementCount > 0 {
+                        VerificationTotalRow(
+                            icon: "arrow.left.arrow.right.circle.fill",
+                            label: "Settlements",
+                            count: settlementCount,
+                            total: settlementTotal,
+                            color: Theme.Colors.accent
+                        )
+                    }
+                    
+                    if reimbursementCount > 0 {
+                        VerificationTotalRow(
+                            icon: "arrow.uturn.backward.circle.fill",
+                            label: "Reimbursements",
+                            count: reimbursementCount,
+                            total: reimbursementTotal,
+                            color: Theme.Colors.warning
+                        )
+                    }
+                    
+                    Divider()
+                        .background(Theme.Colors.borderLight)
+                    
+                    // Net total
+                    let netTotal = incomeTotal - expenseTotal + reimbursementTotal
+                    HStack {
+                        Text("Net (Income - Expenses + Reimbursements)")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        
+                        Spacer()
+                        
+                        Text(formatCurrency(netTotal))
+                            .font(.subheadline)
+                            .fontWeight(.bold)
+                            .foregroundStyle(netTotal >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                    }
+                }
+                .padding(Theme.Spacing.md)
+                .background(Theme.Colors.backgroundCard)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                .padding(.horizontal, Theme.Spacing.md)
+            }
+        }
+    }
+    
+    private func formatCurrency(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencySymbol = "$"
+        formatter.internationalCurrencySymbol = ""
+        return formatter.string(from: value as NSDecimalNumber) ?? "$0.00"
+    }
+    
+    // MARK: - New Items Section (Categories, Sectors, Members, Links)
     
     private var newItemsSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -273,19 +414,56 @@ struct ImportStagingView: View {
             .padding(.horizontal, Theme.Spacing.md)
             
             VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                // New Managed Members
+                ForEach(Array(viewModel.summary.newManagedMembersToCreate).sorted(), id: \.self) { memberName in
+                    NewItemRow(
+                        icon: "person.badge.plus",
+                        label: "Member",
+                        name: memberName
+                    )
+                }
+                
+                // New Categories
                 ForEach(Array(viewModel.summary.newCategoriesToCreate).sorted(), id: \.self) { categoryName in
+                    NewItemRow(
+                        icon: "folder.badge.plus",
+                        label: "Category",
+                        name: categoryName
+                    )
+                }
+                
+                // New Sectors
+                ForEach(Array(viewModel.summary.newSectorsToCreate).sorted(), id: \.self) { sectorName in
+                    NewItemRow(
+                        icon: "rectangle.3.group.badge.plus",
+                        label: "Sector",
+                        name: sectorName
+                    )
+                }
+                
+                // New Sector-Category Links
+                ForEach(viewModel.summary.newSectorCategoryLinks.indices, id: \.self) { index in
+                    let link = viewModel.summary.newSectorCategoryLinks[index]
                     HStack(spacing: Theme.Spacing.sm) {
-                        Image(systemName: "folder.badge.plus")
+                        Image(systemName: "link.badge.plus")
                             .font(.caption)
                             .foregroundStyle(Theme.Colors.warning)
                         
-                        Text("Category: \(categoryName)")
+                        Text("\(link.categoryName)")
                             .font(.subheadline)
                             .foregroundStyle(Theme.Colors.textPrimary)
                         
+                        Image(systemName: "arrow.right")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                        
+                        Text("\(link.sectorName)")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                        
                         Spacer()
                         
-                        Text("NEW")
+                        Text("LINK")
                             .font(.caption2)
                             .fontWeight(.bold)
                             .foregroundStyle(Theme.Colors.warning)
@@ -339,7 +517,10 @@ struct ImportStagingView: View {
             
             LazyVStack(spacing: Theme.Spacing.sm) {
                 ForEach(viewModel.filteredRows) { row in
-                    ImportRowCard(row: row)
+                    // Get splits for this row (using parsedCsvRow or rowNumber)
+                    let rowNumber = row.parsedCsvRow ?? row.rowNumber
+                    let splits = viewModel.splitsByTransactionRow[rowNumber] ?? []
+                    ImportRowCard(row: row, splits: splits)
                 }
             }
             .padding(.horizontal, Theme.Spacing.md)
@@ -429,15 +610,34 @@ struct ImportStagingView: View {
                 return
             }
             
-            defer { fileURL.stopAccessingSecurityScopedResource() }
+            // Copy file to temporary location while we have access
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileURL.lastPathComponent)
+            do {
+                // Remove existing temp file if present
+                try? FileManager.default.removeItem(at: tempURL)
+                try FileManager.default.copyItem(at: fileURL, to: tempURL)
+            } catch {
+                fileURL.stopAccessingSecurityScopedResource()
+                viewModel.error = "Failed to access file: \(error.localizedDescription)"
+                return
+            }
             
+            // Stop accessing the original security-scoped resource
+            fileURL.stopAccessingSecurityScopedResource()
+            
+            // Now parse from the temp copy
             Task {
                 await viewModel.parseAndValidate(
-                    fileURL: fileURL,
+                    fileURL: tempURL,
                     existingCategories: authViewModel.categories,
                     existingMembers: authViewModel.members,
+                    existingSectors: authViewModel.sectors,
+                    existingSectorCategories: authViewModel.sectorCategories,
                     currentUserId: authViewModel.currentUser?.id
                 )
+                
+                // Clean up temp file after parsing
+                try? FileManager.default.removeItem(at: tempURL)
             }
             
         case .failure(let error):
@@ -453,12 +653,18 @@ struct ImportStagingView: View {
                 householdId: householdId,
                 existingCategories: authViewModel.categories,
                 existingMembers: authViewModel.members,
+                existingSectors: authViewModel.sectors,
                 currentMemberId: authViewModel.currentMember?.id,
                 currentUserId: authViewModel.currentUser?.id,
-                onCategoriesCreated: { _ in
-                    // Refresh categories in auth view model
+                onDataCreated: {
+                    // Refresh data in auth view model
                     Task {
                         await authViewModel.refreshCategories()
+                        await authViewModel.refreshSectors()
+                        // Re-select household to refresh members
+                        if let household = authViewModel.currentHousehold {
+                            await authViewModel.selectHousehold(household)
+                        }
                     }
                 }
             )
@@ -497,8 +703,20 @@ struct ImportStagingView: View {
     private func importResultMessage(_ result: ImportResult) -> String {
         var message = "\(result.successCount) transactions imported successfully."
         
+        if !result.createdManagedMembers.isEmpty {
+            message += "\n\nNew members created: \(result.createdManagedMembers.joined(separator: ", "))"
+        }
+        
         if !result.createdCategories.isEmpty {
             message += "\n\nNew categories created: \(result.createdCategories.joined(separator: ", "))"
+        }
+        
+        if !result.createdSectors.isEmpty {
+            message += "\n\nNew sectors created: \(result.createdSectors.joined(separator: ", "))"
+        }
+        
+        if result.createdSectorCategoryLinks > 0 {
+            message += "\n\n\(result.createdSectorCategoryLinks) sector-category link(s) created."
         }
         
         if result.failedCount > 0 {
@@ -506,6 +724,39 @@ struct ImportStagingView: View {
         }
         
         return message
+    }
+}
+
+// MARK: - New Item Row
+
+struct NewItemRow: View {
+    let icon: String
+    let label: String
+    let name: String
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.warning)
+            
+            Text("\(label): \(name)")
+                .font(.subheadline)
+                .foregroundStyle(Theme.Colors.textPrimary)
+            
+            Spacer()
+            
+            Text("NEW")
+                .font(.caption2)
+                .fontWeight(.bold)
+                .foregroundStyle(Theme.Colors.warning)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Theme.Colors.warning.opacity(0.2))
+                .clipShape(Capsule())
+        }
+        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.vertical, Theme.Spacing.xs)
     }
 }
 
@@ -572,6 +823,7 @@ struct FilterPill: View {
 
 struct ImportRowCard: View {
     let row: ImportRow
+    let splits: [ImportSplitRow]
     @State private var isExpanded = false
     
     var body: some View {
@@ -588,11 +840,20 @@ struct ImportRowCard: View {
                     
                     // Content
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(row.description.isEmpty ? "(No description)" : row.description)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundStyle(Theme.Colors.textPrimary)
-                            .lineLimit(1)
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Text(row.description.isEmpty ? "(No description)" : row.description)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                                .lineLimit(1)
+                            
+                            // Split indicator
+                            if !splits.isEmpty {
+                                Image(systemName: "person.2.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.Colors.accent)
+                            }
+                        }
                         
                         HStack(spacing: Theme.Spacing.sm) {
                             Text(row.date)
@@ -641,6 +902,70 @@ struct ImportRowCard: View {
                     
                     if !row.notes.isEmpty {
                         ImportDetailRow(label: "Notes", value: row.notes)
+                    }
+                    
+                    // Split breakdowns
+                    if !splits.isEmpty {
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            // Expense For Split (owed amounts)
+                            let expenseForSplits = splits.filter { 
+                                ($0.parsedOwedAmount ?? 0) > 0 || ($0.parsedOwedPercentage ?? 0) > 0 
+                            }
+                            if !expenseForSplits.isEmpty {
+                                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                                    HStack {
+                                        Image(systemName: "cart.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.error)
+                                        Text("Expense For Split:")
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(Theme.Colors.error)
+                                    }
+                                    
+                                    ForEach(expenseForSplits) { split in
+                                        ImportSplitMemberRow(
+                                            memberName: split.memberName,
+                                            amount: split.parsedOwedAmount,
+                                            percentage: split.parsedOwedPercentage
+                                        )
+                                    }
+                                }
+                                .padding(Theme.Spacing.sm)
+                                .background(Theme.Colors.error.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
+                            }
+                            
+                            // Paid By Split (paid amounts)
+                            let paidBySplits = splits.filter { 
+                                ($0.parsedPaidAmount ?? 0) > 0 || ($0.parsedPaidPercentage ?? 0) > 0 
+                            }
+                            if !paidBySplits.isEmpty {
+                                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                                    HStack {
+                                        Image(systemName: "creditcard.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.success)
+                                        Text("Paid By Split:")
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(Theme.Colors.success)
+                                    }
+                                    
+                                    ForEach(paidBySplits) { split in
+                                        ImportSplitMemberRow(
+                                            memberName: split.memberName,
+                                            amount: split.parsedPaidAmount,
+                                            percentage: split.parsedPaidPercentage
+                                        )
+                                    }
+                                }
+                                .padding(Theme.Spacing.sm)
+                                .background(Theme.Colors.success.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
+                            }
+                        }
+                        .padding(.top, Theme.Spacing.xs)
                     }
                     
                     // Errors
@@ -749,6 +1074,98 @@ struct ImportDetailRow: View {
                 .foregroundStyle(Theme.Colors.textSecondary)
             
             Spacer()
+        }
+    }
+}
+
+// MARK: - Import Split Member Row
+
+struct ImportSplitMemberRow: View {
+    let memberName: String
+    let amount: Decimal?
+    let percentage: Decimal?
+    
+    private var formattedPercentage: String? {
+        guard let pct = percentage, pct > 0 else { return nil }
+        let doubleValue = NSDecimalNumber(decimal: pct).doubleValue
+        // Round to 2 decimal places, but remove trailing zeros
+        if doubleValue.truncatingRemainder(dividingBy: 1) == 0 {
+            return String(format: "%.0f%%", doubleValue)
+        } else if (doubleValue * 10).truncatingRemainder(dividingBy: 1) == 0 {
+            return String(format: "%.1f%%", doubleValue)
+        } else {
+            return String(format: "%.2f%%", doubleValue)
+        }
+    }
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            // Member name
+            Text(memberName.isEmpty ? "(Unknown)" : memberName)
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(Theme.Colors.textPrimary)
+            
+            Spacer()
+            
+            // Percentage and amount
+            HStack(spacing: Theme.Spacing.xs) {
+                if let pctStr = formattedPercentage {
+                    Text(pctStr)
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+                
+                if let amt = amount, amt > 0 {
+                    Text("$\(amt as NSDecimalNumber)")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Verification Total Row
+
+struct VerificationTotalRow: View {
+    let icon: String
+    let label: String
+    let count: Int
+    let total: Decimal
+    let color: Color
+    
+    private var formattedTotal: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencySymbol = "$"
+        formatter.internationalCurrencySymbol = ""
+        return formatter.string(from: total as NSDecimalNumber) ?? "$0.00"
+    }
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(color)
+                .frame(width: 20)
+            
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textPrimary)
+            
+            Text("(\(count))")
+                .font(.caption2)
+                .foregroundStyle(Theme.Colors.textMuted)
+            
+            Spacer()
+            
+            Text(formattedTotal)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(color)
         }
     }
 }

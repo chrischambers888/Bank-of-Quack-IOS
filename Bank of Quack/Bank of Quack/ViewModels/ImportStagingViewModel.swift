@@ -9,12 +9,16 @@ final class ImportStagingViewModel {
     
     var importRows: [ImportRow] = []
     var splitRows: [ImportSplitRow] = []  // Split data from xlsx Splits sheet
+    var sectorRows: [ImportSectorRow] = []  // Sector data from xlsx Sectors sheet
+    var sectorCategoryRows: [ImportSectorCategoryRow] = []  // Sector-Category linkages
     var summary = ImportSummary()
     var isLoading = false
     var isImporting = false
     var error: String?
     var importResult: ImportResult?
     var hasSplitData = false  // Whether splits were found in the xlsx file
+    var hasSectorData = false  // Whether sectors were found in the xlsx file
+    var hasSectorCategoryData = false  // Whether sector-category links were found
     
     // Filter state
     var filterStatus: ImportFilterStatus = .all
@@ -56,18 +60,22 @@ final class ImportStagingViewModel {
         fileURL: URL,
         existingCategories: [Category],
         existingMembers: [HouseholdMember],
+        existingSectors: [Sector],
+        existingSectorCategories: [UUID: [UUID]],
         currentUserId: UUID?
     ) async {
         isLoading = true
         error = nil
         importResult = nil
         hasSplitData = false
+        hasSectorData = false
+        hasSectorCategoryData = false
         
         do {
-            // Parse XLSX file - this returns both transactions and splits
-            let (rawRows, rawSplitRows) = try importExportService.parseXLSX(from: fileURL)
+            // Parse XLSX file - this returns all import data
+            let parsedData = try importExportService.parseXLSX(from: fileURL)
             
-            if rawRows.isEmpty {
+            if parsedData.transactions.isEmpty {
                 error = "No valid data found in the Excel file. Make sure the Transactions sheet has a header row and at least one data row."
                 isLoading = false
                 return
@@ -75,7 +83,7 @@ final class ImportStagingViewModel {
             
             // Validate transaction rows
             let (validatedRows, importSummary) = importExportService.validateRows(
-                rawRows,
+                parsedData.transactions,
                 existingCategories: existingCategories,
                 existingMembers: existingMembers,
                 currentUserId: currentUserId
@@ -85,9 +93,9 @@ final class ImportStagingViewModel {
             summary = importSummary
             
             // Validate split rows if present
-            if !rawSplitRows.isEmpty {
+            if !parsedData.splits.isEmpty {
                 let validatedSplitRows = importExportService.validateSplitRows(
-                    rawSplitRows,
+                    parsedData.splits,
                     existingMembers: existingMembers
                 )
                 
@@ -100,6 +108,36 @@ final class ImportStagingViewModel {
                 // Count how many transactions have splits
                 let transactionRowsWithSplits = Set(splitRows.compactMap { $0.parsedTransactionRow })
                 summary.transactionsWithSplits = transactionRowsWithSplits.count
+            }
+            
+            // Validate sector rows if present
+            if !parsedData.sectors.isEmpty {
+                let (validatedSectorRows, newSectors, existingSectorsUsed) = importExportService.validateSectorRows(
+                    parsedData.sectors,
+                    existingSectors: existingSectors
+                )
+                
+                sectorRows = validatedSectorRows
+                hasSectorData = true
+                summary.newSectorsToCreate = newSectors
+                summary.existingSectorsUsed = existingSectorsUsed
+            }
+            
+            // Validate sector-category linkage rows if present
+            if !parsedData.sectorCategories.isEmpty {
+                let (validatedSCRows, newLinks, existingLinksCount) = importExportService.validateSectorCategoryRows(
+                    parsedData.sectorCategories,
+                    existingSectors: existingSectors,
+                    existingCategories: existingCategories,
+                    existingSectorCategories: existingSectorCategories,
+                    newSectorsToCreate: summary.newSectorsToCreate,
+                    newCategoriesToCreate: summary.newCategoriesToCreate
+                )
+                
+                sectorCategoryRows = validatedSCRows
+                hasSectorCategoryData = true
+                summary.newSectorCategoryLinks = newLinks
+                summary.existingSectorCategoryLinks = existingLinksCount
             }
             
         } catch {
@@ -116,9 +154,10 @@ final class ImportStagingViewModel {
         householdId: UUID,
         existingCategories: [Category],
         existingMembers: [HouseholdMember],
+        existingSectors: [Sector],
         currentMemberId: UUID?,
         currentUserId: UUID?,
-        onCategoriesCreated: @escaping ([Category]) -> Void
+        onDataCreated: @escaping () -> Void
     ) async {
         isImporting = true
         error = nil
@@ -134,11 +173,31 @@ final class ImportStagingViewModel {
         var failedCount = 0
         var errors: [String] = []
         var createdCategoryNames: [String] = []
+        var createdSectorNames: [String] = []
+        var createdSectorCategoryLinksCount = 0
+        var createdManagedMemberNames: [String] = []
         
         // Track CSV row -> created transaction ID for reimbursement linking
         var csvRowToTransactionId: [Int: UUID] = [:]
         
-        // First, create any new categories
+        // STEP 1: Create managed members first (so they can be used in transactions)
+        var memberMap = Dictionary(uniqueKeysWithValues: existingMembers.filter { $0.status == .approved }.map { ($0.displayName.lowercased(), $0.id) })
+        
+        for memberName in summary.newManagedMembersToCreate {
+            do {
+                let newMemberId = try await dataService.createManagedMember(
+                    householdId: householdId,
+                    displayName: memberName,
+                    color: generateRandomColor()
+                )
+                memberMap[memberName.lowercased()] = newMemberId
+                createdManagedMemberNames.append(memberName)
+            } catch {
+                errors.append("Failed to create member '\(memberName)': \(error.localizedDescription)")
+            }
+        }
+        
+        // STEP 2: Create any new categories
         var categoryMap = Dictionary(uniqueKeysWithValues: existingCategories.map { ($0.name.lowercased(), $0.id) })
         
         for categoryName in summary.newCategoriesToCreate {
@@ -158,18 +217,53 @@ final class ImportStagingViewModel {
             }
         }
         
-        // Fetch newly created categories to pass back
-        if !createdCategoryNames.isEmpty {
+        // STEP 3: Create any new sectors
+        var sectorMap = Dictionary(uniqueKeysWithValues: existingSectors.map { ($0.name.lowercased(), $0.id) })
+        
+        for sectorName in summary.newSectorsToCreate {
             do {
-                let allCategories = try await dataService.fetchCategories(householdId: householdId)
-                onCategoriesCreated(allCategories)
+                let sortOrder = sectorRows.first { $0.name.lowercased() == sectorName.lowercased() }?.parsedSortOrder ?? (existingSectors.count + createdSectorNames.count)
+                let newSector = try await dataService.createSector(CreateSectorDTO(
+                    householdId: householdId,
+                    name: sectorName,
+                    color: generateRandomColor(),
+                    sortOrder: sortOrder
+                ))
+                sectorMap[sectorName.lowercased()] = newSector.id
+                createdSectorNames.append(sectorName)
             } catch {
-                // Non-fatal, continue with import
+                errors.append("Failed to create sector '\(sectorName)': \(error.localizedDescription)")
             }
         }
         
-        // Build member ID map for looking up splits
-        let memberIdMap = Dictionary(uniqueKeysWithValues: existingMembers.map { ($0.id, $0) })
+        // STEP 4: Create sector-category linkages
+        for link in summary.newSectorCategoryLinks {
+            let sectorLower = link.sectorName.lowercased()
+            let categoryLower = link.categoryName.lowercased()
+            
+            guard let sectorId = sectorMap[sectorLower],
+                  let categoryId = categoryMap[categoryLower] else {
+                continue
+            }
+            
+            do {
+                try await dataService.addCategoryToSector(sectorId: sectorId, categoryId: categoryId)
+                createdSectorCategoryLinksCount += 1
+            } catch {
+                errors.append("Failed to link '\(link.categoryName)' to '\(link.sectorName)': \(error.localizedDescription)")
+            }
+        }
+        
+        // STEP 5: Build updated member ID map for looking up splits
+        // Re-fetch members to include newly created managed members
+        var memberIdMap: [UUID: HouseholdMember] = [:]
+        do {
+            let updatedMembers = try await dataService.fetchMembers(householdId: householdId)
+            memberIdMap = Dictionary(uniqueKeysWithValues: updatedMembers.map { ($0.id, $0) })
+        } catch {
+            // Fall back to existing members
+            memberIdMap = Dictionary(uniqueKeysWithValues: existingMembers.map { ($0.id, $0) })
+        }
         
         // Get splits grouped by transaction row
         let splitsMap = splitsByTransactionRow
@@ -183,7 +277,7 @@ final class ImportStagingViewModel {
             }
         }
         
-        // PASS 1: Import non-reimbursement transactions first
+        // STEP 6: Import non-reimbursement transactions first
         for row in nonReimbursementRows {
             do {
                 // Resolve category ID (might be newly created)
@@ -192,8 +286,24 @@ final class ImportStagingViewModel {
                     categoryId = categoryMap[row.category.lowercased()]
                 }
                 
-                // Resolve paid by member (default to current member if not specified)
-                let paidByMemberId = row.matchedPaidByMemberId ?? currentMemberId
+                // Resolve paid by member (might be newly created managed member, or default to current member)
+                var paidByMemberId = row.matchedPaidByMemberId
+                if paidByMemberId == nil && !row.paidBy.isEmpty {
+                    paidByMemberId = memberMap[row.paidBy.lowercased()]
+                }
+                paidByMemberId = paidByMemberId ?? currentMemberId
+                
+                // Resolve paid to member
+                var paidToMemberId = row.matchedPaidToMemberId
+                if paidToMemberId == nil && !row.paidTo.isEmpty {
+                    paidToMemberId = memberMap[row.paidTo.lowercased()]
+                }
+                
+                // Resolve split member
+                var splitMemberId = row.matchedSplitMemberId
+                if splitMemberId == nil && !row.splitMember.isEmpty {
+                    splitMemberId = memberMap[row.splitMember.lowercased()]
+                }
                 
                 // Get splits for this transaction if available
                 let rowNumber = row.parsedCsvRow ?? row.rowNumber
@@ -210,11 +320,11 @@ final class ImportStagingViewModel {
                     amount: row.parsedAmount ?? 0,
                     transactionType: row.parsedType ?? .expense,
                     paidByMemberId: paidByMemberId,
-                    paidToMemberId: row.matchedPaidToMemberId,
+                    paidToMemberId: paidToMemberId,
                     categoryId: categoryId,
                     splitType: row.parsedSplitType ?? .equal,
                     paidByType: .single,
-                    splitMemberId: row.matchedSplitMemberId,
+                    splitMemberId: splitMemberId,
                     reimbursesTransactionId: nil,
                     excludedFromBudget: row.parsedExcludedFromBudget,
                     notes: row.notes.isEmpty ? nil : row.notes,
@@ -234,7 +344,7 @@ final class ImportStagingViewModel {
             }
         }
         
-        // PASS 2: Import reimbursements with correct references
+        // STEP 7: Import reimbursements with correct references
         for row in reimbursementRows {
             do {
                 // Resolve category ID (might be newly created)
@@ -243,8 +353,24 @@ final class ImportStagingViewModel {
                     categoryId = categoryMap[row.category.lowercased()]
                 }
                 
-                // Resolve paid by member (default to current member if not specified)
-                let paidByMemberId = row.matchedPaidByMemberId ?? currentMemberId
+                // Resolve paid by member
+                var paidByMemberId = row.matchedPaidByMemberId
+                if paidByMemberId == nil && !row.paidBy.isEmpty {
+                    paidByMemberId = memberMap[row.paidBy.lowercased()]
+                }
+                paidByMemberId = paidByMemberId ?? currentMemberId
+                
+                // Resolve paid to member
+                var paidToMemberId = row.matchedPaidToMemberId
+                if paidToMemberId == nil && !row.paidTo.isEmpty {
+                    paidToMemberId = memberMap[row.paidTo.lowercased()]
+                }
+                
+                // Resolve split member
+                var splitMemberId = row.matchedSplitMemberId
+                if splitMemberId == nil && !row.splitMember.isEmpty {
+                    splitMemberId = memberMap[row.splitMember.lowercased()]
+                }
                 
                 // Look up the reimbursed transaction ID
                 var reimbursesTransactionId: UUID? = nil
@@ -270,11 +396,11 @@ final class ImportStagingViewModel {
                     amount: row.parsedAmount ?? 0,
                     transactionType: row.parsedType ?? .reimbursement,
                     paidByMemberId: paidByMemberId,
-                    paidToMemberId: row.matchedPaidToMemberId,
+                    paidToMemberId: paidToMemberId,
                     categoryId: categoryId,
                     splitType: row.parsedSplitType ?? .equal,
                     paidByType: .single,
-                    splitMemberId: row.matchedSplitMemberId,
+                    splitMemberId: splitMemberId,
                     reimbursesTransactionId: reimbursesTransactionId,
                     excludedFromBudget: row.parsedExcludedFromBudget,
                     notes: row.notes.isEmpty ? nil : row.notes,
@@ -294,10 +420,16 @@ final class ImportStagingViewModel {
             }
         }
         
+        // Notify that data was created so caller can refresh
+        onDataCreated()
+        
         importResult = ImportResult(
             successCount: successCount,
             failedCount: failedCount,
             createdCategories: createdCategoryNames,
+            createdSectors: createdSectorNames,
+            createdSectorCategoryLinks: createdSectorCategoryLinksCount,
+            createdManagedMembers: createdManagedMemberNames,
             errors: errors
         )
         
@@ -349,6 +481,8 @@ final class ImportStagingViewModel {
     func reset() {
         importRows = []
         splitRows = []
+        sectorRows = []
+        sectorCategoryRows = []
         summary = ImportSummary()
         isLoading = false
         isImporting = false
@@ -356,6 +490,8 @@ final class ImportStagingViewModel {
         importResult = nil
         filterStatus = .all
         hasSplitData = false
+        hasSectorData = false
+        hasSectorCategoryData = false
     }
     
     // MARK: - Helpers

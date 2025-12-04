@@ -134,6 +134,7 @@ struct SettingsView: View {
             organizationSection
             
             DataSettingsSection(
+                isOwner: authViewModel.isOwner,
                 isExporting: isExporting,
                 onExport: exportHouseholdData,
                 onImport: { showImportView = true },
@@ -822,6 +823,7 @@ struct EmojiPickerSheet: View {
 // MARK: - Data Settings Section
 
 struct DataSettingsSection: View {
+    let isOwner: Bool
     let isExporting: Bool
     let onExport: () -> Void
     let onImport: () -> Void
@@ -836,38 +838,45 @@ struct DataSettingsSection: View {
                 .padding(.horizontal, Theme.Spacing.md)
             
             VStack(spacing: 0) {
-                Button(action: onExport) {
-                    HStack {
-                        SettingsRow(
-                            icon: "square.and.arrow.up",
-                            title: "Export Household Data",
-                            subtitle: "Download all data as Excel file",
-                            showChevron: false
-                        )
-                        
-                        if isExporting {
-                            ProgressView()
-                                .padding(.trailing, Theme.Spacing.md)
+                // Export - Owner only
+                if isOwner {
+                    Button(action: onExport) {
+                        HStack {
+                            SettingsRow(
+                                icon: "square.and.arrow.up",
+                                title: "Export Household Data",
+                                subtitle: "Download all data as Excel file",
+                                showChevron: false
+                            )
+                            
+                            if isExporting {
+                                ProgressView()
+                                    .padding(.trailing, Theme.Spacing.md)
+                            }
                         }
                     }
-                }
-                .disabled(isExporting)
-                
-                Divider()
-                    .background(Theme.Colors.borderLight)
-                
-                Button(action: onImport) {
-                    SettingsRow(
-                        icon: "square.and.arrow.down",
-                        title: "Import Transactions",
-                        subtitle: "Import from Excel file",
-                        showChevron: true
-                    )
+                    .disabled(isExporting)
+                    
+                    Divider()
+                        .background(Theme.Colors.borderLight)
                 }
                 
-                Divider()
-                    .background(Theme.Colors.borderLight)
+                // Import - Owner only
+                if isOwner {
+                    Button(action: onImport) {
+                        SettingsRow(
+                            icon: "square.and.arrow.down",
+                            title: "Import Data",
+                            subtitle: "Import transactions, sectors & members from Excel",
+                            showChevron: true
+                        )
+                    }
+                    
+                    Divider()
+                        .background(Theme.Colors.borderLight)
+                }
                 
+                // Template download - Available to all
                 Button(action: onDownloadTemplate) {
                     SettingsRow(
                         icon: "doc.text",
