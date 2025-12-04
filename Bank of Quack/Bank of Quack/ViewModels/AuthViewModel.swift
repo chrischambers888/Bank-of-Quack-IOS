@@ -405,23 +405,33 @@ final class AuthViewModel {
     
     @MainActor
     func updateMyProfile(displayName: String?, emoji: String?, color: String?) async -> Bool {
-        guard let member = currentMember else { return false }
+        guard let member = currentMember,
+              let household = currentHousehold,
+              let userId = currentUser?.id else { return false }
         
         isLoading = true
         error = nil
         
         do {
-            let updatedMember = try await dataService.updateMemberProfile(
+            // Use RPC function to update profile - bypasses RLS issues
+            _ = try await dataService.updateMyProfile(
                 memberId: member.id,
                 displayName: displayName,
                 avatarEmoji: emoji,
                 color: color
             )
-            currentMember = updatedMember
             
-            // Update in members list too
-            if let index = members.firstIndex(where: { $0.id == updatedMember.id }) {
-                members[index] = updatedMember
+            // Fetch fresh member data to ensure we have the actual updated values from DB
+            if let freshMember = try await dataService.fetchCurrentMember(
+                householdId: household.id,
+                userId: userId
+            ) {
+                currentMember = freshMember
+                
+                // Update in members list too
+                if let index = members.firstIndex(where: { $0.id == freshMember.id }) {
+                    members[index] = freshMember
+                }
             }
             
             isLoading = false

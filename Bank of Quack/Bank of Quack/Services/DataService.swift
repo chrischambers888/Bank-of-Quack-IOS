@@ -145,21 +145,32 @@ actor DataService {
     
     // MARK: - Member Profile
     
+    /// Updates the current user's own profile using RPC function
+    func updateMyProfile(memberId: UUID, displayName: String?, avatarEmoji: String?, color: String?) async throws -> HouseholdMember {
+        let request = UpdateMyProfileRequest(
+            memberId: memberId,
+            displayName: displayName,
+            avatarUrl: avatarEmoji,
+            color: color
+        )
+        
+        return try await supabase.client
+            .rpc(RPCFunction.updateMyProfile.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Updates a member's profile (for managed members or when called by owner)
     func updateMemberProfile(memberId: UUID, displayName: String?, avatarEmoji: String?, color: String?) async throws -> HouseholdMember {
-        var updates: [String: String] = [:]
-        if let displayName = displayName {
-            updates["display_name"] = displayName
-        }
-        if let emoji = avatarEmoji {
-            updates["avatar_url"] = emoji
-        }
-        if let color = color {
-            updates["color"] = color
-        }
+        let dto = UpdateMemberProfileDTO(
+            displayName: displayName,
+            avatarUrl: avatarEmoji,
+            color: color
+        )
         
         return try await supabase
             .from(.householdMembers)
-            .update(updates)
+            .update(dto)
             .eq("id", value: memberId.uuidString)
             .select()
             .single()

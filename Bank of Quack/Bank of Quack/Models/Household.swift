@@ -211,6 +211,62 @@ struct JoinHouseholdRequest: Encodable, Sendable {
     }
 }
 
+// MARK: - Member Profile Update
+
+struct UpdateMemberProfileDTO: Encodable, Sendable {
+    let displayName: String?
+    let avatarUrl: String?
+    let color: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
+        case avatarUrl = "avatar_url"
+        case color
+    }
+    
+    nonisolated init(displayName: String? = nil, avatarUrl: String? = nil, color: String? = nil) {
+        self.displayName = displayName
+        self.avatarUrl = avatarUrl
+        self.color = color
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(displayName, forKey: .displayName)
+        try container.encodeIfPresent(avatarUrl, forKey: .avatarUrl)
+        try container.encodeIfPresent(color, forKey: .color)
+    }
+}
+
+struct UpdateMyProfileRequest: Encodable, Sendable {
+    let pMemberId: UUID
+    let pDisplayName: String?
+    let pAvatarUrl: String?
+    let pColor: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case pMemberId = "p_member_id"
+        case pDisplayName = "p_display_name"
+        case pAvatarUrl = "p_avatar_url"
+        case pColor = "p_color"
+    }
+    
+    nonisolated init(memberId: UUID, displayName: String? = nil, avatarUrl: String? = nil, color: String? = nil) {
+        self.pMemberId = memberId
+        self.pDisplayName = displayName
+        self.pAvatarUrl = avatarUrl
+        self.pColor = color
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pMemberId, forKey: .pMemberId)
+        try container.encodeIfPresent(pDisplayName, forKey: .pDisplayName)
+        try container.encodeIfPresent(pAvatarUrl, forKey: .pAvatarUrl)
+        try container.encodeIfPresent(pColor, forKey: .pColor)
+    }
+}
+
 // MARK: - Member Approval
 
 struct ApproveMemberRequest: Encodable, Sendable {

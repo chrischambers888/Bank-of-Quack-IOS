@@ -94,5 +94,8 @@ enum RPCFunction: String {
     // Member permissions
     case getMemberPermissions = "get_member_permissions"
     case updateMemberPermissions = "update_member_permissions"
+    
+    // Profile
+    case updateMyProfile = "update_my_profile"
 }
 
