@@ -17,6 +17,14 @@ struct SettingsView: View {
     @State private var showLeaveHouseholdConfirm = false
     @State private var showMemberManagement = false
     
+    // Data import/export states
+    @State private var showImportView = false
+    @State private var showExportShare = false
+    @State private var showTemplateShare = false
+    @State private var exportURL: URL?
+    @State private var templateURL: URL?
+    @State private var isExporting = false
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -24,330 +32,7 @@ struct SettingsView: View {
                     .ignoresSafeArea()
                 
                 ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
-                        // Profile Section
-                        VStack(spacing: Theme.Spacing.md) {
-                            // Avatar with emoji or initials
-                            ZStack {
-                                Circle()
-                                    .fill(authViewModel.currentMember?.swiftUIColor ?? Theme.Colors.accent)
-                                    .frame(width: 80, height: 80)
-                                
-                                if let emoji = authViewModel.currentMember?.avatarUrl, !emoji.isEmpty {
-                                    Text(emoji)
-                                        .font(.system(size: 40))
-                                } else {
-                                    Text(authViewModel.currentMember?.initials ?? "?")
-                                        .font(.title)
-                                        .fontWeight(.bold)
-                                        .foregroundStyle(Theme.Colors.textInverse)
-                                }
-                            }
-                            .onTapGesture {
-                                showEditProfile = true
-                            }
-                            
-                            Text(authViewModel.currentMember?.displayName ?? "User")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(Theme.Colors.textPrimary)
-                            
-                            Text(authViewModel.currentMember?.role.displayName ?? "Member")
-                                .font(.caption)
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                                .padding(.horizontal, Theme.Spacing.md)
-                                .padding(.vertical, Theme.Spacing.xs)
-                                .background(Theme.Colors.backgroundCard)
-                                .clipShape(Capsule())
-                            
-                            // Edit Profile Button
-                            Button {
-                                showEditProfile = true
-                            } label: {
-                                Label("Edit Profile", systemImage: "pencil")
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.Colors.accent)
-                            }
-                        }
-                        .padding(.top, Theme.Spacing.lg)
-                        
-                        // Bank Section
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Text("BANK")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                                .padding(.horizontal, Theme.Spacing.md)
-                            
-                            VStack(spacing: 0) {
-                                SettingsRow(
-                                    icon: "house.fill",
-                                    title: authViewModel.currentHousehold?.name ?? "Bank",
-                                    subtitle: nil
-                                )
-                                
-                                Divider()
-                                    .background(Theme.Colors.borderLight)
-                                
-                                HStack(spacing: 0) {
-                                    Button {
-                                        if showInviteCode {
-                                            // Hide the code
-                                            showInviteCode = false
-                                        } else {
-                                            showInviteCodeWarning = true
-                                        }
-                                    } label: {
-                                        HStack(spacing: Theme.Spacing.md) {
-                                            Image(systemName: showInviteCode ? "eye.fill" : "eye.slash.fill")
-                                                .font(.body)
-                                                .foregroundStyle(Theme.Colors.accent)
-                                                .frame(width: 24)
-                                            
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text("Invite Code")
-                                                    .font(.body)
-                                                    .foregroundStyle(Theme.Colors.textPrimary)
-                                                
-                                                if showInviteCode {
-                                                    Text(authViewModel.currentHousehold?.inviteCode ?? "---")
-                                                        .font(.caption)
-                                                        .fontWeight(.medium)
-                                                        .foregroundStyle(Theme.Colors.accent)
-                                                } else {
-                                                    Text("Tap to reveal")
-                                                        .font(.caption)
-                                                        .foregroundStyle(Theme.Colors.textSecondary)
-                                                }
-                                            }
-                                            
-                                            Spacer()
-                                        }
-                                        .padding(Theme.Spacing.md)
-                                        .contentShape(Rectangle())
-                                    }
-                                    
-                                    if showInviteCode {
-                                        Button {
-                                            if let code = authViewModel.currentHousehold?.inviteCode {
-                                                UIPasteboard.general.string = code
-                                            }
-                                        } label: {
-                                            Image(systemName: "doc.on.doc")
-                                                .font(.body)
-                                                .foregroundStyle(Theme.Colors.accent)
-                                                .frame(width: 44, height: 44)
-                                        }
-                                        .padding(.trailing, Theme.Spacing.sm)
-                                    }
-                                }
-                                
-                                Divider()
-                                    .background(Theme.Colors.borderLight)
-                                
-                                Button {
-                                    showSwitchHousehold = true
-                                } label: {
-                                    SettingsRow(
-                                        icon: "arrow.left.arrow.right",
-                                        title: "Switch Bank",
-                                        showChevron: true
-                                    )
-                                }
-                                
-                                // Delete Bank (owner only)
-                                if authViewModel.currentMember?.role == .owner {
-                                    Divider()
-                                        .background(Theme.Colors.borderLight)
-                                    
-                                    Button {
-                                        showDeleteHouseholdConfirm = true
-                                    } label: {
-                                        SettingsRow(
-                                            icon: "trash.fill",
-                                            title: "Delete Bank",
-                                            subtitle: "Permanently delete all data",
-                                            iconColor: Theme.Colors.error
-                                        )
-                                    }
-                                }
-                                
-                                // Leave Bank (non-owners only)
-                                if authViewModel.currentMember?.role != .owner {
-                                    Divider()
-                                        .background(Theme.Colors.borderLight)
-                                    
-                                    Button {
-                                        showLeaveHouseholdConfirm = true
-                                    } label: {
-                                        SettingsRow(
-                                            icon: "rectangle.portrait.and.arrow.right.fill",
-                                            title: "Leave Bank",
-                                            subtitle: "You can rejoin later with an invite code",
-                                            iconColor: Theme.Colors.warning
-                                        )
-                                    }
-                                }
-                            }
-                            .background(Theme.Colors.backgroundCard)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
-                            .padding(.horizontal, Theme.Spacing.md)
-                        }
-                        
-                        // Members Section
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            HStack {
-                                Text("MEMBERS (\(authViewModel.members.count))")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(Theme.Colors.textMuted)
-                                
-                                Spacer()
-                                
-                                Button {
-                                    showMemberManagement = true
-                                } label: {
-                                    Text("Manage")
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundStyle(Theme.Colors.accent)
-                                }
-                            }
-                            .padding(.horizontal, Theme.Spacing.md)
-                            
-                            VStack(spacing: 0) {
-                                ForEach(authViewModel.members) { member in
-                                    MemberRow(member: member)
-                                    
-                                    if member.id != authViewModel.members.last?.id {
-                                        Divider()
-                                            .background(Theme.Colors.borderLight)
-                                    }
-                                }
-                            }
-                            .background(Theme.Colors.backgroundCard)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
-                            .padding(.horizontal, Theme.Spacing.md)
-                        }
-                        
-                        // Pending Requests Section (only for those with permission)
-                        if authViewModel.canApproveJoinRequests,
-                           !authViewModel.pendingMembers.isEmpty {
-                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                                HStack {
-                                    Text("PENDING REQUESTS (\(authViewModel.pendingMembers.count))")
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundStyle(Theme.Colors.warning)
-                                    
-                                    Spacer()
-                                }
-                                .padding(.horizontal, Theme.Spacing.md)
-                                
-                                VStack(spacing: 0) {
-                                    ForEach(authViewModel.pendingMembers) { member in
-                                        PendingMemberRow(member: member)
-                                        
-                                        if member.id != authViewModel.pendingMembers.last?.id {
-                                            Divider()
-                                                .background(Theme.Colors.borderLight)
-                                        }
-                                    }
-                                }
-                                .background(Theme.Colors.backgroundCard)
-                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
-                                .padding(.horizontal, Theme.Spacing.md)
-                            }
-                        }
-                        
-                        // Categories & Sectors Section
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Text("ORGANIZATION")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                                .padding(.horizontal, Theme.Spacing.md)
-                            
-                            VStack(spacing: 0) {
-                                Button {
-                                    showCategories = true
-                                } label: {
-                                    SettingsRow(
-                                        icon: "folder.fill",
-                                        title: "Categories",
-                                        subtitle: "\(authViewModel.categories.count) categories",
-                                        showChevron: true
-                                    )
-                                }
-                                
-                                Divider()
-                                    .background(Theme.Colors.borderLight)
-                                
-                                Button {
-                                    showSectors = true
-                                } label: {
-                                    SettingsRow(
-                                        icon: "rectangle.3.group.fill",
-                                        title: "Sectors",
-                                        subtitle: "\(authViewModel.sectors.count) sectors",
-                                        showChevron: true
-                                    )
-                                }
-                                
-                                Divider()
-                                    .background(Theme.Colors.borderLight)
-                                
-                                Button {
-                                    showThemePalette = true
-                                } label: {
-                                    SettingsRow(
-                                        icon: "paintpalette.fill",
-                                        title: "Color Themes",
-                                        subtitle: AppliedThemeManager.shared.appliedThemeName ?? "No theme applied",
-                                        showChevron: true
-                                    )
-                                }
-                            }
-                            .background(Theme.Colors.backgroundCard)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
-                            .padding(.horizontal, Theme.Spacing.md)
-                        }
-                        
-                        // Privacy Section
-                        PrivacySettingsSection()
-                        
-                        // Account Section
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Text("ACCOUNT")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                                .padding(.horizontal, Theme.Spacing.md)
-                            
-                            VStack(spacing: 0) {
-                                Button {
-                                    showSignOutConfirm = true
-                                } label: {
-                                    SettingsRow(
-                                        icon: "rectangle.portrait.and.arrow.right",
-                                        title: "Sign Out",
-                                        iconColor: Theme.Colors.error
-                                    )
-                                }
-                            }
-                            .background(Theme.Colors.backgroundCard)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
-                            .padding(.horizontal, Theme.Spacing.md)
-                        }
-                        
-                        // Version
-                        Text("Bank of Quack v1.0.0")
-                            .font(.caption)
-                            .foregroundStyle(Theme.Colors.textMuted)
-                            .padding(.top, Theme.Spacing.lg)
-                        
-                        Spacer(minLength: 100)
-                    }
+                    settingsContent
                 }
             }
             .navigationTitle("Settings")
@@ -409,6 +94,19 @@ struct SettingsView: View {
         .sheet(isPresented: $showMemberManagement) {
             MemberManagementView()
         }
+        .sheet(isPresented: $showImportView) {
+            ImportStagingView()
+        }
+        .sheet(isPresented: $showExportShare) {
+            if let url = exportURL {
+                ExportShareSheet(exportDirectory: url)
+            }
+        }
+        .sheet(isPresented: $showTemplateShare) {
+            if let url = templateURL {
+                ShareSheet(items: [url])
+            }
+        }
         .alert("Leave Bank?", isPresented: $showLeaveHouseholdConfirm) {
             Button("Cancel", role: .cancel) { }
             Button("Leave", role: .destructive) {
@@ -421,6 +119,348 @@ struct SettingsView: View {
             }
         } message: {
             Text("Your transaction history will be preserved. You can rejoin anytime with an invite code.")
+        }
+    }
+    
+    // MARK: - Settings Content
+    
+    @ViewBuilder
+    private var settingsContent: some View {
+        VStack(spacing: Theme.Spacing.lg) {
+            profileSection
+            bankSection
+            membersSection
+            pendingRequestsSection
+            organizationSection
+            
+            DataSettingsSection(
+                isExporting: isExporting,
+                onExport: exportHouseholdData,
+                onImport: { showImportView = true },
+                onDownloadTemplate: downloadTemplate
+            )
+            
+            PrivacySettingsSection()
+            accountSection
+            
+            Text("Bank of Quack v1.0.0")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textMuted)
+                .padding(.top, Theme.Spacing.lg)
+            
+            Spacer(minLength: 100)
+        }
+    }
+    
+    // MARK: - Profile Section
+    
+    @ViewBuilder
+    private var profileSection: some View {
+        VStack(spacing: Theme.Spacing.md) {
+            ZStack {
+                Circle()
+                    .fill(authViewModel.currentMember?.swiftUIColor ?? Theme.Colors.accent)
+                    .frame(width: 80, height: 80)
+                
+                if let emoji = authViewModel.currentMember?.avatarUrl, !emoji.isEmpty {
+                    Text(emoji)
+                        .font(.system(size: 40))
+                } else {
+                    Text(authViewModel.currentMember?.initials ?? "?")
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .foregroundStyle(Theme.Colors.textInverse)
+                }
+            }
+            .onTapGesture {
+                showEditProfile = true
+            }
+            
+            Text(authViewModel.currentMember?.displayName ?? "User")
+                .font(.title2)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.Colors.textPrimary)
+            
+            Text(authViewModel.currentMember?.role.displayName ?? "Member")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textSecondary)
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.vertical, Theme.Spacing.xs)
+                .background(Theme.Colors.backgroundCard)
+                .clipShape(Capsule())
+            
+            Button {
+                showEditProfile = true
+            } label: {
+                Label("Edit Profile", systemImage: "pencil")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.accent)
+            }
+        }
+        .padding(.top, Theme.Spacing.lg)
+    }
+    
+    // MARK: - Bank Section
+    
+    @ViewBuilder
+    private var bankSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("BANK")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.Colors.textMuted)
+                .padding(.horizontal, Theme.Spacing.md)
+            
+            VStack(spacing: 0) {
+                SettingsRow(
+                    icon: "house.fill",
+                    title: authViewModel.currentHousehold?.name ?? "Bank",
+                    subtitle: nil
+                )
+                
+                Divider().background(Theme.Colors.borderLight)
+                
+                inviteCodeRow
+                
+                Divider().background(Theme.Colors.borderLight)
+                
+                Button { showSwitchHousehold = true } label: {
+                    SettingsRow(icon: "arrow.left.arrow.right", title: "Switch Bank", showChevron: true)
+                }
+                
+                if authViewModel.currentMember?.role == .owner {
+                    Divider().background(Theme.Colors.borderLight)
+                    Button { showDeleteHouseholdConfirm = true } label: {
+                        SettingsRow(icon: "trash.fill", title: "Delete Bank", subtitle: "Permanently delete all data", iconColor: Theme.Colors.error)
+                    }
+                }
+                
+                if authViewModel.currentMember?.role != .owner {
+                    Divider().background(Theme.Colors.borderLight)
+                    Button { showLeaveHouseholdConfirm = true } label: {
+                        SettingsRow(icon: "rectangle.portrait.and.arrow.right.fill", title: "Leave Bank", subtitle: "You can rejoin later with an invite code", iconColor: Theme.Colors.warning)
+                    }
+                }
+            }
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+            .padding(.horizontal, Theme.Spacing.md)
+        }
+    }
+    
+    @ViewBuilder
+    private var inviteCodeRow: some View {
+        HStack(spacing: 0) {
+            Button {
+                if showInviteCode { showInviteCode = false } else { showInviteCodeWarning = true }
+            } label: {
+                HStack(spacing: Theme.Spacing.md) {
+                    Image(systemName: showInviteCode ? "eye.fill" : "eye.slash.fill")
+                        .font(.body)
+                        .foregroundStyle(Theme.Colors.accent)
+                        .frame(width: 24)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Invite Code").font(.body).foregroundStyle(Theme.Colors.textPrimary)
+                        if showInviteCode {
+                            Text(authViewModel.currentHousehold?.inviteCode ?? "---")
+                                .font(.caption).fontWeight(.medium).foregroundStyle(Theme.Colors.accent)
+                        } else {
+                            Text("Tap to reveal").font(.caption).foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(Theme.Spacing.md)
+                .contentShape(Rectangle())
+            }
+            
+            if showInviteCode {
+                Button {
+                    if let code = authViewModel.currentHousehold?.inviteCode {
+                        UIPasteboard.general.string = code
+                    }
+                } label: {
+                    Image(systemName: "doc.on.doc").font(.body).foregroundStyle(Theme.Colors.accent).frame(width: 44, height: 44)
+                }
+                .padding(.trailing, Theme.Spacing.sm)
+            }
+        }
+    }
+    
+    // MARK: - Members Section
+    
+    @ViewBuilder
+    private var membersSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            HStack {
+                Text("MEMBERS (\(authViewModel.members.count))")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(Theme.Colors.textMuted)
+                Spacer()
+                Button { showMemberManagement = true } label: {
+                    Text("Manage").font(.caption).fontWeight(.semibold).foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            .padding(.horizontal, Theme.Spacing.md)
+            
+            VStack(spacing: 0) {
+                ForEach(authViewModel.members) { member in
+                    MemberRow(member: member)
+                    if member.id != authViewModel.members.last?.id {
+                        Divider().background(Theme.Colors.borderLight)
+                    }
+                }
+            }
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+            .padding(.horizontal, Theme.Spacing.md)
+        }
+    }
+    
+    // MARK: - Pending Requests Section
+    
+    @ViewBuilder
+    private var pendingRequestsSection: some View {
+        if authViewModel.canApproveJoinRequests, !authViewModel.pendingMembers.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                HStack {
+                    Text("PENDING REQUESTS (\(authViewModel.pendingMembers.count))")
+                        .font(.caption).fontWeight(.semibold).foregroundStyle(Theme.Colors.warning)
+                    Spacer()
+                }
+                .padding(.horizontal, Theme.Spacing.md)
+                
+                VStack(spacing: 0) {
+                    ForEach(authViewModel.pendingMembers) { member in
+                        PendingMemberRow(member: member)
+                        if member.id != authViewModel.pendingMembers.last?.id {
+                            Divider().background(Theme.Colors.borderLight)
+                        }
+                    }
+                }
+                .background(Theme.Colors.backgroundCard)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                .padding(.horizontal, Theme.Spacing.md)
+            }
+        }
+    }
+    
+    // MARK: - Organization Section
+    
+    @ViewBuilder
+    private var organizationSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("ORGANIZATION")
+                .font(.caption).fontWeight(.semibold).foregroundStyle(Theme.Colors.textMuted)
+                .padding(.horizontal, Theme.Spacing.md)
+            
+            VStack(spacing: 0) {
+                Button { showCategories = true } label: {
+                    SettingsRow(icon: "folder.fill", title: "Categories", subtitle: "\(authViewModel.categories.count) categories", showChevron: true)
+                }
+                Divider().background(Theme.Colors.borderLight)
+                Button { showSectors = true } label: {
+                    SettingsRow(icon: "rectangle.3.group.fill", title: "Sectors", subtitle: "\(authViewModel.sectors.count) sectors", showChevron: true)
+                }
+                Divider().background(Theme.Colors.borderLight)
+                Button { showThemePalette = true } label: {
+                    SettingsRow(icon: "paintpalette.fill", title: "Color Themes", subtitle: AppliedThemeManager.shared.appliedThemeName ?? "No theme applied", showChevron: true)
+                }
+            }
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+            .padding(.horizontal, Theme.Spacing.md)
+        }
+    }
+    
+    // MARK: - Account Section
+    
+    @ViewBuilder
+    private var accountSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("ACCOUNT")
+                .font(.caption).fontWeight(.semibold).foregroundStyle(Theme.Colors.textMuted)
+                .padding(.horizontal, Theme.Spacing.md)
+            
+            VStack(spacing: 0) {
+                Button { showSignOutConfirm = true } label: {
+                    SettingsRow(icon: "rectangle.portrait.and.arrow.right", title: "Sign Out", iconColor: Theme.Colors.error)
+                }
+            }
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+            .padding(.horizontal, Theme.Spacing.md)
+        }
+    }
+    
+    // MARK: - Data Export/Import Helpers
+    
+    private func exportHouseholdData() {
+        guard let household = authViewModel.currentHousehold else { return }
+        
+        isExporting = true
+        
+        Task {
+            do {
+                let importExportService = ImportExportService()
+                
+                // Build sector-category mappings from the sectorCategories dictionary
+                var sectorCategoryMappings: [(sectorName: String, categoryName: String)] = []
+                let categoryMap = Dictionary(uniqueKeysWithValues: authViewModel.categories.map { ($0.id, $0.name) })
+                
+                for sector in authViewModel.sectors {
+                    // Use authViewModel.sectorCategories instead of sector.categoryIds
+                    if let categoryIds = authViewModel.sectorCategories[sector.id] {
+                        for categoryId in categoryIds {
+                            if let categoryName = categoryMap[categoryId] {
+                                sectorCategoryMappings.append((sectorName: sector.name, categoryName: categoryName))
+                            }
+                        }
+                    }
+                }
+                
+                // Fetch all transactions and splits for export
+                let dataService = DataService()
+                let allTransactions = try await dataService.fetchTransactions(householdId: household.id)
+                let allSplits = try await dataService.fetchAllSplitsForHousehold(householdId: household.id)
+                
+                let url = try importExportService.exportHouseholdData(
+                    transactions: allTransactions,
+                    transactionSplits: allSplits,
+                    categories: authViewModel.categories,
+                    sectors: authViewModel.sectors,
+                    sectorCategories: sectorCategoryMappings,
+                    members: authViewModel.members,
+                    householdName: household.name
+                )
+                
+                await MainActor.run {
+                    exportURL = url
+                    showExportShare = true
+                    isExporting = false
+                }
+            } catch {
+                await MainActor.run {
+                    isExporting = false
+                    // Could show an error alert here
+                }
+            }
+        }
+    }
+    
+    private func downloadTemplate() {
+        let importExportService = ImportExportService()
+        let templateContent = importExportService.generateImportTemplate()
+        
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent("quack_import_template.csv")
+        
+        do {
+            try templateContent.write(to: fileURL, atomically: true, encoding: .utf8)
+            templateURL = fileURL
+            showTemplateShare = true
+        } catch {
+            // Could show an error alert here
         }
     }
 }
@@ -783,6 +823,95 @@ struct EmojiPickerSheet: View {
     }
 }
 
+// MARK: - Data Settings Section
+
+struct DataSettingsSection: View {
+    let isExporting: Bool
+    let onExport: () -> Void
+    let onImport: () -> Void
+    let onDownloadTemplate: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("DATA")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.Colors.textMuted)
+                .padding(.horizontal, Theme.Spacing.md)
+            
+            VStack(spacing: 0) {
+                Button(action: onExport) {
+                    HStack {
+                        SettingsRow(
+                            icon: "square.and.arrow.up",
+                            title: "Export Household Data",
+                            subtitle: "Download all data as CSV files",
+                            showChevron: false
+                        )
+                        
+                        if isExporting {
+                            ProgressView()
+                                .padding(.trailing, Theme.Spacing.md)
+                        }
+                    }
+                }
+                .disabled(isExporting)
+                
+                Divider()
+                    .background(Theme.Colors.borderLight)
+                
+                Button(action: onImport) {
+                    SettingsRow(
+                        icon: "square.and.arrow.down",
+                        title: "Import Transactions",
+                        subtitle: "Import from CSV file",
+                        showChevron: true
+                    )
+                }
+                
+                Divider()
+                    .background(Theme.Colors.borderLight)
+                
+                Button(action: onDownloadTemplate) {
+                    SettingsRow(
+                        icon: "doc.text",
+                        title: "Download Import Template",
+                        subtitle: "Get a CSV template with examples",
+                        showChevron: false
+                    )
+                }
+            }
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+            .padding(.horizontal, Theme.Spacing.md)
+        }
+    }
+}
+
+// MARK: - Export Share Sheet
+
+struct ExportShareSheet: UIViewControllerRepresentable {
+    let exportDirectory: URL
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        // Get all CSV files from the export directory
+        var filesToShare: [URL] = []
+        
+        if let contents = try? FileManager.default.contentsOfDirectory(at: exportDirectory, includingPropertiesForKeys: nil) {
+            filesToShare = contents.filter { $0.pathExtension.lowercased() == "csv" }
+        }
+        
+        // If no individual files found, share the directory itself
+        if filesToShare.isEmpty {
+            filesToShare = [exportDirectory]
+        }
+        
+        let activityVC = UIActivityViewController(activityItems: filesToShare, applicationActivities: nil)
+        return activityVC
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
 
 struct SettingsRow: View {
     let icon: String

@@ -70,7 +70,7 @@ struct DashboardView: View {
                         balancesByMember[payerId] = payerData
                     }
                     if var recipientData = balancesByMember[recipientId] {
-                        recipientData.owed -= transaction.amount // Reduces what they're owed
+                        recipientData.owed += transaction.amount // Increases their share, reducing balance
                         balancesByMember[recipientId] = recipientData
                     }
                 }
