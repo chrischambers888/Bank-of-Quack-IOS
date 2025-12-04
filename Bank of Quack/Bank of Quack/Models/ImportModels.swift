@@ -455,6 +455,48 @@ enum ImportSectorColumn: String, CaseIterable, Sendable {
     }
 }
 
+// MARK: - Import Category Row
+
+struct ImportCategoryRow: Identifiable, Sendable {
+    let id = UUID()
+    
+    // Raw string values from XLSX
+    var name: String
+    var sortOrder: String
+    
+    // Parsed values
+    var parsedSortOrder: Int?
+    var matchedCategoryId: UUID?  // If category already exists
+}
+
+enum ImportCategoryColumn: String, CaseIterable, Sendable {
+    case name = "name"
+    case sortOrder = "sort order"
+    
+    var alternateNames: [String] {
+        switch self {
+        case .name: return ["name", "category name", "category_name", "categoryname"]
+        case .sortOrder: return ["sort order", "sort_order", "sortorder", "order"]
+        }
+    }
+    
+    static func findColumn(in headers: [String]) -> [ImportCategoryColumn: Int] {
+        var mapping: [ImportCategoryColumn: Int] = [:]
+        let normalizedHeaders = headers.map { $0.lowercased().trimmingCharacters(in: .whitespaces) }
+        
+        for column in ImportCategoryColumn.allCases {
+            for (index, header) in normalizedHeaders.enumerated() {
+                if column.alternateNames.contains(header) {
+                    mapping[column] = index
+                    break
+                }
+            }
+        }
+        
+        return mapping
+    }
+}
+
 // MARK: - Import Sector Category Row
 
 struct ImportSectorCategoryRow: Identifiable, Sendable {

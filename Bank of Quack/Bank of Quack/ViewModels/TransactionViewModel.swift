@@ -261,4 +261,39 @@ final class TransactionViewModel {
     func clearError() {
         error = nil
     }
+    
+    // MARK: - Bulk Delete
+    
+    /// Deletes multiple transactions at once
+    @MainActor
+    func bulkDeleteTransactions(ids: Set<UUID>, householdId: UUID) async {
+        guard !ids.isEmpty else { return }
+        
+        do {
+            // Get all transactions to delete, including any linked reimbursements
+            var allIdsToDelete = ids
+            
+            // For each expense being deleted, also delete its linked reimbursements
+            for id in ids {
+                if let transaction = transactions.first(where: { $0.id == id }),
+                   transaction.transactionType == .expense {
+                    let linkedReimbursements = reimbursementsForExpense(id)
+                    for reimbursement in linkedReimbursements {
+                        allIdsToDelete.insert(reimbursement.id)
+                    }
+                }
+            }
+            
+            // Delete all transactions
+            for id in allIdsToDelete {
+                try await dataService.deleteTransaction(id: id)
+                transactions.removeAll { $0.id == id }
+                transactionSplits.removeValue(forKey: id)
+            }
+            
+            calculateTotals()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
 }

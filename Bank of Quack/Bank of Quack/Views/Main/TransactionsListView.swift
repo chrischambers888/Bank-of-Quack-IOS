@@ -8,6 +8,9 @@ struct TransactionsListView: View {
     
     @State private var searchText = ""
     @State private var selectedTransaction: TransactionView?
+    @State private var isSelectionMode = false
+    @State private var selectedTransactionIds: Set<UUID> = []
+    @State private var showBulkDeleteConfirm = false
     
     private var filteredTransactions: [TransactionView] {
         var transactions = transactionViewModel.transactions
@@ -57,6 +60,18 @@ struct TransactionsListView: View {
             }
     }
     
+    /// Count of linked reimbursements for selected expenses
+    private var linkedReimbursementsCount: Int {
+        var count = 0
+        for id in selectedTransactionIds {
+            if let transaction = transactionViewModel.transactions.first(where: { $0.id == id }),
+               transaction.transactionType == .expense {
+                count += transactionViewModel.reimbursementsForExpense(id).count
+            }
+        }
+        return count
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -71,23 +86,46 @@ struct TransactionsListView: View {
                             ForEach(groupedTransactions, id: \.0) { month, transactions in
                                 Section {
                                     ForEach(transactions) { transaction in
-                                        Button {
-                                            selectedTransaction = transaction
-                                        } label: {
-                                            TransactionRow(
-                                                transaction: transaction,
-                                                reimbursedAmount: reimbursementsByExpense[transaction.id] ?? 0
-                                            )
-                                        }
+                                        TransactionRowSelectable(
+                                            transaction: transaction,
+                                            reimbursedAmount: reimbursementsByExpense[transaction.id] ?? 0,
+                                            isSelectionMode: isSelectionMode,
+                                            isSelected: selectedTransactionIds.contains(transaction.id),
+                                            onTap: {
+                                                if isSelectionMode {
+                                                    toggleSelection(transaction.id)
+                                                } else {
+                                                    selectedTransaction = transaction
+                                                }
+                                            }
+                                        )
                                         
                                         if transaction.id != transactions.last?.id {
                                             Divider()
                                                 .background(Theme.Colors.borderLight)
-                                                .padding(.leading, 60)
+                                                .padding(.leading, isSelectionMode ? 100 : 60)
                                         }
                                     }
                                 } header: {
                                     HStack {
+                                        if isSelectionMode {
+                                            // Select all in month button
+                                            Button {
+                                                let monthIds = Set(transactions.map { $0.id })
+                                                let allSelected = monthIds.isSubset(of: selectedTransactionIds)
+                                                if allSelected {
+                                                    selectedTransactionIds.subtract(monthIds)
+                                                } else {
+                                                    selectedTransactionIds.formUnion(monthIds)
+                                                }
+                                            } label: {
+                                                Image(systemName: Set(transactions.map { $0.id }).isSubset(of: selectedTransactionIds) ? "checkmark.circle.fill" : "circle")
+                                                    .font(.system(size: 22))
+                                                    .foregroundStyle(Set(transactions.map { $0.id }).isSubset(of: selectedTransactionIds) ? Theme.Colors.accent : Theme.Colors.textMuted)
+                                            }
+                                            .padding(.trailing, Theme.Spacing.sm)
+                                        }
+                                        
                                         Text(month)
                                             .font(.subheadline)
                                             .fontWeight(.semibold)
@@ -100,7 +138,8 @@ struct TransactionsListView: View {
                                 }
                             }
                             
-                            Spacer(minLength: 100)
+                            // Add space at bottom for the delete button when in selection mode
+                            Spacer(minLength: isSelectionMode && !selectedTransactionIds.isEmpty ? 150 : 100)
                         }
                     }
                     .refreshable {
@@ -109,16 +148,116 @@ struct TransactionsListView: View {
                         }
                     }
                 }
+                
+                // Bulk delete button
+                if isSelectionMode && !selectedTransactionIds.isEmpty {
+                    VStack {
+                        Spacer()
+                        
+                        Button {
+                            showBulkDeleteConfirm = true
+                        } label: {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "trash")
+                                Text("Delete \(selectedTransactionIds.count) Transaction\(selectedTransactionIds.count == 1 ? "" : "s")")
+                                    .fontWeight(.semibold)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Spacing.md)
+                            .background(Theme.Colors.error)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.bottom, Theme.Spacing.lg)
+                    }
+                }
             }
             .navigationTitle("Transactions")
             .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
             .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
             .searchable(text: $searchText, prompt: "Search transactions")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isSelectionMode.toggle()
+                            if !isSelectionMode {
+                                selectedTransactionIds.removeAll()
+                            }
+                        }
+                    } label: {
+                        Text(isSelectionMode ? "Done" : "Select")
+                            .foregroundStyle(Theme.Colors.accent)
+                    }
+                }
+            }
             .sheet(item: $selectedTransaction) { transaction in
                 TransactionDetailView(transaction: transaction)
             }
+            .alert("Delete \(selectedTransactionIds.count) Transaction\(selectedTransactionIds.count == 1 ? "" : "s")?", isPresented: $showBulkDeleteConfirm) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    if let householdId = authViewModel.currentHousehold?.id {
+                        Task {
+                            await transactionViewModel.bulkDeleteTransactions(
+                                ids: selectedTransactionIds,
+                                householdId: householdId
+                            )
+                            withAnimation {
+                                selectedTransactionIds.removeAll()
+                                isSelectionMode = false
+                            }
+                        }
+                    }
+                }
+            } message: {
+                if linkedReimbursementsCount > 0 {
+                    Text("This will also delete \(linkedReimbursementsCount) linked reimbursement\(linkedReimbursementsCount == 1 ? "" : "s"). This action cannot be undone.")
+                } else {
+                    Text("This action cannot be undone.")
+                }
+            }
         }
+    }
+    
+    private func toggleSelection(_ id: UUID) {
+        if selectedTransactionIds.contains(id) {
+            selectedTransactionIds.remove(id)
+        } else {
+            selectedTransactionIds.insert(id)
+        }
+    }
+}
+
+// MARK: - Selectable Transaction Row
+
+struct TransactionRowSelectable: View {
+    let transaction: TransactionView
+    let reimbursedAmount: Decimal
+    let isSelectionMode: Bool
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: Theme.Spacing.md) {
+                if isSelectionMode {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 24))
+                        .foregroundStyle(isSelected ? Theme.Colors.accent : Theme.Colors.textMuted)
+                        .animation(.easeInOut(duration: 0.15), value: isSelected)
+                }
+                
+                TransactionRow(
+                    transaction: transaction,
+                    reimbursedAmount: reimbursedAmount
+                )
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

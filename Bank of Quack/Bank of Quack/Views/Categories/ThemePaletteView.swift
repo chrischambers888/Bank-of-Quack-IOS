@@ -324,6 +324,36 @@ class AppliedThemeManager: ObservableObject {
         guard !colors.isEmpty else { return nil }
         return colors[categoryCount % colors.count]
     }
+    
+    /// Re-applies the current theme's colors to all sectors and categories
+    /// This is useful after importing data to ensure colors match the theme
+    func reapplyCurrentThemeColors(
+        sectors: [Sector],
+        categories: [Category],
+        dataService: DataService,
+        onComplete: @escaping () async -> Void
+    ) async throws {
+        guard let themeId = appliedThemeId else { return }
+        let colors = getOrderedColors(for: themeId)
+        guard !colors.isEmpty else { return }
+        
+        // Update sector colors
+        for (index, sector) in sectors.enumerated() {
+            let colorIndex = index % colors.count
+            let dto = UpdateSectorDTO(color: colors[colorIndex])
+            _ = try await dataService.updateSector(id: sector.id, dto: dto)
+        }
+        
+        // Update category colors
+        for (index, category) in categories.enumerated() {
+            let colorIndex = index % colors.count
+            let dto = UpdateCategoryDTO(color: colors[colorIndex])
+            _ = try await dataService.updateCategory(id: category.id, dto: dto)
+        }
+        
+        // Let caller refresh data
+        await onComplete()
+    }
 }
 
 // MARK: - Quack-Themed Palettes

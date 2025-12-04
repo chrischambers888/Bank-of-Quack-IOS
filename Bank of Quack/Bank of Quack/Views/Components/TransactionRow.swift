@@ -26,7 +26,8 @@ struct TransactionRow: View {
                     .fill(categoryColor.opacity(0.2))
                     .frame(width: 44, height: 44)
                 
-                if let icon = transaction.categoryIcon {
+                // Note: "folder" string is invalid (was a bug) - treat as nil
+                if let icon = transaction.categoryIcon, !icon.isEmpty, icon != "folder" {
                     Text(icon)
                         .font(.title3)
                 } else {

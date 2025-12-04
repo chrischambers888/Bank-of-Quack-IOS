@@ -236,8 +236,8 @@ final class ImportExportService: Sendable {
             ["Description", "Yes", "What the transaction was for"],
             ["Amount", "Yes", "Positive number only, no currency symbols (e.g., 125.50)"],
             ["Type", "No", "expense (default), income, settlement, or reimbursement"],
-            ["Category", "For expenses", "Category name - will be created if it doesn't exist"],
-            ["Paid By", "No", "Member who paid - must match name exactly, or will be created as managed member"],
+            ["Category", "No", "Category name for expenses - will be created if doesn't exist, or left uncategorized if empty"],
+            ["Paid By", "No", "Member who paid - matches existing member (case-insensitive), or created as managed member"],
             ["Paid To", "For settlements", "Member receiving payment (for settlement/reimbursement types)"],
             ["Split Type", "No", "equal (default), member_only, or custom"],
             ["Split Member", "For member_only", "Which member this expense is solely for"],
@@ -268,7 +268,7 @@ final class ImportExportService: Sendable {
             ["Use this sheet for custom split percentages or amounts.", "", ""],
             ["Column", "Required?", "Description"],
             ["Transaction Row", "Yes", "Must match a Row number from Transactions sheet"],
-            ["Member Name", "Yes", "Must match member name exactly"],
+            ["Member Name", "Yes", "Must match member name (case-insensitive)"],
             ["Owed Amount", "Yes", "How much of this expense was FOR this member (their share)"],
             ["Owed %", "Optional", "Percentage of expense for this member"],
             ["Paid Amount", "Yes", "How much this member actually paid toward the expense"],
@@ -294,15 +294,16 @@ final class ImportExportService: Sendable {
             ["🔗 SECTOR CATEGORIES SHEET (Optional)", "", ""],
             ["Link categories to sectors for budget tracking.", "", ""],
             ["Column", "Required?", "Description"],
-            ["Sector Name", "Yes", "Must match a sector name exactly"],
-            ["Category Name", "Yes", "Must match a category name exactly"],
+            ["Sector Name", "Yes", "Must match a sector name (case-insensitive)"],
+            ["Category Name", "Yes", "Must match a category name (case-insensitive)"],
             ["", "", ""],
             
             // Section: Tips
             ["💡 TIPS", "", ""],
-            ["• Member names must match exactly (case-insensitive)", "", ""],
+            ["• All name matching is case-insensitive (members, categories, sectors)", "", ""],
             ["• Unknown members will be created as 'managed' members you control", "", ""],
             ["• Categories are auto-created if they don't exist", "", ""],
+            ["• Expenses without a category will be imported as uncategorized", "", ""],
             ["• Leave optional fields blank if not needed", "", ""],
             ["• Dates can also use MM/DD/YYYY or DD/MM/YYYY format", "", ""],
             ["• For reimbursements, the Reimburses Row links to the original expense", "", ""]
@@ -319,6 +320,7 @@ final class ImportExportService: Sendable {
     struct ParsedXLSXData: Sendable {
         var transactions: [ImportRow] = []
         var splits: [ImportSplitRow] = []
+        var categories: [ImportCategoryRow] = []
         var sectors: [ImportSectorRow] = []
         var sectorCategories: [ImportSectorCategoryRow] = []
     }
@@ -348,6 +350,8 @@ final class ImportExportService: Sendable {
                     result.transactions = parseTransactionsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
                 } else if sheetNameLower == "splits" {
                     result.splits = parseSplitsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
+                } else if sheetNameLower == "categories" {
+                    result.categories = parseCategoriesSheet(worksheet: worksheet, sharedStrings: sharedStrings)
                 } else if sheetNameLower == "sectors" {
                     result.sectors = parseSectorsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
                 } else if sheetNameLower == "sector categories" {
@@ -518,6 +522,47 @@ final class ImportExportService: Sendable {
         }
         
         return rows
+    }
+    
+    /// Parses the Categories sheet
+    private func parseCategoriesSheet(worksheet: Worksheet, sharedStrings: SharedStrings?) -> [ImportCategoryRow] {
+        var rows: [ImportCategoryRow] = []
+        
+        guard let sheetData = worksheet.data else { return rows }
+        let worksheetRows = sheetData.rows
+        
+        guard worksheetRows.count > 1 else { return rows }
+        
+        // Determine the maximum column count from the header row
+        let headerRow = worksheetRows[0]
+        let maxColumn = getMaxColumnIndex(from: headerRow)
+        
+        // Parse header row using proper column positioning
+        let headers = getRowValues(from: headerRow, columnCount: maxColumn, sharedStrings: sharedStrings)
+        let columnMapping = ImportCategoryColumn.findColumn(in: headers)
+        
+        // Parse data rows
+        for row in worksheetRows.dropFirst() {
+            // Use proper column positioning to handle sparse cells
+            let values = getRowValues(from: row, columnCount: maxColumn, sharedStrings: sharedStrings)
+            
+            let categoryRow = ImportCategoryRow(
+                name: getCategoryValue(from: values, column: .name, mapping: columnMapping),
+                sortOrder: getCategoryValue(from: values, column: .sortOrder, mapping: columnMapping)
+            )
+            
+            // Skip empty rows
+            if !categoryRow.name.trimmingCharacters(in: .whitespaces).isEmpty {
+                rows.append(categoryRow)
+            }
+        }
+        
+        return rows
+    }
+    
+    private func getCategoryValue(from values: [String], column: ImportCategoryColumn, mapping: [ImportCategoryColumn: Int]) -> String {
+        guard let index = mapping[column], index < values.count else { return "" }
+        return values[index]
     }
     
     private func getSectorValue(from values: [String], column: ImportSectorColumn, mapping: [ImportSectorColumn: Int]) -> String {
@@ -724,9 +769,10 @@ final class ImportExportService: Sendable {
             let transactionTypeForCategory = row.parsedType ?? .expense
             
             if transactionTypeForCategory == .expense {
-                // Expenses must have categories
+                // Expenses can have categories - if empty, they'll be uncategorized (warning, not error)
                 if categoryStr.isEmpty {
-                    row.validationErrors.append(.missingRequiredField(field: "Category"))
+                    row.validationWarnings.append(.emptyCategory)
+                    // matchedCategoryId remains nil - expense will be uncategorized
                 } else {
                     let categoryLower = categoryStr.lowercased()
                     if categoryNames.contains(categoryLower) {
@@ -871,6 +917,41 @@ final class ImportExportService: Sendable {
         }
         
         return (validatedRows, newSectorsToCreate, existingSectorsUsed)
+    }
+    
+    /// Validates category rows against existing categories
+    func validateCategoryRows(
+        _ rows: [ImportCategoryRow],
+        existingCategories: [Category]
+    ) -> ([ImportCategoryRow], Set<String>, Set<String>) {
+        let categoryNames = Set(existingCategories.map { $0.name.lowercased() })
+        let categoryMap = Dictionary(uniqueKeysWithValues: existingCategories.map { ($0.name.lowercased(), $0.id) })
+        
+        var validatedRows: [ImportCategoryRow] = []
+        var newCategoriesToCreate: Set<String> = []
+        var existingCategoriesUsed: Set<String> = []
+        
+        for var row in rows {
+            let nameStr = row.name.trimmingCharacters(in: .whitespaces)
+            let nameLower = nameStr.lowercased()
+            
+            // Parse sort order
+            if let sortOrder = Int(row.sortOrder.trimmingCharacters(in: .whitespaces)) {
+                row.parsedSortOrder = sortOrder
+            }
+            
+            // Check if category exists
+            if categoryNames.contains(nameLower) {
+                row.matchedCategoryId = categoryMap[nameLower]
+                existingCategoriesUsed.insert(nameStr)
+            } else {
+                newCategoriesToCreate.insert(nameStr)
+            }
+            
+            validatedRows.append(row)
+        }
+        
+        return (validatedRows, newCategoriesToCreate, existingCategoriesUsed)
     }
     
     /// Validates sector-category linkage rows

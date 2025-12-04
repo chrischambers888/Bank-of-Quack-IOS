@@ -447,7 +447,7 @@ struct CategorySelectionRow: View {
                 
                 // Icon & Name
                 HStack(spacing: Theme.Spacing.xs) {
-                    if let icon = category.icon {
+                    if let icon = category.icon, !icon.isEmpty, icon != "folder" {
                         Text(icon)
                             .font(.body)
                             .opacity(isDisabled ? 0.5 : 1.0)

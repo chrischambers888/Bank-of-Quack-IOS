@@ -10,6 +10,11 @@ struct SectorsView: View {
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
     
+    // Multi-select state
+    @State private var isSelectionMode = false
+    @State private var selectedSectorIds: Set<UUID> = []
+    @State private var showBulkDeleteConfirm = false
+    
     private let dataService = DataService()
     
     var body: some View {
@@ -23,6 +28,30 @@ struct SectorsView: View {
                 } else {
                     sectorList
                 }
+                
+                // Bulk delete button
+                if isSelectionMode && !selectedSectorIds.isEmpty {
+                    VStack {
+                        Spacer()
+                        
+                        Button {
+                            showBulkDeleteConfirm = true
+                        } label: {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "trash")
+                                Text("Delete \(selectedSectorIds.count) Sector\(selectedSectorIds.count == 1 ? "" : "s")")
+                                    .fontWeight(.semibold)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Spacing.md)
+                            .background(Theme.Colors.error)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.bottom, Theme.Spacing.lg)
+                    }
+                }
             }
             .navigationTitle("Sectors")
             .navigationBarTitleDisplayMode(.inline)
@@ -30,18 +59,43 @@ struct SectorsView: View {
             .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
-                        dismiss()
+                    Button(isSelectionMode ? "Cancel" : "Done") {
+                        if isSelectionMode {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isSelectionMode = false
+                                selectedSectorIds.removeAll()
+                            }
+                        } else {
+                            dismiss()
+                        }
                     }
                     .foregroundStyle(Theme.Colors.accent)
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showAddSector = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .foregroundStyle(Theme.Colors.accent)
+                    HStack(spacing: Theme.Spacing.md) {
+                        if !authViewModel.sectors.isEmpty {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isSelectionMode.toggle()
+                                    if !isSelectionMode {
+                                        selectedSectorIds.removeAll()
+                                    }
+                                }
+                            } label: {
+                                Text(isSelectionMode ? "Done" : "Select")
+                                    .foregroundStyle(Theme.Colors.accent)
+                            }
+                        }
+                        
+                        if !isSelectionMode {
+                            Button {
+                                showAddSector = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .foregroundStyle(Theme.Colors.accent)
+                            }
+                        }
                     }
                 }
             }
@@ -63,6 +117,14 @@ struct SectorsView: View {
             }
         } message: {
             Text("This will remove the sector and unlink all associated categories.")
+        }
+        .alert("Delete \(selectedSectorIds.count) Sector\(selectedSectorIds.count == 1 ? "" : "s")?", isPresented: $showBulkDeleteConfirm) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                bulkDeleteSectors()
+            }
+        } message: {
+            Text("This will remove the selected sectors and unlink all associated categories.")
         }
     }
     
@@ -97,29 +159,76 @@ struct SectorsView: View {
     private var sectorList: some View {
         ScrollView {
             LazyVStack(spacing: Theme.Spacing.sm) {
-                ForEach(authViewModel.sectors) { sector in
-                    SectorRow(
-                        sector: sector,
-                        linkedCategories: linkedCategories(for: sector),
-                        onEdit: {
-                            sectorToEdit = sector
-                        },
-                        onDelete: {
-                            sectorToDelete = sector
-                            showDeleteConfirm = true
+                // Select all row when in selection mode
+                if isSelectionMode {
+                    Button {
+                        let allIds = Set(authViewModel.sectors.map { $0.id })
+                        if allIds == selectedSectorIds {
+                            selectedSectorIds.removeAll()
+                        } else {
+                            selectedSectorIds = allIds
                         }
-                    )
+                    } label: {
+                        HStack(spacing: Theme.Spacing.md) {
+                            Image(systemName: Set(authViewModel.sectors.map { $0.id }) == selectedSectorIds ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 24))
+                                .foregroundStyle(Set(authViewModel.sectors.map { $0.id }) == selectedSectorIds ? Theme.Colors.accent : Theme.Colors.textMuted)
+                            
+                            Text("Select All")
+                                .font(.body)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Spacer()
+                        }
+                        .padding(Theme.Spacing.md)
+                        .background(Theme.Colors.backgroundCard.opacity(0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                    }
+                }
+                
+                ForEach(authViewModel.sectors) { sector in
+                    if isSelectionMode {
+                        SectorRowSelectable(
+                            sector: sector,
+                            linkedCategories: linkedCategories(for: sector),
+                            isSelected: selectedSectorIds.contains(sector.id),
+                            onTap: {
+                                toggleSelection(sector.id)
+                            }
+                        )
+                    } else {
+                        SectorRow(
+                            sector: sector,
+                            linkedCategories: linkedCategories(for: sector),
+                            onEdit: {
+                                sectorToEdit = sector
+                            },
+                            onDelete: {
+                                sectorToDelete = sector
+                                showDeleteConfirm = true
+                            }
+                        )
+                    }
                 }
             }
             .padding(.horizontal, Theme.Spacing.md)
             .padding(.top, Theme.Spacing.md)
-            .padding(.bottom, 100)
+            .padding(.bottom, isSelectionMode && !selectedSectorIds.isEmpty ? 150 : 100)
         }
     }
     
     private func linkedCategories(for sector: Sector) -> [Category] {
         let categoryIds = authViewModel.sectorCategories[sector.id] ?? []
         return authViewModel.categories.filter { categoryIds.contains($0.id) }
+    }
+    
+    private func toggleSelection(_ id: UUID) {
+        if selectedSectorIds.contains(id) {
+            selectedSectorIds.remove(id)
+        } else {
+            selectedSectorIds.insert(id)
+        }
     }
     
     private func deleteSector(_ sector: Sector) {
@@ -140,6 +249,99 @@ struct SectorsView: View {
                 sectorToDelete = nil
             }
         }
+    }
+    
+    private func bulkDeleteSectors() {
+        guard !selectedSectorIds.isEmpty else { return }
+        isDeleting = true
+        
+        Task {
+            do {
+                for id in selectedSectorIds {
+                    try await dataService.deleteSector(id: id)
+                }
+                await authViewModel.refreshSectors()
+            } catch {
+                await MainActor.run {
+                    authViewModel.error = error.localizedDescription
+                }
+            }
+            
+            await MainActor.run {
+                isDeleting = false
+                selectedSectorIds.removeAll()
+                isSelectionMode = false
+            }
+        }
+    }
+}
+
+// MARK: - Selectable Sector Row
+
+struct SectorRowSelectable: View {
+    let sector: Sector
+    let linkedCategories: [Category]
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: Theme.Spacing.md) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 24))
+                    .foregroundStyle(isSelected ? Theme.Colors.accent : Theme.Colors.textMuted)
+                    .animation(.easeInOut(duration: 0.15), value: isSelected)
+                
+                VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                    HStack(spacing: Theme.Spacing.md) {
+                        // Color bar
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(sector.swiftUIColor)
+                            .frame(width: 4, height: 40)
+                        
+                        // Name
+                        Text(sector.name)
+                            .font(.headline)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                        
+                        Spacer()
+                    }
+                    
+                    // Linked categories
+                    if !linkedCategories.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: Theme.Spacing.xs) {
+                                ForEach(linkedCategories) { category in
+                                    HStack(spacing: 4) {
+                                        if let icon = category.icon, !icon.isEmpty, icon != "folder" {
+                                            Text(icon)
+                                                .font(.caption)
+                                        }
+                                        Text(category.name)
+                                            .font(.caption)
+                                    }
+                                    .padding(.horizontal, Theme.Spacing.sm)
+                                    .padding(.vertical, 4)
+                                    .background(category.swiftUIColor.opacity(0.3))
+                                    .clipShape(Capsule())
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                }
+                            }
+                        }
+                    } else {
+                        Text("No categories linked")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                            .italic()
+                    }
+                }
+            }
+            .padding(Theme.Spacing.md)
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -190,7 +392,7 @@ struct SectorRow: View {
                     HStack(spacing: Theme.Spacing.xs) {
                         ForEach(linkedCategories) { category in
                             HStack(spacing: 4) {
-                                if let icon = category.icon {
+                                if let icon = category.icon, !icon.isEmpty, icon != "folder" {
                                     Text(icon)
                                         .font(.caption)
                                 }

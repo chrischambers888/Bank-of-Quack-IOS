@@ -9,6 +9,7 @@ final class ImportStagingViewModel {
     
     var importRows: [ImportRow] = []
     var splitRows: [ImportSplitRow] = []  // Split data from xlsx Splits sheet
+    var categoryRows: [ImportCategoryRow] = []  // Category data from xlsx Categories sheet
     var sectorRows: [ImportSectorRow] = []  // Sector data from xlsx Sectors sheet
     var sectorCategoryRows: [ImportSectorCategoryRow] = []  // Sector-Category linkages
     var summary = ImportSummary()
@@ -17,6 +18,7 @@ final class ImportStagingViewModel {
     var error: String?
     var importResult: ImportResult?
     var hasSplitData = false  // Whether splits were found in the xlsx file
+    var hasCategoryData = false  // Whether categories were found in the xlsx file
     var hasSectorData = false  // Whether sectors were found in the xlsx file
     var hasSectorCategoryData = false  // Whether sector-category links were found
     
@@ -68,6 +70,7 @@ final class ImportStagingViewModel {
         error = nil
         importResult = nil
         hasSplitData = false
+        hasCategoryData = false
         hasSectorData = false
         hasSectorCategoryData = false
         
@@ -108,6 +111,27 @@ final class ImportStagingViewModel {
                 // Count how many transactions have splits
                 let transactionRowsWithSplits = Set(splitRows.compactMap { $0.parsedTransactionRow })
                 summary.transactionsWithSplits = transactionRowsWithSplits.count
+            }
+            
+            // Validate category rows if present (from Categories sheet)
+            // This merges with categories already identified from Transactions sheet
+            if !parsedData.categories.isEmpty {
+                let (validatedCategoryRows, newCategoriesFromSheet, existingCategoriesFromSheet) = importExportService.validateCategoryRows(
+                    parsedData.categories,
+                    existingCategories: existingCategories
+                )
+                
+                categoryRows = validatedCategoryRows
+                hasCategoryData = true
+                
+                // Merge categories from Categories sheet with those from Transactions
+                // The Categories sheet may contain categories not referenced in any transaction
+                for categoryName in newCategoriesFromSheet {
+                    summary.newCategoriesToCreate.insert(categoryName)
+                }
+                for categoryName in existingCategoriesFromSheet {
+                    summary.existingCategoriesUsed.insert(categoryName)
+                }
             }
             
             // Validate sector rows if present
@@ -205,7 +229,7 @@ final class ImportStagingViewModel {
                 let newCategory = try await dataService.createCategory(CreateCategoryDTO(
                     householdId: householdId,
                     name: categoryName,
-                    icon: "folder",
+                    icon: nil,
                     color: generateRandomColor(),
                     imageUrl: nil,
                     sortOrder: existingCategories.count + createdCategoryNames.count
@@ -423,6 +447,27 @@ final class ImportStagingViewModel {
         // Notify that data was created so caller can refresh
         onDataCreated()
         
+        // Re-apply current theme colors to ensure imported sectors/categories match the theme
+        // This needs to happen after onDataCreated refreshes the data
+        if !createdSectorNames.isEmpty || !createdCategoryNames.isEmpty {
+            do {
+                // Fetch updated sectors and categories
+                let updatedSectors = try await dataService.fetchSectors(householdId: householdId)
+                let updatedCategories = try await dataService.fetchCategories(householdId: householdId)
+                
+                // Re-apply theme colors
+                try await AppliedThemeManager.shared.reapplyCurrentThemeColors(
+                    sectors: updatedSectors,
+                    categories: updatedCategories,
+                    dataService: dataService,
+                    onComplete: onDataCreated
+                )
+            } catch {
+                // Non-fatal - just log the error, don't fail the import
+                print("Failed to re-apply theme colors: \(error)")
+            }
+        }
+        
         importResult = ImportResult(
             successCount: successCount,
             failedCount: failedCount,
@@ -481,6 +526,7 @@ final class ImportStagingViewModel {
     func reset() {
         importRows = []
         splitRows = []
+        categoryRows = []
         sectorRows = []
         sectorCategoryRows = []
         summary = ImportSummary()
@@ -490,6 +536,7 @@ final class ImportStagingViewModel {
         importResult = nil
         filterStatus = .all
         hasSplitData = false
+        hasCategoryData = false
         hasSectorData = false
         hasSectorCategoryData = false
     }

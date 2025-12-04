@@ -1509,7 +1509,7 @@ struct CategoryPickerButton: View {
         Button(action: action) {
             HStack {
                 if let category = selectedCategory {
-                    if let icon = category.icon {
+                    if let icon = category.icon, !icon.isEmpty, icon != "folder" {
                         Text(icon)
                     }
                     Text(category.name)
@@ -1674,7 +1674,7 @@ struct CategoryPickerRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: Theme.Spacing.sm) {
-                if let icon = category.icon {
+                if let icon = category.icon, !icon.isEmpty, icon != "folder" {
                     Text(icon)
                         .font(.title3)
                 }

@@ -127,3 +127,4 @@ LEFT JOIN linked_reimbursement_paid lrp ON lrp.member_id = hm.id AND lrp.househo
 LEFT JOIN linked_reimbursement_owed lro ON lro.member_id = hm.id AND lro.household_id = hm.household_id
 WHERE hm.status IN ('approved', 'inactive');
 
+

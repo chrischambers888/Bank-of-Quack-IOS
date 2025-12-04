@@ -10,6 +10,11 @@ struct CategoriesView: View {
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
     
+    // Multi-select state
+    @State private var isSelectionMode = false
+    @State private var selectedCategoryIds: Set<UUID> = []
+    @State private var showBulkDeleteConfirm = false
+    
     private let dataService = DataService()
     
     var body: some View {
@@ -23,6 +28,30 @@ struct CategoriesView: View {
                 } else {
                     categoryList
                 }
+                
+                // Bulk delete button
+                if isSelectionMode && !selectedCategoryIds.isEmpty {
+                    VStack {
+                        Spacer()
+                        
+                        Button {
+                            showBulkDeleteConfirm = true
+                        } label: {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "trash")
+                                Text("Delete \(selectedCategoryIds.count) Categor\(selectedCategoryIds.count == 1 ? "y" : "ies")")
+                                    .fontWeight(.semibold)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Spacing.md)
+                            .background(Theme.Colors.error)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.bottom, Theme.Spacing.lg)
+                    }
+                }
             }
             .navigationTitle("Categories")
             .navigationBarTitleDisplayMode(.inline)
@@ -30,18 +59,43 @@ struct CategoriesView: View {
             .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
-                        dismiss()
+                    Button(isSelectionMode ? "Cancel" : "Done") {
+                        if isSelectionMode {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isSelectionMode = false
+                                selectedCategoryIds.removeAll()
+                            }
+                        } else {
+                            dismiss()
+                        }
                     }
                     .foregroundStyle(Theme.Colors.accent)
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showAddCategory = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .foregroundStyle(Theme.Colors.accent)
+                    HStack(spacing: Theme.Spacing.md) {
+                        if !authViewModel.categories.isEmpty {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isSelectionMode.toggle()
+                                    if !isSelectionMode {
+                                        selectedCategoryIds.removeAll()
+                                    }
+                                }
+                            } label: {
+                                Text(isSelectionMode ? "Done" : "Select")
+                                    .foregroundStyle(Theme.Colors.accent)
+                            }
+                        }
+                        
+                        if !isSelectionMode {
+                            Button {
+                                showAddCategory = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .foregroundStyle(Theme.Colors.accent)
+                            }
+                        }
                     }
                 }
             }
@@ -63,6 +117,14 @@ struct CategoriesView: View {
             }
         } message: {
             Text("This will remove the category. Transactions using this category will have their category set to none.")
+        }
+        .alert("Delete \(selectedCategoryIds.count) Categor\(selectedCategoryIds.count == 1 ? "y" : "ies")?", isPresented: $showBulkDeleteConfirm) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                bulkDeleteCategories()
+            }
+        } message: {
+            Text("This will remove the selected categories. Transactions using these categories will have their category set to none.")
         }
     }
     
@@ -97,22 +159,68 @@ struct CategoriesView: View {
     private var categoryList: some View {
         ScrollView {
             LazyVStack(spacing: Theme.Spacing.sm) {
-                ForEach(authViewModel.categories) { category in
-                    CategoryRow(
-                        category: category,
-                        onEdit: {
-                            categoryToEdit = category
-                        },
-                        onDelete: {
-                            categoryToDelete = category
-                            showDeleteConfirm = true
+                // Select all row when in selection mode
+                if isSelectionMode {
+                    Button {
+                        let allIds = Set(authViewModel.categories.map { $0.id })
+                        if allIds == selectedCategoryIds {
+                            selectedCategoryIds.removeAll()
+                        } else {
+                            selectedCategoryIds = allIds
                         }
-                    )
+                    } label: {
+                        HStack(spacing: Theme.Spacing.md) {
+                            Image(systemName: Set(authViewModel.categories.map { $0.id }) == selectedCategoryIds ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 24))
+                                .foregroundStyle(Set(authViewModel.categories.map { $0.id }) == selectedCategoryIds ? Theme.Colors.accent : Theme.Colors.textMuted)
+                            
+                            Text("Select All")
+                                .font(.body)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Spacer()
+                        }
+                        .padding(Theme.Spacing.md)
+                        .background(Theme.Colors.backgroundCard.opacity(0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                    }
+                }
+                
+                ForEach(authViewModel.categories) { category in
+                    if isSelectionMode {
+                        CategoryRowSelectable(
+                            category: category,
+                            isSelected: selectedCategoryIds.contains(category.id),
+                            onTap: {
+                                toggleSelection(category.id)
+                            }
+                        )
+                    } else {
+                        CategoryRow(
+                            category: category,
+                            onEdit: {
+                                categoryToEdit = category
+                            },
+                            onDelete: {
+                                categoryToDelete = category
+                                showDeleteConfirm = true
+                            }
+                        )
+                    }
                 }
             }
             .padding(.horizontal, Theme.Spacing.md)
             .padding(.top, Theme.Spacing.md)
-            .padding(.bottom, 100)
+            .padding(.bottom, isSelectionMode && !selectedCategoryIds.isEmpty ? 150 : 100)
+        }
+    }
+    
+    private func toggleSelection(_ id: UUID) {
+        if selectedCategoryIds.contains(id) {
+            selectedCategoryIds.remove(id)
+        } else {
+            selectedCategoryIds.insert(id)
         }
     }
     
@@ -135,6 +243,71 @@ struct CategoriesView: View {
             }
         }
     }
+    
+    private func bulkDeleteCategories() {
+        guard !selectedCategoryIds.isEmpty else { return }
+        isDeleting = true
+        
+        Task {
+            do {
+                for id in selectedCategoryIds {
+                    try await dataService.deleteCategory(id: id)
+                }
+                await authViewModel.refreshCategories()
+            } catch {
+                await MainActor.run {
+                    authViewModel.error = error.localizedDescription
+                }
+            }
+            
+            await MainActor.run {
+                isDeleting = false
+                selectedCategoryIds.removeAll()
+                isSelectionMode = false
+            }
+        }
+    }
+}
+
+// MARK: - Selectable Category Row
+
+struct CategoryRowSelectable: View {
+    let category: Category
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: Theme.Spacing.md) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 24))
+                    .foregroundStyle(isSelected ? Theme.Colors.accent : Theme.Colors.textMuted)
+                    .animation(.easeInOut(duration: 0.15), value: isSelected)
+                
+                // Icon or default folder icon
+                if let icon = category.icon, !icon.isEmpty, icon != "folder" {
+                    Text(icon)
+                        .font(.title2)
+                } else {
+                    Image(systemName: "folder.fill")
+                        .font(.title3)
+                        .foregroundStyle(Theme.Colors.accent)
+                }
+                
+                Text(category.name)
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Spacer()
+            }
+            .padding(Theme.Spacing.md)
+            .background(Theme.Colors.backgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 struct CategoryRow: View {
@@ -145,7 +318,8 @@ struct CategoryRow: View {
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
             // Icon or default folder icon
-            if let icon = category.icon {
+            // Note: "folder" string is invalid (was a bug) - treat as nil
+            if let icon = category.icon, !icon.isEmpty, icon != "folder" {
                 Text(icon)
                     .font(.title2)
             } else {
