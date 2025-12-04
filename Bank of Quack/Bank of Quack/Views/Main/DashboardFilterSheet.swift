@@ -201,7 +201,7 @@ struct DashboardFilterSheet: View {
                 
                 Spacer()
                 
-                if !sectors.isEmpty || !categories.isEmpty {
+                if hasCategorySelection {
                     Button(allCategoriesSelected ? "Clear All" : "Select All") {
                         withAnimation {
                             if allCategoriesSelected {
