@@ -176,36 +176,139 @@ final class ImportExportService: Sendable {
     func generateImportTemplate() throws -> URL {
         let xlsxWriter = XlsxWriter()
         
-        // Transactions sheet with examples
-        let transactionHeaders = ["Date", "Description", "Amount", "Type", "Category", "Paid By", "Split Type", "Notes"]
+        // Transactions sheet with examples - matches the full export format
+        let transactionHeaders = ExportTransaction.headers
         let transactionRows: [[String]] = [
-            ["2024-01-15", "Grocery shopping at Costco", "125.50", "expense", "Groceries", "John", "equal", "Weekly grocery run"],
-            ["2024-01-16", "Monthly salary", "5000.00", "income", "Salary", "Jane", "equal", ""],
-            ["2024-01-17", "Coffee with friends", "15.75", "expense", "Dining Out", "John", "member_only", "Just for me"],
-            ["2024-01-18", "Utility bill split", "200.00", "expense", "Utilities", "Jane", "equal", "Electric bill"],
-            ["2024-01-20", "John pays Jane back", "50.00", "settlement", "", "John", "equal", "For groceries"]
+            // Row, Date, Description, Amount, Type, Category, Paid By, Paid To, Split Type, Split Member, Reimburses Row, Excluded From Budget, Notes
+            ["1", "2024-01-15", "Grocery shopping at Costco", "125.50", "expense", "Groceries", "John", "", "equal", "", "", "No", "Weekly grocery run"],
+            ["2", "2024-01-16", "Monthly salary deposit", "5000.00", "income", "", "Jane", "", "equal", "", "", "No", "January paycheck"],
+            ["3", "2024-01-17", "Coffee with friends", "15.75", "expense", "Dining Out", "John", "", "member_only", "John", "", "No", "Just for John - not split"],
+            ["4", "2024-01-18", "Electric bill", "200.00", "expense", "Utilities", "Jane", "", "equal", "", "", "No", "January utilities"],
+            ["5", "2024-01-19", "Work expense (reimbursable)", "45.00", "expense", "Work", "John", "", "member_only", "John", "", "Yes", "Will be reimbursed by employer"],
+            ["6", "2024-01-20", "John settles up with Jane", "50.00", "settlement", "", "John", "Jane", "equal", "", "", "No", "Paying Jane back for groceries"],
+            ["7", "2024-01-21", "Expense reimbursement from work", "45.00", "reimbursement", "", "John", "", "member_only", "John", "5", "No", "Employer reimbursed work expense"]
         ]
         
         xlsxWriter.addSheet(name: "Transactions", headers: transactionHeaders, rows: transactionRows)
         
-        // Instructions sheet
-        let instructionHeaders = ["Field", "Description", "Required", "Example"]
+        // Splits sheet with examples for custom splits
+        let splitHeaders = ExportTransactionSplit.headers
+        let splitRows: [[String]] = [
+            // Transaction Row, Member Name, Owed Amount, Owed %, Paid Amount, Paid %
+            ["1", "John", "62.75", "50", "125.50", "100"],
+            ["1", "Jane", "62.75", "50", "0", "0"]
+        ]
+        xlsxWriter.addSheet(name: "Splits", headers: splitHeaders, rows: splitRows)
+        
+        // Sectors sheet with examples
+        let sectorHeaders = ExportSector.headers
+        let sectorRows: [[String]] = [
+            ["Essential", "1"],
+            ["Lifestyle", "2"],
+            ["Savings", "3"]
+        ]
+        xlsxWriter.addSheet(name: "Sectors", headers: sectorHeaders, rows: sectorRows)
+        
+        // Sector Categories sheet with examples
+        let sectorCategoryHeaders = ExportSectorCategory.headers
+        let sectorCategoryRows: [[String]] = [
+            ["Essential", "Groceries"],
+            ["Essential", "Utilities"],
+            ["Lifestyle", "Dining Out"],
+            ["Lifestyle", "Entertainment"]
+        ]
+        xlsxWriter.addSheet(name: "Sector Categories", headers: sectorCategoryHeaders, rows: sectorCategoryRows)
+        
+        // Comprehensive Instructions sheet
         let instructionRows: [[String]] = [
-            ["Date", "Use YYYY-MM-DD format", "Yes", "2024-01-15"],
-            ["Description", "What the transaction was for", "Yes", "Grocery shopping"],
-            ["Amount", "Use numbers only (no currency symbols)", "Yes", "125.50"],
-            ["Type", "expense, income, settlement, or reimbursement", "No (default: expense)", "expense"],
-            ["Category", "Will be created if it doesn't exist", "No", "Groceries"],
-            ["Paid By", "Must match an existing member name exactly", "No (default: you)", "John"],
-            ["Split Type", "equal, member_only, or custom", "No (default: equal)", "equal"],
-            ["Notes", "Optional additional notes", "No", "Weekly shopping"]
+            // Section: Getting Started
+            ["📋 GETTING STARTED", "", ""],
+            ["This template helps you import transactions into Bank of Quack.", "", ""],
+            ["Delete the example rows and add your own data.", "", ""],
+            ["Only the Transactions sheet is required - other sheets are optional.", "", ""],
+            ["", "", ""],
+            
+            // Section: Transactions Sheet
+            ["📝 TRANSACTIONS SHEET", "", ""],
+            ["Column", "Required?", "Description"],
+            ["Row", "Optional", "Row number for reference (used by Splits and Reimburses Row)"],
+            ["Date", "Yes", "Use YYYY-MM-DD format (e.g., 2024-01-15)"],
+            ["Description", "Yes", "What the transaction was for"],
+            ["Amount", "Yes", "Positive number only, no currency symbols (e.g., 125.50)"],
+            ["Type", "No", "expense (default), income, settlement, or reimbursement"],
+            ["Category", "For expenses", "Category name - will be created if it doesn't exist"],
+            ["Paid By", "No", "Member who paid - must match name exactly, or will be created as managed member"],
+            ["Paid To", "For settlements", "Member receiving payment (for settlement/reimbursement types)"],
+            ["Split Type", "No", "equal (default), member_only, or custom"],
+            ["Split Member", "For member_only", "Which member this expense is solely for"],
+            ["Reimburses Row", "For reimbursements", "Row number of the expense being reimbursed"],
+            ["Excluded From Budget", "No", "Yes or No - exclude from budget calculations"],
+            ["Notes", "No", "Additional notes about the transaction"],
+            ["", "", ""],
+            
+            // Section: Transaction Types
+            ["💰 TRANSACTION TYPES", "", ""],
+            ["Type", "When to Use", "Example"],
+            ["expense", "Regular spending", "Groceries, bills, entertainment"],
+            ["income", "Money received", "Salary, gifts, refunds"],
+            ["settlement", "Paying someone back", "John pays Jane $50 he owes her"],
+            ["reimbursement", "Getting refunded for an expense", "Employer reimburses work purchase"],
+            ["", "", ""],
+            
+            // Section: Split Types
+            ["⚖️ SPLIT TYPES", "", ""],
+            ["Type", "When to Use", "Example"],
+            ["equal", "Split evenly among all members", "Shared groceries, utilities"],
+            ["member_only", "Only one person is responsible", "Personal coffee, work expense"],
+            ["custom", "Custom split amounts", "Use the Splits sheet for details"],
+            ["", "", ""],
+            
+            // Section: Splits Sheet
+            ["📊 SPLITS SHEET (Optional)", "", ""],
+            ["Use this sheet for custom split percentages or amounts.", "", ""],
+            ["Column", "Required?", "Description"],
+            ["Transaction Row", "Yes", "Must match a Row number from Transactions sheet"],
+            ["Member Name", "Yes", "Must match member name exactly"],
+            ["Owed Amount", "Yes", "How much of this expense was FOR this member (their share)"],
+            ["Owed %", "Optional", "Percentage of expense for this member"],
+            ["Paid Amount", "Yes", "How much this member actually paid toward the expense"],
+            ["Paid %", "Optional", "Percentage this member paid"],
+            ["", "", ""],
+            
+            // Splits Example
+            ["Example: $125.50 grocery trip paid by John, split 50/50:", "", ""],
+            ["• John: Owed Amount = 62.75 (his share), Paid Amount = 125.50 (he paid)", "", ""],
+            ["• Jane: Owed Amount = 62.75 (her share), Paid Amount = 0 (she didn't pay)", "", ""],
+            ["Result: Jane owes John $62.75 for her share of the groceries.", "", ""],
+            ["", "", ""],
+            
+            // Section: Sectors Sheet
+            ["🏷️ SECTORS SHEET (Optional)", "", ""],
+            ["Create budget sectors to group categories.", "", ""],
+            ["Column", "Required?", "Description"],
+            ["Name", "Yes", "Sector name (e.g., Essential, Lifestyle)"],
+            ["Sort Order", "Optional", "Number for display ordering"],
+            ["", "", ""],
+            
+            // Section: Sector Categories Sheet
+            ["🔗 SECTOR CATEGORIES SHEET (Optional)", "", ""],
+            ["Link categories to sectors for budget tracking.", "", ""],
+            ["Column", "Required?", "Description"],
+            ["Sector Name", "Yes", "Must match a sector name exactly"],
+            ["Category Name", "Yes", "Must match a category name exactly"],
+            ["", "", ""],
+            
+            // Section: Tips
+            ["💡 TIPS", "", ""],
+            ["• Member names must match exactly (case-insensitive)", "", ""],
+            ["• Unknown members will be created as 'managed' members you control", "", ""],
+            ["• Categories are auto-created if they don't exist", "", ""],
+            ["• Leave optional fields blank if not needed", "", ""],
+            ["• Dates can also use MM/DD/YYYY or DD/MM/YYYY format", "", ""],
+            ["• For reimbursements, the Reimburses Row links to the original expense", "", ""]
         ]
         
-        xlsxWriter.addSheet(name: "Instructions", headers: instructionHeaders, rows: instructionRows)
-        
-        // Empty Splits sheet template
-        let splitHeaders = ExportTransactionSplit.headers
-        xlsxWriter.addSheet(name: "Splits", headers: splitHeaders, rows: [])
+        xlsxWriter.addSheet(name: "Instructions", headers: ["Topic", "Details", "Notes"], rows: instructionRows)
         
         return try xlsxWriter.write(to: "quack_import_template.xlsx")
     }

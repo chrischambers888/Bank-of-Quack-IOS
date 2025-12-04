@@ -140,3 +140,11 @@ extension Optional where Wrapped == String {
     }
 }
 
+// MARK: - URL Extensions
+
+extension URL: @retroactive Identifiable {
+    public var id: String {
+        self.absoluteString
+    }
+}
+

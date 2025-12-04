@@ -20,7 +20,6 @@ struct SettingsView: View {
     // Data import/export states
     @State private var showImportView = false
     @State private var showExportShare = false
-    @State private var showTemplateShare = false
     @State private var exportURL: URL?
     @State private var templateURL: URL?
     @State private var isExporting = false
@@ -102,10 +101,8 @@ struct SettingsView: View {
                 ExportShareSheet(exportDirectory: url)
             }
         }
-        .sheet(isPresented: $showTemplateShare) {
-            if let url = templateURL {
-                ShareSheet(items: [url])
-            }
+        .sheet(item: $templateURL) { url in
+            ShareSheet(items: [url])
         }
         .alert("Leave Bank?", isPresented: $showLeaveHouseholdConfirm) {
             Button("Cancel", role: .cancel) { }
@@ -455,9 +452,9 @@ struct SettingsView: View {
         do {
             let fileURL = try importExportService.generateImportTemplate()
             templateURL = fileURL
-            showTemplateShare = true
         } catch {
             // Could show an error alert here
+            print("Failed to generate template: \(error)")
         }
     }
 }
