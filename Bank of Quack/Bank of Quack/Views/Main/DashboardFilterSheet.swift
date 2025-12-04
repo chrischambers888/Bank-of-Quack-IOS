@@ -180,6 +180,18 @@ struct DashboardFilterSheet: View {
     
     // MARK: - Category Filter Section
     
+    /// Check if all sectors and categories are selected
+    private var allCategoriesSelected: Bool {
+        let allSectorIds = Set(sectors.map { $0.id })
+        let allCategoryIds = Set(categories.map { $0.id })
+        return filter.selectedSectorIds == allSectorIds && filter.selectedCategoryIds == allCategoryIds
+    }
+    
+    /// Check if any sectors or categories are selected
+    private var hasCategorySelection: Bool {
+        !filter.selectedSectorIds.isEmpty || !filter.selectedCategoryIds.isEmpty
+    }
+    
     private var categoryFilterSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             HStack {
@@ -189,11 +201,18 @@ struct DashboardFilterSheet: View {
                 
                 Spacer()
                 
-                if !filter.selectedSectorIds.isEmpty || !filter.selectedCategoryIds.isEmpty {
-                    Button("Clear") {
+                if !sectors.isEmpty || !categories.isEmpty {
+                    Button(allCategoriesSelected ? "Clear All" : "Select All") {
                         withAnimation {
-                            filter.selectedSectorIds.removeAll()
-                            filter.selectedCategoryIds.removeAll()
+                            if allCategoriesSelected {
+                                // Clear all selections
+                                filter.selectedSectorIds.removeAll()
+                                filter.selectedCategoryIds.removeAll()
+                            } else {
+                                // Select all sectors and categories
+                                filter.selectedSectorIds = Set(sectors.map { $0.id })
+                                filter.selectedCategoryIds = Set(categories.map { $0.id })
+                            }
                         }
                     }
                     .font(.caption)
