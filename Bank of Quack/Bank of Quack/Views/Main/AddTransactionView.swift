@@ -2374,7 +2374,7 @@ struct SettlementBalancesSheet: View {
                     .padding(.top, Theme.Spacing.md)
                 }
             }
-            .navigationTitle("Household Balances")
+            .navigationTitle("Bank Balances")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
             .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)

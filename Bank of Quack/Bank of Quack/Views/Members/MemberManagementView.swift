@@ -60,7 +60,7 @@ struct MemberManagementView: View {
                                         .foregroundStyle(Theme.Colors.textPrimary)
                                 }
                                 
-                                Text("You have been offered ownership of this household. As owner, you'll have full control over members, settings, and can delete the household.")
+                                Text("You have been offered ownership of this bank. As owner, you'll have full control over members, settings, and can delete the bank.")
                                     .font(.caption)
                                     .foregroundStyle(Theme.Colors.textSecondary)
                                 
@@ -422,7 +422,7 @@ struct MemberManagementView: View {
                 }
             }
         } message: {
-            Text("You will become the owner of this household with full control over members, settings, and the ability to delete the household. The current owner will become a regular member.")
+            Text("You will become the owner of this bank with full control over members, settings, and the ability to delete the bank. The current owner will become a regular member.")
         }
         .alert("Decline Ownership?", isPresented: $showDeclineTransferConfirm) {
             Button("Cancel", role: .cancel) { }
@@ -1040,7 +1040,7 @@ struct ManagedMemberDetailView: View {
                             VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
                                 InfoRow(number: "1", text: "Share the claim code with \(member.displayName)")
                                 InfoRow(number: "2", text: "They download the app and create an account")
-                                InfoRow(number: "3", text: "Instead of joining with household code, they use the claim code")
+                                InfoRow(number: "3", text: "Instead of joining with bank code, they use the claim code")
                                 InfoRow(number: "4", text: "They get access to all their transaction history")
                             }
                         }
@@ -1105,7 +1105,7 @@ struct ManagedMemberDetailView: View {
     }
     
     private func shareText(for code: String) -> String {
-        "Join our household in Bank of Quack!\n\nUse this claim code when signing up: \(code)\n\nThis will link your account to your existing transaction history."
+        "Join our bank in Bank of Quack!\n\nUse this claim code when signing up: \(code)\n\nThis will link your account to your existing transaction history."
     }
     
     private func regenerateCode() {
@@ -1533,7 +1533,7 @@ struct TransferOwnershipView: View {
                                     .foregroundStyle(Theme.Colors.textPrimary)
                             }
                             
-                            Text("After the transfer is accepted, you will become a regular member. The new owner will have full control over the household, including the ability to remove you.")
+                            Text("After the transfer is accepted, you will become a regular member. The new owner will have full control over the bank, including the ability to remove you.")
                                 .font(.caption)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                         }
@@ -1684,7 +1684,7 @@ struct InactiveMemberDetailView: View {
                                     .foregroundStyle(Theme.Colors.textPrimary)
                             }
                             
-                            Text("This member was removed from the household but their transaction history has been preserved. You can reactivate them to restore their active membership.")
+                            Text("This member was removed from the bank but their transaction history has been preserved. You can reactivate them to restore their active membership.")
                                 .font(.caption)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                         }
@@ -1736,7 +1736,7 @@ struct InactiveMemberDetailView: View {
                     reactivateMember()
                 }
             } message: {
-                Text("\(member.displayName) will be restored as an active member of the household.")
+                Text("\(member.displayName) will be restored as an active member of the bank.")
             }
             .onAppear {
                 authViewModel.clearError()
@@ -1891,7 +1891,7 @@ struct RegularMemberDetailView: View {
                                     .foregroundStyle(Theme.Colors.textPrimary)
                             }
                             
-                            Text("If \(member.displayName) has any transaction history, they will be marked as inactive to preserve the records. Otherwise, they will be completely removed from the household. They can rejoin later with an invite code.")
+                            Text("If \(member.displayName) has any transaction history, they will be marked as inactive to preserve the records. Otherwise, they will be completely removed from the bank. They can rejoin later with an invite code.")
                                 .font(.caption)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                         }
@@ -2073,7 +2073,7 @@ struct MemberPermissionsView: View {
                                 
                                 PermissionToggleRow(
                                     title: "Remove Members",
-                                    subtitle: "Can remove non-owner members from household",
+                                    subtitle: "Can remove non-owner members from bank",
                                     icon: "person.badge.minus",
                                     isOn: $canRemoveMembers
                                 )

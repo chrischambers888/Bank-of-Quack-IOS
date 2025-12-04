@@ -23,6 +23,10 @@ final class AuthViewModel {
     var sectorCategories: [UUID: [UUID]] = [:] // sectorId -> [categoryId]
     var error: String?
     
+    // MARK: - Local Storage Keys
+    
+    private static let lastHouseholdIdKey = "lastSelectedHouseholdId"
+    
     // MARK: - Permission Helpers
     
     /// Returns true if the current user is the household owner
@@ -144,6 +148,9 @@ final class AuthViewModel {
             sectorCategories = [:]
             isAuthenticated = false
             
+            // Clear saved household preference on logout
+            clearLastHouseholdId()
+            
             // Reset theme to Quack Classic when logging out
             AppliedThemeManager.shared.clearForLogout()
             ThemeProvider.shared.resetToDefault()
@@ -181,9 +188,23 @@ final class AuthViewModel {
             // Fetch pending household requests
             pendingHouseholds = try await dataService.fetchMyPendingHouseholds()
             
-            // Set current household (first one if available)
-            if currentHousehold == nil, let first = households.first {
-                await selectHousehold(first)
+            // Set current household - try last selected first, fall back to first available
+            if currentHousehold == nil, !households.isEmpty {
+                var householdToSelect: Household?
+                
+                // Try to restore last selected household
+                if let lastHouseholdId = getLastHouseholdId() {
+                    householdToSelect = households.first { $0.id == lastHouseholdId }
+                }
+                
+                // Fall back to first household if last one not found (e.g., user was removed)
+                if householdToSelect == nil {
+                    householdToSelect = households.first
+                }
+                
+                if let household = householdToSelect {
+                    await selectHousehold(household)
+                }
             }
         } catch {
             self.error = error.localizedDescription
@@ -195,6 +216,9 @@ final class AuthViewModel {
         guard let userId = currentUser?.id else { return }
         
         currentHousehold = household
+        
+        // Save this household as the last selected for next app launch
+        saveLastHouseholdId(household.id)
         
         // Load this household's theme
         loadHouseholdTheme(for: household.id)
@@ -875,6 +899,26 @@ final class AuthViewModel {
     
     func clearError() {
         error = nil
+    }
+    
+    // MARK: - Last Household Persistence
+    
+    /// Saves the last selected household ID to UserDefaults
+    private func saveLastHouseholdId(_ householdId: UUID) {
+        UserDefaults.standard.set(householdId.uuidString, forKey: Self.lastHouseholdIdKey)
+    }
+    
+    /// Gets the last selected household ID from UserDefaults
+    private func getLastHouseholdId() -> UUID? {
+        guard let idString = UserDefaults.standard.string(forKey: Self.lastHouseholdIdKey) else {
+            return nil
+        }
+        return UUID(uuidString: idString)
+    }
+    
+    /// Clears the last selected household ID (used when logging out)
+    private func clearLastHouseholdId() {
+        UserDefaults.standard.removeObject(forKey: Self.lastHouseholdIdKey)
     }
 }
 

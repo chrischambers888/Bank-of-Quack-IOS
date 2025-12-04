@@ -32,7 +32,7 @@ struct HouseholdSetupView: View {
                         .fontWeight(.bold)
                         .foregroundStyle(Theme.Colors.textPrimary)
                     
-                    Text("Create or join a household to get started")
+                    Text("Create or join a bank to get started")
                         .font(.subheadline)
                         .foregroundStyle(Theme.Colors.textSecondary)
                         .multilineTextAlignment(.center)
@@ -85,7 +85,7 @@ struct HouseholdSetupView: View {
                     Button {
                         showCreateSheet = true
                     } label: {
-                        Label("Create Household", systemImage: "plus.circle.fill")
+                        Label("Create Bank", systemImage: "plus.circle.fill")
                     }
                     .buttonStyle(PrimaryButtonStyle())
                     

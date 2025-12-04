@@ -881,7 +881,7 @@ struct DashboardView: View {
                 
                 // Show filter summary or household name
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(authViewModel.currentHousehold?.name ?? "Your Household")
+                    Text(authViewModel.currentHousehold?.name ?? "Your Bank")
                         .font(.subheadline)
                         .foregroundStyle(Theme.Colors.textSecondary)
                     
@@ -1022,7 +1022,7 @@ struct MemberBalanceCardWithInfo: View {
                 }
             }
             
-            Text("Between \(memberCount) household members")
+            Text("Between \(memberCount) bank members")
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textMuted)
         }
@@ -1091,9 +1091,9 @@ struct BalanceDetailsSheet: View {
                 
                 ScrollView {
                     VStack(spacing: Theme.Spacing.lg) {
-                        // Household Balances Section
+                        // Bank Balances Section
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Label("Household Balances", systemImage: "person.2.fill")
+                            Label("Bank Balances", systemImage: "person.2.fill")
                                 .font(.headline)
                                 .foregroundStyle(Theme.Colors.textPrimary)
                             

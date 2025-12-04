@@ -26,7 +26,7 @@ struct CreateHouseholdView: View {
                                 .font(.system(size: 60))
                                 .foregroundStyle(Theme.Colors.accent)
                             
-                            Text("Create Household")
+                            Text("Create Bank")
                                 .font(.title)
                                 .fontWeight(.bold)
                                 .foregroundStyle(Theme.Colors.textPrimary)
@@ -40,9 +40,9 @@ struct CreateHouseholdView: View {
                         
                         // Form
                         VStack(spacing: Theme.Spacing.md) {
-                            // Household Name
+                            // Bank Name
                             VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                                Text("Household Name")
+                                Text("Bank Name")
                                     .font(.caption)
                                     .foregroundStyle(Theme.Colors.textSecondary)
                                 
@@ -91,7 +91,7 @@ struct CreateHouseholdView: View {
                                 ProgressView()
                                     .tint(Theme.Colors.textInverse)
                             } else {
-                                Text("Create Household")
+                                Text("Create Bank")
                             }
                         }
                         .buttonStyle(PrimaryButtonStyle())

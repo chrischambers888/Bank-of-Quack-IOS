@@ -71,9 +71,9 @@ struct SettingsView: View {
                         }
                         .padding(.top, Theme.Spacing.lg)
                         
-                        // Household Section
+                        // Bank Section
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            Text("HOUSEHOLD")
+                            Text("BANK")
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(Theme.Colors.textMuted)
@@ -82,7 +82,7 @@ struct SettingsView: View {
                             VStack(spacing: 0) {
                                 SettingsRow(
                                     icon: "house.fill",
-                                    title: authViewModel.currentHousehold?.name ?? "Household",
+                                    title: authViewModel.currentHousehold?.name ?? "Bank",
                                     subtitle: nil
                                 )
                                 
@@ -150,12 +150,12 @@ struct SettingsView: View {
                                 } label: {
                                     SettingsRow(
                                         icon: "arrow.left.arrow.right",
-                                        title: "Switch Household",
+                                        title: "Switch Bank",
                                         showChevron: true
                                     )
                                 }
                                 
-                                // Delete Household (owner only)
+                                // Delete Bank (owner only)
                                 if authViewModel.currentMember?.role == .owner {
                                     Divider()
                                         .background(Theme.Colors.borderLight)
@@ -165,14 +165,14 @@ struct SettingsView: View {
                                     } label: {
                                         SettingsRow(
                                             icon: "trash.fill",
-                                            title: "Delete Household",
+                                            title: "Delete Bank",
                                             subtitle: "Permanently delete all data",
                                             iconColor: Theme.Colors.error
                                         )
                                     }
                                 }
                                 
-                                // Leave Household (non-owners only)
+                                // Leave Bank (non-owners only)
                                 if authViewModel.currentMember?.role != .owner {
                                     Divider()
                                         .background(Theme.Colors.borderLight)
@@ -182,7 +182,7 @@ struct SettingsView: View {
                                     } label: {
                                         SettingsRow(
                                             icon: "rectangle.portrait.and.arrow.right.fill",
-                                            title: "Leave Household",
+                                            title: "Leave Bank",
                                             subtitle: "You can rejoin later with an invite code",
                                             iconColor: Theme.Colors.warning
                                         )
@@ -386,7 +386,7 @@ struct SettingsView: View {
                 showInviteCode = true
             }
         } message: {
-            Text("Anyone with this code can join your household and see all transaction history, including amounts and who made each purchase. Only share with people you trust.")
+            Text("Anyone with this code can join your bank and see all transaction history, including amounts and who made each purchase. Only share with people you trust.")
         }
         .sheet(isPresented: $showDeleteHouseholdConfirm) {
             DeleteHouseholdConfirmView(
@@ -409,7 +409,7 @@ struct SettingsView: View {
         .sheet(isPresented: $showMemberManagement) {
             MemberManagementView()
         }
-        .alert("Leave Household?", isPresented: $showLeaveHouseholdConfirm) {
+        .alert("Leave Bank?", isPresented: $showLeaveHouseholdConfirm) {
             Button("Cancel", role: .cancel) { }
             Button("Leave", role: .destructive) {
                 Task {
@@ -949,7 +949,7 @@ struct PendingMemberRow: View {
                 }
             }
         } message: {
-            Text("\(member.displayName) will be able to see all household transaction history and add their own transactions.")
+            Text("\(member.displayName) will be able to see all bank transaction history and add their own transactions.")
         }
         .alert("Decline Request?", isPresented: $showRejectConfirm) {
             Button("Cancel", role: .cancel) { }
@@ -959,7 +959,7 @@ struct PendingMemberRow: View {
                 }
             }
         } message: {
-            Text("\(member.displayName) will not be added to the household. They can request again with a new invite code.")
+            Text("\(member.displayName) will not be added to the bank. They can request again with a new invite code.")
         }
     }
 }
@@ -985,10 +985,10 @@ struct SwitchHouseholdView: View {
                     // Household List
                     ScrollView {
                         VStack(spacing: Theme.Spacing.md) {
-                            // Pending Requests (awaiting approval)
+                            // Bank Invitations (awaiting approval)
                             if !authViewModel.pendingHouseholds.isEmpty {
                                 VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                                    Text("AWAITING APPROVAL")
+                                    Text("BANK INVITATIONS")
                                         .font(.caption)
                                         .fontWeight(.semibold)
                                         .foregroundStyle(Theme.Colors.warning)
@@ -1097,14 +1097,14 @@ struct SwitchHouseholdView: View {
                         Button {
                             showCreateSheet = true
                         } label: {
-                            Label("Create New Household", systemImage: "plus.circle")
+                            Label("Create New Bank", systemImage: "plus.circle")
                         }
                         .buttonStyle(PrimaryButtonStyle())
                         
                         Button {
                             showJoinSheet = true
                         } label: {
-                            Label("Join Another Household", systemImage: "person.badge.plus")
+                            Label("Join Another Bank", systemImage: "person.badge.plus")
                         }
                         .buttonStyle(SecondaryButtonStyle())
                         
@@ -1121,7 +1121,7 @@ struct SwitchHouseholdView: View {
                     .padding(.bottom, Theme.Spacing.lg)
                 }
             }
-            .navigationTitle("Switch Household")
+            .navigationTitle("Switch Bank")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -1153,7 +1153,7 @@ struct SwitchHouseholdView: View {
                 pendingRevealHouseholdId = nil
             }
         } message: {
-            Text("Anyone with this code can join your household and see all transaction history, including amounts and who made each purchase. Only share with people you trust.")
+            Text("Anyone with this code can join your bank and see all transaction history, including amounts and who made each purchase. Only share with people you trust.")
         }
     }
 }
@@ -1187,7 +1187,7 @@ struct DeleteHouseholdConfirmView: View {
                         
                         // Title
                         VStack(spacing: Theme.Spacing.sm) {
-                            Text("Delete Household?")
+                            Text("Delete Bank?")
                                 .font(.title)
                                 .fontWeight(.bold)
                                 .foregroundStyle(Theme.Colors.textPrimary)
@@ -1225,7 +1225,7 @@ struct DeleteHouseholdConfirmView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                             
-                            TextField("Household name", text: $confirmationText)
+                            TextField("Bank name", text: $confirmationText)
                                 .inputFieldStyle()
                         }
                         .padding(.horizontal, Theme.Spacing.lg)

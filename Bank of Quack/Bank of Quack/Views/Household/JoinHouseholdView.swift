@@ -47,7 +47,7 @@ struct JoinHouseholdView: View {
                                 .fontWeight(.bold)
                                 .foregroundStyle(Theme.Colors.textPrimary)
                             
-                            Text("You've rejoined the household. All your previous transaction history is still here.")
+                            Text("You've rejoined the bank. All your previous transaction history is still here.")
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                                 .multilineTextAlignment(.center)
@@ -80,7 +80,7 @@ struct JoinHouseholdView: View {
                                 .fontWeight(.bold)
                                 .foregroundStyle(Theme.Colors.textPrimary)
                             
-                            Text("Your request to join has been sent. A household member will need to approve your request before you can access the household.")
+                            Text("Your request to join has been sent. A bank member will need to approve your request before you can access the bank.")
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                                 .multilineTextAlignment(.center)
@@ -119,7 +119,7 @@ struct JoinHouseholdView: View {
                                     .font(.system(size: 60))
                                     .foregroundStyle(Theme.Colors.accent)
                                 
-                                Text(inactiveMemberInfo != nil ? "Welcome Back!" : "Join Household")
+                                Text(inactiveMemberInfo != nil ? "Welcome Back!" : "Join Bank")
                                     .font(.title)
                                     .fontWeight(.bold)
                                     .foregroundStyle(Theme.Colors.textPrimary)
@@ -211,7 +211,7 @@ struct JoinHouseholdView: View {
                                     Image(systemName: "info.circle.fill")
                                         .foregroundStyle(Theme.Colors.accent)
                                     
-                                    Text("A household member will need to approve your request before you can join.")
+                                    Text("A bank member will need to approve your request before you can join.")
                                         .font(.caption)
                                         .foregroundStyle(Theme.Colors.textSecondary)
                                 }
@@ -245,7 +245,7 @@ struct JoinHouseholdView: View {
                                     ProgressView()
                                         .tint(Theme.Colors.textInverse)
                                 } else {
-                                    Text(inactiveMemberInfo != nil ? "Rejoin Household" : "Request to Join")
+                                    Text(inactiveMemberInfo != nil ? "Rejoin Bank" : "Request to Join")
                                 }
                             }
                             .buttonStyle(PrimaryButtonStyle())

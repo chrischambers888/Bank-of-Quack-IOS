@@ -95,7 +95,7 @@ struct ClaimAccountView: View {
                                 }
                                 
                                 VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                                    ClaimInfoRow(icon: "arrow.right.circle.fill", text: "You'll join the household immediately")
+                                    ClaimInfoRow(icon: "arrow.right.circle.fill", text: "You'll join the bank immediately")
                                     ClaimInfoRow(icon: "clock.arrow.circlepath", text: "Your transaction history will be preserved")
                                     ClaimInfoRow(icon: "person.fill.checkmark", text: "You'll take over from the managed account")
                                 }
@@ -126,7 +126,7 @@ struct ClaimAccountView: View {
                                     .font(.caption)
                                     .foregroundStyle(Theme.Colors.textMuted)
                                 
-                                Text("Ask the person managing your account for the code, or join normally with a household invite code instead.")
+                                Text("Ask the person managing your account for the code, or join normally with a bank invite code instead.")
                                     .font(.caption)
                                     .foregroundStyle(Theme.Colors.textSecondary)
                                     .multilineTextAlignment(.center)
@@ -225,7 +225,7 @@ struct ClaimSuccessView: View {
                     .fontWeight(.bold)
                     .foregroundStyle(Theme.Colors.textPrimary)
                 
-                Text("You now have access to your household and all your transaction history.")
+                Text("You now have access to your bank and all your transaction history.")
                     .font(.subheadline)
                     .foregroundStyle(Theme.Colors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -237,7 +237,7 @@ struct ClaimSuccessView: View {
                     .font(.title2)
                     .foregroundStyle(Theme.Colors.accent)
                 
-                Text("Welcome to the household!")
+                Text("Welcome to the bank!")
                     .font(.caption)
                     .foregroundStyle(Theme.Colors.textMuted)
             }
