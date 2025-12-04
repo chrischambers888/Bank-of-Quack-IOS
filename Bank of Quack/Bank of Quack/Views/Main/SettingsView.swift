@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var showSwitchHousehold = false
     @State private var showCategories = false
     @State private var showSectors = false
+    @State private var showTemplates = false
     @State private var showThemePalette = false
     @State private var showSignOutConfirm = false
     @State private var showInviteCodeWarning = false
@@ -50,6 +51,9 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showSectors) {
             SectorsView()
+        }
+        .sheet(isPresented: $showTemplates) {
+            TemplatesView()
         }
         .sheet(isPresented: $showThemePalette) {
             ThemePaletteView()
@@ -359,6 +363,10 @@ struct SettingsView: View {
                 Divider().background(Theme.Colors.borderLight)
                 Button { showSectors = true } label: {
                     SettingsRow(icon: "rectangle.3.group.fill", title: "Sectors", subtitle: "\(authViewModel.sectors.count) sectors", showChevron: true)
+                }
+                Divider().background(Theme.Colors.borderLight)
+                Button { showTemplates = true } label: {
+                    SettingsRow(icon: "doc.on.doc.fill", title: "Templates", subtitle: "\(authViewModel.templates.count) templates", showChevron: true)
                 }
                 Divider().background(Theme.Colors.borderLight)
                 Button { showThemePalette = true } label: {

@@ -735,5 +735,47 @@ actor DataService {
         
         return (expenses, income)
     }
+    
+    // MARK: - Transaction Templates
+    
+    func fetchTemplates(householdId: UUID) async throws -> [TransactionTemplate] {
+        try await supabase
+            .from(.transactionTemplates)
+            .select()
+            .eq("household_id", value: householdId.uuidString)
+            .order("sort_order")
+            .order("name")
+            .execute()
+            .value
+    }
+    
+    func createTemplate(_ dto: CreateTemplateDTO) async throws -> TransactionTemplate {
+        try await supabase
+            .from(.transactionTemplates)
+            .insert(dto)
+            .select()
+            .single()
+            .execute()
+            .value
+    }
+    
+    func updateTemplate(id: UUID, dto: UpdateTemplateDTO) async throws -> TransactionTemplate {
+        try await supabase
+            .from(.transactionTemplates)
+            .update(dto)
+            .eq("id", value: id.uuidString)
+            .select()
+            .single()
+            .execute()
+            .value
+    }
+    
+    func deleteTemplate(id: UUID) async throws {
+        try await supabase
+            .from(.transactionTemplates)
+            .delete()
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
 }
 

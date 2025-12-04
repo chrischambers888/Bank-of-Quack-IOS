@@ -21,6 +21,7 @@ final class AuthViewModel {
     var categories: [Category] = []
     var sectors: [Sector] = []
     var sectorCategories: [UUID: [UUID]] = [:] // sectorId -> [categoryId]
+    var templates: [TransactionTemplate] = []
     var error: String?
     
     // MARK: - Local Storage Keys
@@ -146,6 +147,7 @@ final class AuthViewModel {
             categories = []
             sectors = []
             sectorCategories = [:]
+            templates = []
             isAuthenticated = false
             
             // Clear saved household preference on logout
@@ -259,6 +261,9 @@ final class AuthViewModel {
             
             // Fetch sector-category relationships
             await loadSectorCategories()
+            
+            // Fetch transaction templates
+            templates = try await dataService.fetchTemplates(householdId: household.id)
         } catch {
             self.error = error.localizedDescription
         }
@@ -308,6 +313,17 @@ final class AuthViewModel {
         do {
             sectors = try await dataService.fetchSectors(householdId: householdId)
             await loadSectorCategories()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+    
+    @MainActor
+    func refreshTemplates() async {
+        guard let householdId = currentHousehold?.id else { return }
+        
+        do {
+            templates = try await dataService.fetchTemplates(householdId: householdId)
         } catch {
             self.error = error.localizedDescription
         }
@@ -472,6 +488,7 @@ final class AuthViewModel {
                 categories = []
                 sectors = []
                 sectorCategories = [:]
+                templates = []
             }
             
             // Reload user data
@@ -504,6 +521,7 @@ final class AuthViewModel {
             categories = []
             sectors = []
             sectorCategories = [:]
+            templates = []
             
             // Reload user data (will select another household if available)
             await loadUserData()

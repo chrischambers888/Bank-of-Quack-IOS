@@ -40,6 +40,7 @@ struct AddTransactionView: View {
     @State private var showNotes = false
     @State private var showExpensePicker = false
     @State private var showBalancesSheet = false
+    @State private var showTemplatePicker = false
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
@@ -152,16 +153,32 @@ struct AddTransactionView: View {
                 
                 ScrollView {
                     VStack(spacing: Theme.Spacing.lg) {
-                        // Transaction Type Selector
+                        // Transaction Type Selector + Template Button
                         HStack(spacing: Theme.Spacing.sm) {
-                            ForEach(availableTransactionTypes, id: \.self) { type in
-                                TransactionTypeButton(
-                                    type: type,
-                                    isSelected: transactionType == type
-                                ) {
-                                    withAnimation {
-                                        switchTransactionType(to: type)
+                            HStack(spacing: Theme.Spacing.sm) {
+                                ForEach(availableTransactionTypes, id: \.self) { type in
+                                    TransactionTypeButton(
+                                        type: type,
+                                        isSelected: transactionType == type
+                                    ) {
+                                        withAnimation {
+                                            switchTransactionType(to: type)
+                                        }
                                     }
+                                }
+                            }
+                            
+                            // Template Button
+                            if !authViewModel.templates.isEmpty {
+                                Button {
+                                    showTemplatePicker = true
+                                } label: {
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundStyle(Theme.Colors.accent)
+                                        .frame(width: 44, height: 44)
+                                        .background(Theme.Colors.accent.opacity(0.15))
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
                                 }
                             }
                         }
@@ -452,6 +469,45 @@ struct AddTransactionView: View {
                 selectedId: $categoryId
             )
             .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showTemplatePicker) {
+            TemplatePickerSheet(
+                templates: authViewModel.templates,
+                categories: authViewModel.categories,
+                onSelect: { template in
+                    applyTemplate(template)
+                }
+            )
+            .presentationDetents([.medium, .large])
+        }
+    }
+    
+    // MARK: - Template Application
+    
+    private func applyTemplate(_ template: TransactionTemplate) {
+        withAnimation {
+            transactionType = template.transactionType
+            amount = "\(template.amount)"
+            description = template.description
+            categoryId = template.categoryId
+            splitType = template.splitType
+            paidByType = template.paidByType
+            splitMemberId = template.splitMemberId
+            excludedFromBudget = template.excludedFromBudget
+            notes = template.notes ?? ""
+            showNotes = !notes.isEmpty
+            
+            // Set paid by member if specified in template, otherwise use current member
+            if let templatePaidBy = template.paidByMemberId {
+                paidByMemberId = templatePaidBy
+            } else if activeMembers.count == 1 {
+                paidByMemberId = authViewModel.currentMember?.id
+            }
+            
+            // Re-initialize member splits if needed
+            if splitType == .custom || paidByType == .custom {
+                initializeMemberSplits()
+            }
         }
     }
     
