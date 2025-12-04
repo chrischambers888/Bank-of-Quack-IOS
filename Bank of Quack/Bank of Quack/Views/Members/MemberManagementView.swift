@@ -15,7 +15,7 @@ struct MemberManagementView: View {
     @State private var showDeclineTransferConfirm = false
     
     private var isOwner: Bool {
-        authViewModel.currentMember?.role == .owner
+        authViewModel.isOwner
     }
     
     private var regularMembers: [HouseholdMember] {
@@ -112,8 +112,8 @@ struct MemberManagementView: View {
                                 
                                 VStack(spacing: 0) {
                                     ForEach(regularMembers) { member in
-                                        // Owners can tap non-owner members to manage them
-                                        if isOwner && member.role != .owner {
+                                        // Users with management permissions can tap non-owner members
+                                        if (isOwner || authViewModel.canRemoveMembers) && member.role != .owner {
                                             Button {
                                                 selectedRegularMember = member
                                             } label: {
@@ -152,7 +152,7 @@ struct MemberManagementView: View {
                                 
                                 Spacer()
                                 
-                                if authViewModel.currentMember?.role.canApproveMembers == true {
+                                if authViewModel.canCreateManagedMembers {
                                     Button {
                                         showAddManagedMember = true
                                     } label: {
@@ -341,8 +341,8 @@ struct MemberManagementView: View {
                                 
                                 VStack(spacing: 0) {
                                     ForEach(inactiveMembers) { member in
-                                        // Owners can tap inactive members to manage/reactivate them
-                                        if isOwner {
+                                        // Users with reactivate permission can tap inactive members
+                                        if authViewModel.canReactivateMembers {
                                             Button {
                                                 selectedInactiveMember = member
                                             } label: {
@@ -422,7 +422,7 @@ struct MemberManagementView: View {
                 }
             }
         } message: {
-            Text("You will become the owner of this household with full control over members, settings, and the ability to delete the household. The current owner will become an admin.")
+            Text("You will become the owner of this household with full control over members, settings, and the ability to delete the household. The current owner will become a regular member.")
         }
         .alert("Decline Ownership?", isPresented: $showDeclineTransferConfirm) {
             Button("Cancel", role: .cancel) { }
@@ -891,9 +891,19 @@ struct ManagedMemberDetailView: View {
     @State private var currentClaimCode: String?
     @State private var showShareSheet = false
     
-    private var canManage: Bool {
-        guard let userId = authViewModel.currentUser?.id else { return false }
-        return member.isManagedBy(userId: userId)
+    /// Can share/regenerate claim codes (requires can_approve_join_requests permission)
+    private var canShareClaimCode: Bool {
+        authViewModel.canApproveJoinRequests
+    }
+    
+    /// Can edit the managed member's profile (requires can_create_managed_members permission)
+    private var canEditProfile: Bool {
+        authViewModel.canCreateManagedMembers
+    }
+    
+    /// Can remove the managed member (requires can_remove_members permission)
+    private var canRemove: Bool {
+        authViewModel.canRemoveMembers
     }
     
     var body: some View {
@@ -929,7 +939,7 @@ struct ManagedMemberDetailView: View {
                             
                             BadgeView(text: "Managed Member", color: Theme.Colors.accent)
                             
-                            if canManage {
+                            if canEditProfile {
                                 Button {
                                     showEditProfile = true
                                 } label: {
@@ -942,7 +952,7 @@ struct ManagedMemberDetailView: View {
                         .padding(.top, Theme.Spacing.lg)
                         
                         // Claim Code Section
-                        if canManage {
+                        if canShareClaimCode {
                             VStack(alignment: .leading, spacing: Theme.Spacing.md) {
                                 Text("CLAIM CODE")
                                     .font(.caption)
@@ -1041,7 +1051,7 @@ struct ManagedMemberDetailView: View {
                         .padding(.horizontal, Theme.Spacing.md)
                         
                         // Delete Button
-                        if canManage {
+                        if canRemove {
                             Button {
                                 showDeleteConfirm = true
                             } label: {
@@ -1523,7 +1533,7 @@ struct TransferOwnershipView: View {
                                     .foregroundStyle(Theme.Colors.textPrimary)
                             }
                             
-                            Text("After the transfer is accepted, you will become an admin. The new owner will have full control over the household, including the ability to remove you.")
+                            Text("After the transfer is accepted, you will become a regular member. The new owner will have full control over the household, including the ability to remove you.")
                                 .font(.caption)
                                 .foregroundStyle(Theme.Colors.textSecondary)
                         }
@@ -1757,7 +1767,24 @@ struct RegularMemberDetailView: View {
     let member: HouseholdMember
     
     @State private var showRemoveConfirm = false
+    @State private var showPermissions = false
     @State private var isProcessing = false
+    
+    private var memberPermissions: MemberPermissions {
+        authViewModel.getPermissions(for: member.id)
+    }
+    
+    private var permissionsSummary: String {
+        if memberPermissions.hasNoPermissions {
+            return "No special permissions"
+        }
+        var permissions: [String] = []
+        if memberPermissions.canApproveJoinRequests { permissions.append("Approve requests") }
+        if memberPermissions.canCreateManagedMembers { permissions.append("Create members") }
+        if memberPermissions.canRemoveMembers { permissions.append("Remove members") }
+        if memberPermissions.canReactivateMembers { permissions.append("Reactivate members") }
+        return permissions.joined(separator: ", ")
+    }
     
     var body: some View {
         NavigationStack {
@@ -1808,6 +1835,49 @@ struct RegularMemberDetailView: View {
                             .background(Theme.Colors.error.opacity(0.1))
                             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
                             .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Permissions Section (Owner only)
+                        if authViewModel.isOwner {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                                Text("PERMISSIONS")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                                
+                                Button {
+                                    showPermissions = true
+                                } label: {
+                                    HStack(spacing: Theme.Spacing.md) {
+                                        Image(systemName: "lock.shield")
+                                            .font(.body)
+                                            .foregroundStyle(Theme.Colors.accent)
+                                            .frame(width: 24)
+                                        
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Manage Permissions")
+                                                .font(.body)
+                                                .foregroundStyle(Theme.Colors.textPrimary)
+                                            
+                                            Text(permissionsSummary)
+                                                .font(.caption)
+                                                .foregroundStyle(Theme.Colors.textSecondary)
+                                        }
+                                        
+                                        Spacer()
+                                        
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.textMuted)
+                                    }
+                                    .padding(Theme.Spacing.md)
+                                    .contentShape(Rectangle())
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
                         }
                         
                         // Info Section
@@ -1867,6 +1937,9 @@ struct RegularMemberDetailView: View {
                     .disabled(isProcessing)
                 }
             }
+            .sheet(isPresented: $showPermissions) {
+                MemberPermissionsView(member: member)
+            }
             .alert("Remove Member?", isPresented: $showRemoveConfirm) {
                 Button("Cancel", role: .cancel) { }
                 Button("Remove", role: .destructive) {
@@ -1892,6 +1965,265 @@ struct RegularMemberDetailView: View {
                 dismiss()
             }
         }
+    }
+}
+
+// MARK: - Member Permissions View
+
+struct MemberPermissionsView: View {
+    @Environment(AuthViewModel.self) private var authViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    let member: HouseholdMember
+    
+    @State private var canCreateManagedMembers = false
+    @State private var canRemoveMembers = false
+    @State private var canReactivateMembers = false
+    @State private var canApproveJoinRequests = false
+    @State private var isSaving = false
+    @State private var hasChanges = false
+    
+    private var currentPermissions: MemberPermissions {
+        authViewModel.getPermissions(for: member.id)
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.lg) {
+                        // Member Info Header
+                        VStack(spacing: Theme.Spacing.md) {
+                            ZStack {
+                                Circle()
+                                    .fill(member.swiftUIColor)
+                                    .frame(width: 80, height: 80)
+                                
+                                if let emoji = member.avatarUrl, !emoji.isEmpty {
+                                    Text(emoji)
+                                        .font(.system(size: 40))
+                                } else {
+                                    Text(member.initials)
+                                        .font(.title)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                            
+                            Text(member.displayName)
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Text("Configure what this member can do")
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        .padding(.top, Theme.Spacing.lg)
+                        
+                        // Error Display
+                        if let error = authViewModel.error {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Theme.Colors.error)
+                                Text(error)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.error)
+                            }
+                            .padding(Theme.Spacing.md)
+                            .frame(maxWidth: .infinity)
+                            .background(Theme.Colors.error.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Permissions Section
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Text("PERMISSIONS")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textMuted)
+                                .padding(.horizontal, Theme.Spacing.md)
+                            
+                            VStack(spacing: 0) {
+                                PermissionToggleRow(
+                                    title: "Approve Join Requests",
+                                    subtitle: "Can approve or reject new member requests",
+                                    icon: "person.badge.plus",
+                                    isOn: $canApproveJoinRequests
+                                )
+                                .onChange(of: canApproveJoinRequests) { hasChanges = true }
+                                
+                                Divider()
+                                    .background(Theme.Colors.borderLight)
+                                
+                                PermissionToggleRow(
+                                    title: "Create Managed Members",
+                                    subtitle: "Can create members for people without accounts",
+                                    icon: "person.crop.circle.badge.questionmark",
+                                    isOn: $canCreateManagedMembers
+                                )
+                                .onChange(of: canCreateManagedMembers) { hasChanges = true }
+                                
+                                Divider()
+                                    .background(Theme.Colors.borderLight)
+                                
+                                PermissionToggleRow(
+                                    title: "Remove Members",
+                                    subtitle: "Can remove non-owner members from household",
+                                    icon: "person.badge.minus",
+                                    isOn: $canRemoveMembers
+                                )
+                                .onChange(of: canRemoveMembers) { hasChanges = true }
+                                
+                                Divider()
+                                    .background(Theme.Colors.borderLight)
+                                
+                                PermissionToggleRow(
+                                    title: "Reactivate Members",
+                                    subtitle: "Can restore inactive members",
+                                    icon: "arrow.uturn.backward.circle",
+                                    isOn: $canReactivateMembers
+                                )
+                                .onChange(of: canReactivateMembers) { hasChanges = true }
+                            }
+                            .background(Theme.Colors.backgroundCard)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
+                        // Info Card
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            HStack(spacing: Theme.Spacing.sm) {
+                                Image(systemName: "info.circle.fill")
+                                    .foregroundStyle(Theme.Colors.accent)
+                                Text("About Permissions")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                            }
+                            
+                            Text("Grant specific capabilities to trusted members. As the owner, you always have all permissions. Member permissions can be changed at any time.")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        .padding(Theme.Spacing.md)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.Colors.accent.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                        .padding(.horizontal, Theme.Spacing.md)
+                        
+                        Spacer(minLength: 100)
+                    }
+                }
+                
+                // Loading overlay
+                if isSaving {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                    
+                    ProgressView()
+                        .tint(Theme.Colors.accent)
+                        .scaleEffect(1.5)
+                }
+            }
+            .navigationTitle("Permissions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                    .disabled(isSaving)
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        savePermissions()
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                                .tint(Theme.Colors.accent)
+                        } else {
+                            Text("Save")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .foregroundStyle(hasChanges ? Theme.Colors.accent : Theme.Colors.textMuted)
+                    .disabled(isSaving || !hasChanges)
+                }
+            }
+            .onAppear {
+                loadCurrentPermissions()
+                authViewModel.clearError()
+            }
+        }
+    }
+    
+    private func loadCurrentPermissions() {
+        let permissions = currentPermissions
+        canCreateManagedMembers = permissions.canCreateManagedMembers
+        canRemoveMembers = permissions.canRemoveMembers
+        canReactivateMembers = permissions.canReactivateMembers
+        canApproveJoinRequests = permissions.canApproveJoinRequests
+        hasChanges = false
+    }
+    
+    private func savePermissions() {
+        isSaving = true
+        
+        Task {
+            let permissions = MemberPermissions(
+                memberId: member.id,
+                canCreateManagedMembers: canCreateManagedMembers,
+                canRemoveMembers: canRemoveMembers,
+                canReactivateMembers: canReactivateMembers,
+                canApproveJoinRequests: canApproveJoinRequests
+            )
+            
+            let success = await authViewModel.updateMemberPermissions(permissions)
+            isSaving = false
+            
+            if success {
+                dismiss()
+            }
+        }
+    }
+}
+
+// MARK: - Permission Toggle Row
+
+struct PermissionToggleRow: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    @Binding var isOn: Bool
+    
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            HStack(spacing: Theme.Spacing.md) {
+                Image(systemName: icon)
+                    .font(.body)
+                    .foregroundStyle(Theme.Colors.accent)
+                    .frame(width: 24)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                    
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            }
+        }
+        .tint(Theme.Colors.accent)
+        .padding(Theme.Spacing.md)
     }
 }
 

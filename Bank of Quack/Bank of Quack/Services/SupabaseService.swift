@@ -43,6 +43,7 @@ extension SupabaseService {
 enum Table: String {
     case households
     case householdMembers = "household_members"
+    case memberPermissions = "member_permissions"
     case categories
     case sectors
     case sectorCategories = "sector_categories"
@@ -89,5 +90,9 @@ enum RPCFunction: String {
     case revokeOwnershipTransfer = "revoke_ownership_transfer"
     case acceptOwnershipTransfer = "accept_ownership_transfer"
     case declineOwnershipTransfer = "decline_ownership_transfer"
+    
+    // Member permissions
+    case getMemberPermissions = "get_member_permissions"
+    case updateMemberPermissions = "update_member_permissions"
 }
 

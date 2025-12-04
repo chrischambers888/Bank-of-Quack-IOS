@@ -12,6 +12,8 @@ final class AuthViewModel {
     var currentUser: User?
     var currentHousehold: Household?
     var currentMember: HouseholdMember?
+    var currentMemberPermissions: MemberPermissions?
+    var memberPermissions: [UUID: MemberPermissions] = [:] // memberId -> permissions
     var households: [Household] = []
     var members: [HouseholdMember] = []
     var pendingMembers: [HouseholdMember] = []
@@ -20,6 +22,42 @@ final class AuthViewModel {
     var sectors: [Sector] = []
     var sectorCategories: [UUID: [UUID]] = [:] // sectorId -> [categoryId]
     var error: String?
+    
+    // MARK: - Permission Helpers
+    
+    /// Returns true if the current user is the household owner
+    var isOwner: Bool {
+        currentMember?.role == .owner
+    }
+    
+    /// Returns true if the current user can approve/reject join requests
+    var canApproveJoinRequests: Bool {
+        if isOwner { return true }
+        return currentMemberPermissions?.canApproveJoinRequests ?? false
+    }
+    
+    /// Returns true if the current user can create managed members
+    var canCreateManagedMembers: Bool {
+        if isOwner { return true }
+        return currentMemberPermissions?.canCreateManagedMembers ?? false
+    }
+    
+    /// Returns true if the current user can remove members
+    var canRemoveMembers: Bool {
+        if isOwner { return true }
+        return currentMemberPermissions?.canRemoveMembers ?? false
+    }
+    
+    /// Returns true if the current user can reactivate members
+    var canReactivateMembers: Bool {
+        if isOwner { return true }
+        return currentMemberPermissions?.canReactivateMembers ?? false
+    }
+    
+    /// Returns true if the current user has any management permissions
+    var hasAnyManagementPermissions: Bool {
+        isOwner || canApproveJoinRequests || canCreateManagedMembers || canRemoveMembers || canReactivateMembers
+    }
     
     // MARK: - Services
     
@@ -96,8 +134,11 @@ final class AuthViewModel {
             currentUser = nil
             currentHousehold = nil
             currentMember = nil
+            currentMemberPermissions = nil
+            memberPermissions = [:]
             households = []
             members = []
+            pendingMembers = []
             categories = []
             sectors = []
             sectorCategories = [:]
@@ -169,8 +210,20 @@ final class AuthViewModel {
                 userId: userId
             )
             
-            // Fetch pending members if admin/owner
-            if let role = currentMember?.role, role.canApproveMembers {
+            // Fetch current member's permissions
+            if let memberId = currentMember?.id, currentMember?.role != .owner {
+                currentMemberPermissions = try await dataService.fetchMemberPermissions(memberId: memberId)
+            } else {
+                currentMemberPermissions = nil // Owners don't need stored permissions
+            }
+            
+            // Fetch all member permissions (for owners to manage)
+            if isOwner {
+                memberPermissions = try await dataService.fetchAllMemberPermissions(householdId: household.id)
+            }
+            
+            // Fetch pending members if has permission
+            if canApproveJoinRequests {
                 pendingMembers = try await dataService.fetchPendingMembers(householdId: household.id)
             } else {
                 pendingMembers = []
@@ -359,8 +412,7 @@ final class AuthViewModel {
     @MainActor
     func refreshPendingMembers() async {
         guard let household = currentHousehold,
-              let role = currentMember?.role,
-              role.canApproveMembers else { return }
+              canApproveJoinRequests else { return }
         
         do {
             pendingMembers = try await dataService.fetchPendingMembers(householdId: household.id)
@@ -743,6 +795,80 @@ final class AuthViewModel {
         guard let pendingMemberId = currentHousehold?.pendingOwnerMemberId,
               let currentMemberId = currentMember?.id else { return false }
         return pendingMemberId == currentMemberId
+    }
+    
+    // MARK: - Member Permissions Management
+    
+    /// Gets permissions for a specific member (returns default if none exist)
+    func getPermissions(for memberId: UUID) -> MemberPermissions {
+        memberPermissions[memberId] ?? MemberPermissions.defaultPermissions(for: memberId)
+    }
+    
+    /// Fetches fresh permissions for a member
+    @MainActor
+    func fetchMemberPermissions(memberId: UUID) async -> MemberPermissions? {
+        do {
+            let permissions = try await dataService.fetchMemberPermissions(memberId: memberId)
+            memberPermissions[memberId] = permissions
+            return permissions
+        } catch {
+            self.error = error.localizedDescription
+            return nil
+        }
+    }
+    
+    /// Updates permissions for a member (owner only)
+    @MainActor
+    func updateMemberPermissions(_ permissions: MemberPermissions) async -> Bool {
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.updateMemberPermissions(permissions)
+            
+            // Update local cache
+            memberPermissions[permissions.memberId] = permissions
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
+    }
+    
+    /// Updates a single permission for a member (owner only)
+    @MainActor
+    func updateMemberPermission(
+        memberId: UUID,
+        canCreateManagedMembers: Bool? = nil,
+        canRemoveMembers: Bool? = nil,
+        canReactivateMembers: Bool? = nil,
+        canApproveJoinRequests: Bool? = nil
+    ) async -> Bool {
+        isLoading = true
+        error = nil
+        
+        do {
+            try await dataService.updateMemberPermissions(
+                memberId: memberId,
+                canCreateManagedMembers: canCreateManagedMembers,
+                canRemoveMembers: canRemoveMembers,
+                canReactivateMembers: canReactivateMembers,
+                canApproveJoinRequests: canApproveJoinRequests
+            )
+            
+            // Refresh the permissions
+            _ = await fetchMemberPermissions(memberId: memberId)
+            
+            isLoading = false
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            isLoading = false
+            return false
+        }
     }
     
     // MARK: - Helpers

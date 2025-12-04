@@ -230,8 +230,8 @@ struct SettingsView: View {
                             .padding(.horizontal, Theme.Spacing.md)
                         }
                         
-                        // Pending Requests Section (only for admins/owners)
-                        if authViewModel.currentMember?.role.canApproveMembers == true,
+                        // Pending Requests Section (only for those with permission)
+                        if authViewModel.canApproveJoinRequests,
                            !authViewModel.pendingMembers.isEmpty {
                             VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                                 HStack {

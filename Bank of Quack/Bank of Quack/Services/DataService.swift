@@ -301,6 +301,74 @@ actor DataService {
             .value
     }
     
+    // MARK: - Member Permissions
+    
+    /// Fetches permissions for a specific member
+    func fetchMemberPermissions(memberId: UUID) async throws -> MemberPermissions {
+        let request = GetMemberPermissionsRequest(pMemberId: memberId)
+        
+        let results: [MemberPermissions] = try await supabase.client
+            .rpc(RPCFunction.getMemberPermissions.rawValue, params: request)
+            .execute()
+            .value
+        
+        // Return the first result or default permissions
+        return results.first ?? MemberPermissions.defaultPermissions(for: memberId)
+    }
+    
+    /// Fetches permissions for all members in a household
+    func fetchAllMemberPermissions(householdId: UUID) async throws -> [UUID: MemberPermissions] {
+        let permissions: [MemberPermissions] = try await supabase
+            .from(.memberPermissions)
+            .select()
+            .execute()
+            .value
+        
+        // Filter to only members in the given household and create a dictionary
+        let members = try await fetchMembers(householdId: householdId)
+        let memberIds = Set(members.map { $0.id })
+        
+        var result: [UUID: MemberPermissions] = [:]
+        for permission in permissions where memberIds.contains(permission.memberId) {
+            result[permission.memberId] = permission
+        }
+        
+        return result
+    }
+    
+    /// Updates permissions for a member (owner only)
+    func updateMemberPermissions(
+        memberId: UUID,
+        canCreateManagedMembers: Bool? = nil,
+        canRemoveMembers: Bool? = nil,
+        canReactivateMembers: Bool? = nil,
+        canApproveJoinRequests: Bool? = nil
+    ) async throws {
+        let request = UpdateMemberPermissionsRequest(
+            pMemberId: memberId,
+            pCanCreateManagedMembers: canCreateManagedMembers,
+            pCanRemoveMembers: canRemoveMembers,
+            pCanReactivateMembers: canReactivateMembers,
+            pCanApproveJoinRequests: canApproveJoinRequests
+        )
+        
+        let _: Bool = try await supabase.client
+            .rpc(RPCFunction.updateMemberPermissions.rawValue, params: request)
+            .execute()
+            .value
+    }
+    
+    /// Updates all permissions for a member at once (owner only)
+    func updateMemberPermissions(_ permissions: MemberPermissions) async throws {
+        try await updateMemberPermissions(
+            memberId: permissions.memberId,
+            canCreateManagedMembers: permissions.canCreateManagedMembers,
+            canRemoveMembers: permissions.canRemoveMembers,
+            canReactivateMembers: permissions.canReactivateMembers,
+            canApproveJoinRequests: permissions.canApproveJoinRequests
+        )
+    }
+    
     // MARK: - Household Management
     
     func deleteHousehold(householdId: UUID) async throws {

@@ -108,19 +108,17 @@ struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
 
 enum MemberRole: String, Codable, CaseIterable, Sendable {
     case owner
-    case admin
     case member
     
     var displayName: String {
         switch self {
         case .owner: return "Owner"
-        case .admin: return "Admin"
         case .member: return "Member"
         }
     }
     
-    var canApproveMembers: Bool {
-        self == .owner || self == .admin
+    var isOwner: Bool {
+        self == .owner
     }
 }
 
@@ -469,6 +467,84 @@ struct DeclineOwnershipTransferRequest: Encodable, Sendable {
     nonisolated func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(pHouseholdId, forKey: .pHouseholdId)
+    }
+}
+
+// MARK: - Member Permissions
+
+/// Represents the permissions granted to a member by the household owner
+struct MemberPermissions: Codable, Sendable, Equatable {
+    let memberId: UUID
+    var canCreateManagedMembers: Bool
+    var canRemoveMembers: Bool
+    var canReactivateMembers: Bool
+    var canApproveJoinRequests: Bool
+    
+    enum CodingKeys: String, CodingKey {
+        case memberId = "member_id"
+        case canCreateManagedMembers = "can_create_managed_members"
+        case canRemoveMembers = "can_remove_members"
+        case canReactivateMembers = "can_reactivate_members"
+        case canApproveJoinRequests = "can_approve_join_requests"
+    }
+    
+    /// Creates a default permissions object with no permissions granted
+    nonisolated static func defaultPermissions(for memberId: UUID) -> MemberPermissions {
+        MemberPermissions(
+            memberId: memberId,
+            canCreateManagedMembers: false,
+            canRemoveMembers: false,
+            canReactivateMembers: false,
+            canApproveJoinRequests: false
+        )
+    }
+    
+    /// Returns true if all permissions are false (default state)
+    var hasNoPermissions: Bool {
+        !canCreateManagedMembers && !canRemoveMembers && !canReactivateMembers && !canApproveJoinRequests
+    }
+    
+    /// Returns true if any permission is granted
+    var hasAnyPermission: Bool {
+        canCreateManagedMembers || canRemoveMembers || canReactivateMembers || canApproveJoinRequests
+    }
+}
+
+struct GetMemberPermissionsRequest: Encodable, Sendable {
+    let pMemberId: UUID
+    
+    enum CodingKeys: String, CodingKey {
+        case pMemberId = "p_member_id"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pMemberId, forKey: .pMemberId)
+    }
+}
+
+struct UpdateMemberPermissionsRequest: Encodable, Sendable {
+    let pMemberId: UUID
+    let pCanCreateManagedMembers: Bool?
+    let pCanRemoveMembers: Bool?
+    let pCanReactivateMembers: Bool?
+    let pCanApproveJoinRequests: Bool?
+    
+    enum CodingKeys: String, CodingKey {
+        case pMemberId = "p_member_id"
+        case pCanCreateManagedMembers = "p_can_create_managed_members"
+        case pCanRemoveMembers = "p_can_remove_members"
+        case pCanReactivateMembers = "p_can_reactivate_members"
+        case pCanApproveJoinRequests = "p_can_approve_join_requests"
+    }
+    
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pMemberId, forKey: .pMemberId)
+        try container.encodeIfPresent(pCanCreateManagedMembers, forKey: .pCanCreateManagedMembers)
+        try container.encodeIfPresent(pCanRemoveMembers, forKey: .pCanRemoveMembers)
+        try container.encodeIfPresent(pCanReactivateMembers, forKey: .pCanReactivateMembers)
+        try container.encodeIfPresent(pCanApproveJoinRequests, forKey: .pCanApproveJoinRequests)
     }
 }
 
