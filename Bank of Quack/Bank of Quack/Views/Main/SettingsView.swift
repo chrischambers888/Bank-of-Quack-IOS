@@ -450,13 +450,9 @@ struct SettingsView: View {
     
     private func downloadTemplate() {
         let importExportService = ImportExportService()
-        let templateContent = importExportService.generateImportTemplate()
-        
-        let tempDir = FileManager.default.temporaryDirectory
-        let fileURL = tempDir.appendingPathComponent("quack_import_template.csv")
         
         do {
-            try templateContent.write(to: fileURL, atomically: true, encoding: .utf8)
+            let fileURL = try importExportService.generateImportTemplate()
             templateURL = fileURL
             showTemplateShare = true
         } catch {
@@ -845,7 +841,7 @@ struct DataSettingsSection: View {
                         SettingsRow(
                             icon: "square.and.arrow.up",
                             title: "Export Household Data",
-                            subtitle: "Download all data as CSV files",
+                            subtitle: "Download all data as Excel file",
                             showChevron: false
                         )
                         
@@ -864,7 +860,7 @@ struct DataSettingsSection: View {
                     SettingsRow(
                         icon: "square.and.arrow.down",
                         title: "Import Transactions",
-                        subtitle: "Import from CSV file",
+                        subtitle: "Import from Excel file",
                         showChevron: true
                     )
                 }
@@ -876,7 +872,7 @@ struct DataSettingsSection: View {
                     SettingsRow(
                         icon: "doc.text",
                         title: "Download Import Template",
-                        subtitle: "Get a CSV template with examples",
+                        subtitle: "Get an Excel template with examples",
                         showChevron: false
                     )
                 }
@@ -894,19 +890,8 @@ struct ExportShareSheet: UIViewControllerRepresentable {
     let exportDirectory: URL
     
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        // Get all CSV files from the export directory
-        var filesToShare: [URL] = []
-        
-        if let contents = try? FileManager.default.contentsOfDirectory(at: exportDirectory, includingPropertiesForKeys: nil) {
-            filesToShare = contents.filter { $0.pathExtension.lowercased() == "csv" }
-        }
-        
-        // If no individual files found, share the directory itself
-        if filesToShare.isEmpty {
-            filesToShare = [exportDirectory]
-        }
-        
-        let activityVC = UIActivityViewController(activityItems: filesToShare, applicationActivities: nil)
+        // Share the xlsx file directly
+        let activityVC = UIActivityViewController(activityItems: [exportDirectory], applicationActivities: nil)
         return activityVC
     }
     

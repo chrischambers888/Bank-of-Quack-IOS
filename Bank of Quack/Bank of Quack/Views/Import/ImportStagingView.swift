@@ -8,7 +8,6 @@ struct ImportStagingView: View {
     
     @State private var viewModel = ImportStagingViewModel()
     @State private var showFilePicker = false
-    @State private var showSplitsFilePicker = false
     @State private var showShareSheet = false
     @State private var shareURL: URL?
     @State private var showSuccessAlert = false
@@ -39,17 +38,10 @@ struct ImportStagingView: View {
             }
             .fileImporter(
                 isPresented: $showFilePicker,
-                allowedContentTypes: [.commaSeparatedText, UTType.csv],
+                allowedContentTypes: [.xlsx, .spreadsheet],
                 allowsMultipleSelection: false
             ) { result in
                 handleFileSelection(result)
-            }
-            .fileImporter(
-                isPresented: $showSplitsFilePicker,
-                allowedContentTypes: [.commaSeparatedText, UTType.csv],
-                allowsMultipleSelection: false
-            ) { result in
-                handleSplitsFileSelection(result)
             }
         .sheet(isPresented: $showShareSheet) {
             if let url = shareURL {
@@ -76,7 +68,7 @@ struct ImportStagingView: View {
                 .scaleEffect(1.5)
                 .tint(Theme.Colors.accent)
             
-            Text("Processing CSV file...")
+            Text("Processing Excel file...")
                 .font(.headline)
                 .foregroundStyle(Theme.Colors.textSecondary)
         }
@@ -98,7 +90,7 @@ struct ImportStagingView: View {
                     .fontWeight(.bold)
                     .foregroundStyle(Theme.Colors.textPrimary)
                 
-                Text("Select a CSV file to import transactions into your household.")
+                Text("Select an Excel file (.xlsx) to import transactions into your household.")
                     .font(.body)
                     .foregroundStyle(Theme.Colors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -120,7 +112,7 @@ struct ImportStagingView: View {
             Button {
                 showFilePicker = true
             } label: {
-                Label("Select CSV File", systemImage: "folder")
+                Label("Select Excel File", systemImage: "folder")
             }
             .buttonStyle(PrimaryButtonStyle())
             .padding(.horizontal, Theme.Spacing.lg)
@@ -137,8 +129,10 @@ struct ImportStagingView: View {
                 // Summary Card
                 summaryCard
                 
-                // Split Data Section (optional file picker)
-                splitsDataSection
+                // Split Data Section (auto-detected from xlsx)
+                if viewModel.hasSplitData {
+                    splitsDataSection
+                }
                 
                 // New Items Section (Categories to be created)
                 if !viewModel.summary.newCategoriesToCreate.isEmpty {
@@ -165,14 +159,14 @@ struct ImportStagingView: View {
         }
     }
     
-    // MARK: - Splits Data Section
+    // MARK: - Splits Data Section (auto-detected)
     
     private var splitsDataSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             HStack {
-                Image(systemName: viewModel.splitsFileLoaded ? "checkmark.circle.fill" : "doc.badge.plus")
-                    .foregroundStyle(viewModel.splitsFileLoaded ? Theme.Colors.success : Theme.Colors.accent)
-                Text("SPLIT DATA (OPTIONAL)")
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Theme.Colors.success)
+                Text("SPLIT DATA FOUND")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(Theme.Colors.textMuted)
@@ -182,63 +176,26 @@ struct ImportStagingView: View {
             .padding(.horizontal, Theme.Spacing.md)
             
             VStack(spacing: Theme.Spacing.sm) {
-                if viewModel.splitsFileLoaded {
-                    // Show loaded splits info
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Splits file loaded")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundStyle(Theme.Colors.textPrimary)
-                            
-                            Text("\(viewModel.summary.totalSplitRows) splits for \(viewModel.summary.transactionsWithSplits) transactions")
-                                .font(.caption)
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                        }
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Splits sheet detected")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.Colors.textPrimary)
                         
-                        Spacer()
-                        
-                        Button {
-                            viewModel.clearSplits()
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(Theme.Colors.textMuted)
-                        }
+                        Text("\(viewModel.summary.totalSplitRows) splits for \(viewModel.summary.transactionsWithSplits) transactions")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
                     }
-                    .padding(Theme.Spacing.md)
-                    .background(Theme.Colors.success.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
-                } else {
-                    // Show button to add splits file
-                    Button {
-                        showSplitsFilePicker = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "plus.circle")
-                            Text("Add Splits File")
-                                .font(.subheadline)
-                            
-                            Spacer()
-                            
-                            Text("Optional")
-                                .font(.caption)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                        }
-                        .padding(Theme.Spacing.md)
-                        .background(Theme.Colors.backgroundCard)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
-                                .stroke(Theme.Colors.borderLight, lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.Colors.accent)
                     
-                    Text("If you exported with split data, add the transaction_splits.csv file here to preserve custom split allocations.")
-                        .font(.caption)
-                        .foregroundStyle(Theme.Colors.textMuted)
+                    Spacer()
+                    
+                    Image(systemName: "tablecells")
+                        .foregroundStyle(Theme.Colors.success)
                 }
+                .padding(Theme.Spacing.md)
+                .background(Theme.Colors.success.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
                 
                 // Show reimbursement references info if present
                 if viewModel.summary.reimbursementsWithReferences > 0 {
@@ -485,31 +442,6 @@ struct ImportStagingView: View {
             
         case .failure(let error):
             viewModel.error = "Failed to select file: \(error.localizedDescription)"
-        }
-    }
-    
-    private func handleSplitsFileSelection(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let fileURL = urls.first else { return }
-            
-            // Start accessing security-scoped resource
-            guard fileURL.startAccessingSecurityScopedResource() else {
-                viewModel.error = "Unable to access the splits file"
-                return
-            }
-            
-            defer { fileURL.stopAccessingSecurityScopedResource() }
-            
-            Task {
-                await viewModel.parseAndValidateSplits(
-                    fileURL: fileURL,
-                    existingMembers: authViewModel.members
-                )
-            }
-            
-        case .failure(let error):
-            viewModel.error = "Failed to select splits file: \(error.localizedDescription)"
         }
     }
     
@@ -837,4 +769,3 @@ struct ImportShareSheet: UIViewControllerRepresentable {
     ImportStagingView()
         .environment(AuthViewModel())
 }
-

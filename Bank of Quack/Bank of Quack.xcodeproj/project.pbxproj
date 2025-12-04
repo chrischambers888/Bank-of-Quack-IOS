@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		D36375D42EDD490000816221 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = D36375D32EDD490000816221 /* Supabase */; };
+		D3F7C27F2EE13DCC004683FB /* CoreXLSX in Frameworks */ = {isa = PBXBuildFile; productRef = D3F7C27E2EE13DCC004683FB /* CoreXLSX */; };
+		D3F7C2822EE13DEC004683FB /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = D3F7C2812EE13DEC004683FB /* ZIPFoundation */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,7 +29,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D3F7C27F2EE13DCC004683FB /* CoreXLSX in Frameworks */,
 				D36375D42EDD490000816221 /* Supabase in Frameworks */,
+				D3F7C2822EE13DEC004683FB /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +75,8 @@
 			name = "Bank of Quack";
 			packageProductDependencies = (
 				D36375D32EDD490000816221 /* Supabase */,
+				D3F7C27E2EE13DCC004683FB /* CoreXLSX */,
+				D3F7C2812EE13DEC004683FB /* ZIPFoundation */,
 			);
 			productName = "Bank of Quack";
 			productReference = D36375882EDD47B700816221 /* Bank of Quack.app */;
@@ -102,6 +108,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				D36375D22EDD48BC00816221 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				D3F7C27D2EE13DCC004683FB /* XCRemoteSwiftPackageReference "CoreXLSX" */,
+				D3F7C2802EE13DEC004683FB /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D36375892EDD47B700816221 /* Products */;
@@ -353,6 +361,22 @@
 				minimumVersion = 2.5.1;
 			};
 		};
+		D3F7C27D2EE13DCC004683FB /* XCRemoteSwiftPackageReference "CoreXLSX" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/CoreOffice/CoreXLSX";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.14.2;
+			};
+		};
+		D3F7C2802EE13DEC004683FB /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.20;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -360,6 +384,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D36375D22EDD48BC00816221 /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
+		};
+		D3F7C27E2EE13DCC004683FB /* CoreXLSX */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3F7C27D2EE13DCC004683FB /* XCRemoteSwiftPackageReference "CoreXLSX" */;
+			productName = CoreXLSX;
+		};
+		D3F7C2812EE13DEC004683FB /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3F7C2802EE13DEC004683FB /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

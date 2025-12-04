@@ -1,5 +1,6 @@
 import Foundation
 import UniformTypeIdentifiers
+import CoreXLSX
 
 final class ImportExportService: Sendable {
     
@@ -24,8 +25,8 @@ final class ImportExportService: Sendable {
     
     // MARK: - Export Functions
     
-    /// Exports all household data to a folder containing multiple CSVs
-    /// Returns the URL to the export directory
+    /// Exports all household data to a single XLSX file with multiple sheets
+    /// Returns the URL to the export file
     func exportHouseholdData(
         transactions: [TransactionView],
         transactionSplits: [TransactionSplit],
@@ -35,161 +36,322 @@ final class ImportExportService: Sendable {
         members: [HouseholdMember],
         householdName: String
     ) throws -> URL {
-        let tempDir = FileManager.default.temporaryDirectory
+        let xlsxWriter = XlsxWriter()
+        
+        // Build lookup maps
+        let categoryMap = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0.name) })
+        let memberMap = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
+        
+        // Build transaction row mapping
+        var transactionRowMap: [UUID: Int] = [:]
+        for (index, transaction) in transactions.enumerated() {
+            transactionRowMap[transaction.id] = index + 1
+        }
+        
+        // Sheet 1: Transactions
+        let transactionHeaders = ExportTransaction.headers
+        var transactionRows: [[String]] = []
+        
+        for (index, transaction) in transactions.enumerated() {
+            let rowNumber = index + 1
+            
+            var reimbursesRow = ""
+            if let reimbursedTransactionId = transaction.reimbursesTransactionId,
+               let reimbursedRowNumber = transactionRowMap[reimbursedTransactionId] {
+                reimbursesRow = String(reimbursedRowNumber)
+            }
+            
+            let export = ExportTransaction(
+                row: rowNumber,
+                date: Self.dateFormatter.string(from: transaction.date),
+                description: transaction.description,
+                amount: "\(transaction.amount)",
+                type: transaction.transactionType.rawValue,
+                category: transaction.categoryId.flatMap { categoryMap[$0] } ?? "",
+                paidBy: transaction.paidByMemberId.flatMap { memberMap[$0] } ?? "",
+                paidTo: transaction.paidToMemberId.flatMap { memberMap[$0] } ?? "",
+                splitType: transaction.splitType.rawValue,
+                splitMember: transaction.splitMemberId.flatMap { memberMap[$0] } ?? "",
+                reimbursesRow: reimbursesRow,
+                excludedFromBudget: transaction.excludedFromBudget ? "Yes" : "No",
+                notes: transaction.notes ?? ""
+            )
+            
+            transactionRows.append(export.csvRow)
+        }
+        
+        xlsxWriter.addSheet(name: "Transactions", headers: transactionHeaders, rows: transactionRows)
+        
+        // Sheet 2: Splits
+        let splitHeaders = ExportTransactionSplit.headers
+        var splitRows: [[String]] = []
+        
+        for split in transactionSplits {
+            guard let rowNumber = transactionRowMap[split.transactionId],
+                  let memberName = memberMap[split.memberId] else {
+                continue
+            }
+            
+            let export = ExportTransactionSplit(
+                transactionRow: rowNumber,
+                memberName: memberName,
+                owedAmount: "\(split.owedAmount)",
+                owedPercentage: split.owedPercentage.map { "\($0)" } ?? "",
+                paidAmount: "\(split.paidAmount)",
+                paidPercentage: split.paidPercentage.map { "\($0)" } ?? ""
+            )
+            
+            splitRows.append(export.csvRow)
+        }
+        
+        xlsxWriter.addSheet(name: "Splits", headers: splitHeaders, rows: splitRows)
+        
+        // Sheet 3: Categories
+        let categoryHeaders = ExportCategory.headers
+        var categoryRows: [[String]] = []
+        
+        for category in categories {
+            let export = ExportCategory(
+                name: category.name,
+                sortOrder: String(category.sortOrder)
+            )
+            categoryRows.append(export.csvRow)
+        }
+        
+        xlsxWriter.addSheet(name: "Categories", headers: categoryHeaders, rows: categoryRows)
+        
+        // Sheet 4: Sectors
+        let sectorHeaders = ExportSector.headers
+        var sectorRows: [[String]] = []
+        
+        for sector in sectors {
+            let export = ExportSector(
+                name: sector.name,
+                sortOrder: String(sector.sortOrder)
+            )
+            sectorRows.append(export.csvRow)
+        }
+        
+        xlsxWriter.addSheet(name: "Sectors", headers: sectorHeaders, rows: sectorRows)
+        
+        // Sheet 5: Sector Categories
+        let sectorCategoryHeaders = ExportSectorCategory.headers
+        var sectorCategoryRows: [[String]] = []
+        
+        for mapping in sectorCategories {
+            let export = ExportSectorCategory(
+                sectorName: mapping.sectorName,
+                categoryName: mapping.categoryName
+            )
+            sectorCategoryRows.append(export.csvRow)
+        }
+        
+        xlsxWriter.addSheet(name: "Sector Categories", headers: sectorCategoryHeaders, rows: sectorCategoryRows)
+        
+        // Sheet 6: Members
+        let memberHeaders = ExportMember.headers
+        var memberRows: [[String]] = []
+        
+        for member in members {
+            let export = ExportMember(
+                displayName: member.displayName,
+                role: member.role.rawValue,
+                status: member.status.rawValue
+            )
+            memberRows.append(export.csvRow)
+        }
+        
+        xlsxWriter.addSheet(name: "Members", headers: memberHeaders, rows: memberRows)
+        
+        // Generate the filename
         let sanitizedName = householdName.replacingOccurrences(of: " ", with: "_")
             .replacingOccurrences(of: "/", with: "-")
         let dateStr = Self.dateFormatter.string(from: Date())
-        let exportDir = tempDir.appendingPathComponent("\(sanitizedName)_export_\(dateStr)")
+        let filename = "\(sanitizedName)_export_\(dateStr).xlsx"
         
-        // Remove existing export directory if present
-        try? FileManager.default.removeItem(at: exportDir)
-        try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
-        
-        // Generate CSVs - transactions first to get row mappings
-        let (transactionsCSV, transactionRowMap) = generateTransactionsCSV(
-            transactions: transactions,
-            categories: categories,
-            members: members
-        )
-        let transactionSplitsCSV = generateTransactionSplitsCSV(
-            transactionSplits: transactionSplits,
-            transactionRowMap: transactionRowMap,
-            members: members
-        )
-        let categoriesCSV = generateCategoriesCSV(categories: categories)
-        let sectorsCSV = generateSectorsCSV(sectors: sectors)
-        let sectorCategoriesCSV = generateSectorCategoriesCSV(sectorCategories: sectorCategories)
-        let membersCSV = generateMembersCSV(members: members)
-        
-        // Write CSV files
-        try transactionsCSV.write(to: exportDir.appendingPathComponent("transactions.csv"), atomically: true, encoding: .utf8)
-        if !transactionSplits.isEmpty {
-            try transactionSplitsCSV.write(to: exportDir.appendingPathComponent("transaction_splits.csv"), atomically: true, encoding: .utf8)
-        }
-        try categoriesCSV.write(to: exportDir.appendingPathComponent("categories.csv"), atomically: true, encoding: .utf8)
-        try sectorsCSV.write(to: exportDir.appendingPathComponent("sectors.csv"), atomically: true, encoding: .utf8)
-        try sectorCategoriesCSV.write(to: exportDir.appendingPathComponent("sector_categories.csv"), atomically: true, encoding: .utf8)
-        try membersCSV.write(to: exportDir.appendingPathComponent("members.csv"), atomically: true, encoding: .utf8)
-        
-        // Return the export directory URL - iOS share sheet can handle folders
-        return exportDir
+        return try xlsxWriter.write(to: filename)
     }
     
-    /// Generates a template CSV for importing transactions
-    func generateImportTemplate() -> String {
-        var lines: [String] = []
+    /// Generates a template XLSX file for importing transactions
+    func generateImportTemplate() throws -> URL {
+        let xlsxWriter = XlsxWriter()
         
-        // Header
-        lines.append("Date,Description,Amount,Type,Category,Paid By,Split Type,Notes")
+        // Transactions sheet with examples
+        let transactionHeaders = ["Date", "Description", "Amount", "Type", "Category", "Paid By", "Split Type", "Notes"]
+        let transactionRows: [[String]] = [
+            ["2024-01-15", "Grocery shopping at Costco", "125.50", "expense", "Groceries", "John", "equal", "Weekly grocery run"],
+            ["2024-01-16", "Monthly salary", "5000.00", "income", "Salary", "Jane", "equal", ""],
+            ["2024-01-17", "Coffee with friends", "15.75", "expense", "Dining Out", "John", "member_only", "Just for me"],
+            ["2024-01-18", "Utility bill split", "200.00", "expense", "Utilities", "Jane", "equal", "Electric bill"],
+            ["2024-01-20", "John pays Jane back", "50.00", "settlement", "", "John", "equal", "For groceries"]
+        ]
         
-        // Example rows with different transaction types
-        lines.append("2024-01-15,Grocery shopping at Costco,125.50,expense,Groceries,John,equal,Weekly grocery run")
-        lines.append("2024-01-16,Monthly salary,5000.00,income,Salary,Jane,equal,")
-        lines.append("2024-01-17,Coffee with friends,15.75,expense,Dining Out,John,member_only,Just for me")
-        lines.append("2024-01-18,Utility bill split,200.00,expense,Utilities,Jane,equal,Electric bill")
-        lines.append("2024-01-20,John pays Jane back,50.00,settlement,,John,equal,For groceries")
+        xlsxWriter.addSheet(name: "Transactions", headers: transactionHeaders, rows: transactionRows)
         
-        // Instructions as comments (will be ignored by parser)
-        lines.append("")
-        lines.append("# INSTRUCTIONS:")
-        lines.append("# - Date: Use YYYY-MM-DD format (e.g. 2024-01-15)")
-        lines.append("# - Description: Required. What the transaction was for.")
-        lines.append("# - Amount: Required. Use numbers only (e.g. 125.50)")
-        lines.append("# - Type: expense income settlement or reimbursement")
-        lines.append("# - Category: Will be created if it doesn't exist")
-        lines.append("# - Paid By: Must match an existing member name exactly")
-        lines.append("# - Split Type: equal member_only or custom (defaults to equal)")
-        lines.append("# - Notes: Optional additional notes")
+        // Instructions sheet
+        let instructionHeaders = ["Field", "Description", "Required", "Example"]
+        let instructionRows: [[String]] = [
+            ["Date", "Use YYYY-MM-DD format", "Yes", "2024-01-15"],
+            ["Description", "What the transaction was for", "Yes", "Grocery shopping"],
+            ["Amount", "Use numbers only (no currency symbols)", "Yes", "125.50"],
+            ["Type", "expense, income, settlement, or reimbursement", "No (default: expense)", "expense"],
+            ["Category", "Will be created if it doesn't exist", "No", "Groceries"],
+            ["Paid By", "Must match an existing member name exactly", "No (default: you)", "John"],
+            ["Split Type", "equal, member_only, or custom", "No (default: equal)", "equal"],
+            ["Notes", "Optional additional notes", "No", "Weekly shopping"]
+        ]
         
-        return lines.joined(separator: "\n")
+        xlsxWriter.addSheet(name: "Instructions", headers: instructionHeaders, rows: instructionRows)
+        
+        // Empty Splits sheet template
+        let splitHeaders = ExportTransactionSplit.headers
+        xlsxWriter.addSheet(name: "Splits", headers: splitHeaders, rows: [])
+        
+        return try xlsxWriter.write(to: "quack_import_template.xlsx")
     }
     
     // MARK: - Import Functions
     
-    /// Parses a CSV file and returns raw import rows
-    func parseCSV(from url: URL) throws -> [ImportRow] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        return parseCSVContent(content)
+    /// Parses an XLSX file and returns raw import rows and split rows
+    func parseXLSX(from url: URL) throws -> (transactions: [ImportRow], splits: [ImportSplitRow]) {
+        guard let xlsxFile = XLSXFile(filepath: url.path) else {
+            throw ImportError.failedToOpenFile
+        }
+        
+        var importRows: [ImportRow] = []
+        var splitRows: [ImportSplitRow] = []
+        
+        // Get shared strings (may be nil for simple spreadsheets)
+        let sharedStrings = try xlsxFile.parseSharedStrings()
+        
+        // Iterate through workbooks and worksheets
+        for workbook in try xlsxFile.parseWorkbooks() {
+            let worksheetPaths = try xlsxFile.parseWorksheetPathsAndNames(workbook: workbook)
+            
+            for (name, path) in worksheetPaths {
+                guard let sheetName = name else { continue }
+                let worksheet = try xlsxFile.parseWorksheet(at: path)
+                
+                let sheetNameLower = sheetName.lowercased()
+                
+                if sheetNameLower == "transactions" {
+                    importRows = parseTransactionsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
+                } else if sheetNameLower == "splits" {
+                    splitRows = parseSplitsSheet(worksheet: worksheet, sharedStrings: sharedStrings)
+                }
+            }
+        }
+        
+        return (importRows, splitRows)
     }
     
-    /// Parses CSV content string and returns raw import rows
-    func parseCSVContent(_ content: String) -> [ImportRow] {
+    /// Parses the Transactions sheet
+    private func parseTransactionsSheet(worksheet: Worksheet, sharedStrings: SharedStrings?) -> [ImportRow] {
         var rows: [ImportRow] = []
         
-        let lines = content.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("#") } // Skip empty lines and comments
+        guard let sheetData = worksheet.data else { return rows }
+        let worksheetRows = sheetData.rows
         
-        guard lines.count > 1 else { return [] }
+        guard worksheetRows.count > 1 else { return rows }
         
-        // Parse headers
-        let headers = parseCSVLine(lines[0])
+        // Parse header row to find column mapping
+        let headerRow = worksheetRows[0]
+        let headers = headerRow.cells.map { getCellValue($0, sharedStrings: sharedStrings) }
         let columnMapping = ImportColumn.findColumn(in: headers)
         
         // Parse data rows
-        for (index, line) in lines.dropFirst().enumerated() {
-            let values = parseCSVLine(line)
+        for (index, row) in worksheetRows.dropFirst().enumerated() {
+            let values = row.cells.map { getCellValue($0, sharedStrings: sharedStrings) }
             
-            let row = ImportRow(
-                rowNumber: index + 2, // +2 because 1-indexed and skipping header
-                csvRow: getValue(from: values, column: .row, mapping: columnMapping),
-                date: getValue(from: values, column: .date, mapping: columnMapping),
-                description: getValue(from: values, column: .description, mapping: columnMapping),
-                amount: getValue(from: values, column: .amount, mapping: columnMapping),
-                type: getValue(from: values, column: .type, mapping: columnMapping),
-                category: getValue(from: values, column: .category, mapping: columnMapping),
-                paidBy: getValue(from: values, column: .paidBy, mapping: columnMapping),
-                paidTo: getValue(from: values, column: .paidTo, mapping: columnMapping),
-                splitType: getValue(from: values, column: .splitType, mapping: columnMapping),
-                splitMember: getValue(from: values, column: .splitMember, mapping: columnMapping),
-                reimbursesRow: getValue(from: values, column: .reimbursesRow, mapping: columnMapping),
-                excludedFromBudget: getValue(from: values, column: .excludedFromBudget, mapping: columnMapping),
-                notes: getValue(from: values, column: .notes, mapping: columnMapping)
+            // Pad values array to match expected columns
+            var paddedValues = values
+            while paddedValues.count < headers.count {
+                paddedValues.append("")
+            }
+            
+            let importRow = ImportRow(
+                rowNumber: index + 2,
+                csvRow: getValue(from: paddedValues, column: .row, mapping: columnMapping),
+                date: getValue(from: paddedValues, column: .date, mapping: columnMapping),
+                description: getValue(from: paddedValues, column: .description, mapping: columnMapping),
+                amount: getValue(from: paddedValues, column: .amount, mapping: columnMapping),
+                type: getValue(from: paddedValues, column: .type, mapping: columnMapping),
+                category: getValue(from: paddedValues, column: .category, mapping: columnMapping),
+                paidBy: getValue(from: paddedValues, column: .paidBy, mapping: columnMapping),
+                paidTo: getValue(from: paddedValues, column: .paidTo, mapping: columnMapping),
+                splitType: getValue(from: paddedValues, column: .splitType, mapping: columnMapping),
+                splitMember: getValue(from: paddedValues, column: .splitMember, mapping: columnMapping),
+                reimbursesRow: getValue(from: paddedValues, column: .reimbursesRow, mapping: columnMapping),
+                excludedFromBudget: getValue(from: paddedValues, column: .excludedFromBudget, mapping: columnMapping),
+                notes: getValue(from: paddedValues, column: .notes, mapping: columnMapping)
             )
             
-            rows.append(row)
+            // Skip completely empty rows
+            if !importRow.description.isEmpty || !importRow.amount.isEmpty || !importRow.date.isEmpty {
+                rows.append(importRow)
+            }
         }
         
         return rows
     }
     
-    /// Parses a splits CSV file and returns raw import split rows
-    func parseSplitsCSV(from url: URL) throws -> [ImportSplitRow] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        return parseSplitsCSVContent(content)
-    }
-    
-    /// Parses splits CSV content string and returns raw import split rows
-    func parseSplitsCSVContent(_ content: String) -> [ImportSplitRow] {
+    /// Parses the Splits sheet
+    private func parseSplitsSheet(worksheet: Worksheet, sharedStrings: SharedStrings?) -> [ImportSplitRow] {
         var rows: [ImportSplitRow] = []
         
-        let lines = content.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        guard let sheetData = worksheet.data else { return rows }
+        let worksheetRows = sheetData.rows
         
-        guard lines.count > 1 else { return [] }
+        guard worksheetRows.count > 1 else { return rows }
         
-        // Parse headers
-        let headers = parseCSVLine(lines[0])
+        // Parse header row
+        let headerRow = worksheetRows[0]
+        let headers = headerRow.cells.map { getCellValue($0, sharedStrings: sharedStrings) }
         let columnMapping = ImportSplitColumn.findColumn(in: headers)
         
         // Parse data rows
-        for line in lines.dropFirst() {
-            let values = parseCSVLine(line)
+        for row in worksheetRows.dropFirst() {
+            let values = row.cells.map { getCellValue($0, sharedStrings: sharedStrings) }
             
-            let row = ImportSplitRow(
-                transactionRow: getSplitValue(from: values, column: .transactionRow, mapping: columnMapping),
-                memberName: getSplitValue(from: values, column: .memberName, mapping: columnMapping),
-                owedAmount: getSplitValue(from: values, column: .owedAmount, mapping: columnMapping),
-                owedPercentage: getSplitValue(from: values, column: .owedPercentage, mapping: columnMapping),
-                paidAmount: getSplitValue(from: values, column: .paidAmount, mapping: columnMapping),
-                paidPercentage: getSplitValue(from: values, column: .paidPercentage, mapping: columnMapping)
+            var paddedValues = values
+            while paddedValues.count < headers.count {
+                paddedValues.append("")
+            }
+            
+            let splitRow = ImportSplitRow(
+                transactionRow: getSplitValue(from: paddedValues, column: .transactionRow, mapping: columnMapping),
+                memberName: getSplitValue(from: paddedValues, column: .memberName, mapping: columnMapping),
+                owedAmount: getSplitValue(from: paddedValues, column: .owedAmount, mapping: columnMapping),
+                owedPercentage: getSplitValue(from: paddedValues, column: .owedPercentage, mapping: columnMapping),
+                paidAmount: getSplitValue(from: paddedValues, column: .paidAmount, mapping: columnMapping),
+                paidPercentage: getSplitValue(from: paddedValues, column: .paidPercentage, mapping: columnMapping)
             )
             
-            rows.append(row)
+            // Skip empty rows
+            if !splitRow.transactionRow.isEmpty || !splitRow.memberName.isEmpty {
+                rows.append(splitRow)
+            }
         }
         
         return rows
+    }
+    
+    /// Gets the string value from a cell, handling shared strings
+    private func getCellValue(_ cell: Cell, sharedStrings: SharedStrings?) -> String {
+        if cell.type == .sharedString {
+            if let value = cell.value,
+               let index = Int(value),
+               let strings = sharedStrings,
+               index < strings.items.count {
+                return strings.items[index].text ?? ""
+            }
+            return ""
+        } else if let value = cell.value {
+            return value
+        } else if let inlineString = cell.inlineString?.text {
+            return inlineString
+        }
+        return ""
     }
     
     /// Validates and parses split rows against existing members
@@ -426,206 +588,35 @@ final class ImportExportService: Sendable {
         return (validatedRows, summary)
     }
     
-    /// Generates a CSV of failed/invalid rows for the user to fix
-    func generateFailedRowsCSV(_ rows: [ImportRow]) -> String {
-        var lines: [String] = []
+    /// Generates an XLSX of failed/invalid rows for the user to fix
+    func generateFailedRowsXLSX(_ rows: [ImportRow]) throws -> URL {
+        let xlsxWriter = XlsxWriter()
         
-        // Header with error column
-        lines.append("Row,Date,Description,Amount,Type,Category,Paid By,Split Type,Notes,Errors")
+        let headers = ["Row", "Date", "Description", "Amount", "Type", "Category", "Paid By", "Split Type", "Notes", "Errors"]
+        var failedRows: [[String]] = []
         
         for row in rows where row.hasErrors {
             let errorMessages = row.validationErrors.map { $0.message }.joined(separator: "; ")
-            let csvRow = [
+            failedRows.append([
                 String(row.rowNumber),
-                escapeCSV(row.date),
-                escapeCSV(row.description),
-                escapeCSV(row.amount),
-                escapeCSV(row.type),
-                escapeCSV(row.category),
-                escapeCSV(row.paidBy),
-                escapeCSV(row.splitType),
-                escapeCSV(row.notes),
-                escapeCSV(errorMessages)
-            ]
-            lines.append(csvRow.joined(separator: ","))
+                row.date,
+                row.description,
+                row.amount,
+                row.type,
+                row.category,
+                row.paidBy,
+                row.splitType,
+                row.notes,
+                errorMessages
+            ])
         }
         
-        return lines.joined(separator: "\n")
+        xlsxWriter.addSheet(name: "Failed Rows", headers: headers, rows: failedRows)
+        
+        return try xlsxWriter.write(to: "failed_imports_\(Int(Date().timeIntervalSince1970)).xlsx")
     }
     
     // MARK: - Private Helpers
-    
-    /// Generates transactions CSV and returns both the CSV content and a mapping of transaction ID to row number
-    private func generateTransactionsCSV(
-        transactions: [TransactionView],
-        categories: [Category],
-        members: [HouseholdMember]
-    ) -> (csv: String, rowMap: [UUID: Int]) {
-        var lines: [String] = []
-        var transactionRowMap: [UUID: Int] = [:]  // Maps transaction ID to row number
-        
-        // Header
-        lines.append(ExportTransaction.headers.joined(separator: ","))
-        
-        // Build lookup maps
-        let categoryMap = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0.name) })
-        let memberMap = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
-        
-        // First pass: assign row numbers to all transactions
-        for (index, transaction) in transactions.enumerated() {
-            let rowNumber = index + 1  // 1-indexed row numbers
-            transactionRowMap[transaction.id] = rowNumber
-        }
-        
-        // Second pass: generate CSV rows with reimbursement references
-        for (index, transaction) in transactions.enumerated() {
-            let rowNumber = index + 1
-            
-            // Look up the reimbursed transaction's row number
-            var reimbursesRow = ""
-            if let reimbursedTransactionId = transaction.reimbursesTransactionId,
-               let reimbursedRowNumber = transactionRowMap[reimbursedTransactionId] {
-                reimbursesRow = String(reimbursedRowNumber)
-            }
-            
-            let export = ExportTransaction(
-                row: rowNumber,
-                date: Self.dateFormatter.string(from: transaction.date),
-                description: transaction.description,
-                amount: "\(transaction.amount)",
-                type: transaction.transactionType.rawValue,
-                category: transaction.categoryId.flatMap { categoryMap[$0] } ?? "",
-                paidBy: transaction.paidByMemberId.flatMap { memberMap[$0] } ?? "",
-                paidTo: transaction.paidToMemberId.flatMap { memberMap[$0] } ?? "",
-                splitType: transaction.splitType.rawValue,
-                splitMember: transaction.splitMemberId.flatMap { memberMap[$0] } ?? "",
-                reimbursesRow: reimbursesRow,
-                excludedFromBudget: transaction.excludedFromBudget ? "Yes" : "No",
-                notes: transaction.notes ?? ""
-            )
-            
-            lines.append(export.csvRow.map { escapeCSV($0) }.joined(separator: ","))
-        }
-        
-        return (lines.joined(separator: "\n"), transactionRowMap)
-    }
-    
-    /// Generates transaction splits CSV
-    private func generateTransactionSplitsCSV(
-        transactionSplits: [TransactionSplit],
-        transactionRowMap: [UUID: Int],
-        members: [HouseholdMember]
-    ) -> String {
-        var lines: [String] = []
-        
-        // Header
-        lines.append(ExportTransactionSplit.headers.joined(separator: ","))
-        
-        // Build lookup maps
-        let memberMap = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
-        
-        // Output splits with transaction row reference
-        for split in transactionSplits {
-            guard let rowNumber = transactionRowMap[split.transactionId],
-                  let memberName = memberMap[split.memberId] else {
-                continue
-            }
-            
-            let export = ExportTransactionSplit(
-                transactionRow: rowNumber,
-                memberName: memberName,
-                owedAmount: "\(split.owedAmount)",
-                owedPercentage: split.owedPercentage.map { "\($0)" } ?? "",
-                paidAmount: "\(split.paidAmount)",
-                paidPercentage: split.paidPercentage.map { "\($0)" } ?? ""
-            )
-            
-            lines.append(export.csvRow.map { escapeCSV($0) }.joined(separator: ","))
-        }
-        
-        return lines.joined(separator: "\n")
-    }
-    
-    private func generateCategoriesCSV(categories: [Category]) -> String {
-        var lines: [String] = []
-        lines.append(ExportCategory.headers.joined(separator: ","))
-        
-        for category in categories {
-            let export = ExportCategory(
-                name: category.name,
-                sortOrder: String(category.sortOrder)
-            )
-            lines.append(export.csvRow.map { escapeCSV($0) }.joined(separator: ","))
-        }
-        
-        return lines.joined(separator: "\n")
-    }
-    
-    private func generateSectorsCSV(sectors: [Sector]) -> String {
-        var lines: [String] = []
-        lines.append(ExportSector.headers.joined(separator: ","))
-        
-        for sector in sectors {
-            let export = ExportSector(
-                name: sector.name,
-                sortOrder: String(sector.sortOrder)
-            )
-            lines.append(export.csvRow.map { escapeCSV($0) }.joined(separator: ","))
-        }
-        
-        return lines.joined(separator: "\n")
-    }
-    
-    private func generateSectorCategoriesCSV(sectorCategories: [(sectorName: String, categoryName: String)]) -> String {
-        var lines: [String] = []
-        lines.append(ExportSectorCategory.headers.joined(separator: ","))
-        
-        for mapping in sectorCategories {
-            let export = ExportSectorCategory(
-                sectorName: mapping.sectorName,
-                categoryName: mapping.categoryName
-            )
-            lines.append(export.csvRow.map { escapeCSV($0) }.joined(separator: ","))
-        }
-        
-        return lines.joined(separator: "\n")
-    }
-    
-    private func generateMembersCSV(members: [HouseholdMember]) -> String {
-        var lines: [String] = []
-        lines.append(ExportMember.headers.joined(separator: ","))
-        
-        for member in members {
-            let export = ExportMember(
-                displayName: member.displayName,
-                role: member.role.rawValue,
-                status: member.status.rawValue
-            )
-            lines.append(export.csvRow.map { escapeCSV($0) }.joined(separator: ","))
-        }
-        
-        return lines.joined(separator: "\n")
-    }
-    
-    private func parseCSVLine(_ line: String) -> [String] {
-        var result: [String] = []
-        var current = ""
-        var inQuotes = false
-        
-        for char in line {
-            if char == "\"" {
-                inQuotes.toggle()
-            } else if char == "," && !inQuotes {
-                result.append(current.trimmingCharacters(in: .whitespaces))
-                current = ""
-            } else {
-                current.append(char)
-            }
-        }
-        
-        result.append(current.trimmingCharacters(in: .whitespaces))
-        return result
-    }
     
     private func getValue(from values: [String], column: ImportColumn, mapping: [ImportColumn: Int]) -> String {
         guard let index = mapping[column], index < values.count else { return "" }
@@ -649,19 +640,26 @@ final class ImportExportService: Sendable {
         
         return nil
     }
+}
+
+// MARK: - Import Errors
+
+enum ImportError: LocalizedError {
+    case failedToOpenFile
+    case noTransactionsSheet
     
-    private func escapeCSV(_ value: String) -> String {
-        let needsQuotes = value.contains(",") || value.contains("\"") || value.contains("\n")
-        if needsQuotes {
-            let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
-            return "\"\(escaped)\""
+    var errorDescription: String? {
+        switch self {
+        case .failedToOpenFile:
+            return "Failed to open the Excel file. Please make sure it's a valid .xlsx file."
+        case .noTransactionsSheet:
+            return "No 'Transactions' sheet found in the Excel file."
         }
-        return value
     }
 }
 
 // MARK: - File Type Identifiers
 
 extension UTType {
-    static let csv = UTType(filenameExtension: "csv") ?? .commaSeparatedText
+    static let xlsx = UTType(filenameExtension: "xlsx") ?? .spreadsheet
 }

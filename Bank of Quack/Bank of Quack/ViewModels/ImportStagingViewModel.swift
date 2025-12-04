@@ -8,13 +8,13 @@ final class ImportStagingViewModel {
     // MARK: - State
     
     var importRows: [ImportRow] = []
-    var splitRows: [ImportSplitRow] = []  // Split data from optional splits CSV
+    var splitRows: [ImportSplitRow] = []  // Split data from xlsx Splits sheet
     var summary = ImportSummary()
     var isLoading = false
     var isImporting = false
     var error: String?
     var importResult: ImportResult?
-    var splitsFileLoaded = false
+    var hasSplitData = false  // Whether splits were found in the xlsx file
     
     // Filter state
     var filterStatus: ImportFilterStatus = .all
@@ -61,18 +61,19 @@ final class ImportStagingViewModel {
         isLoading = true
         error = nil
         importResult = nil
+        hasSplitData = false
         
         do {
-            // Parse CSV
-            let rawRows = try importExportService.parseCSV(from: fileURL)
+            // Parse XLSX file - this returns both transactions and splits
+            let (rawRows, rawSplitRows) = try importExportService.parseXLSX(from: fileURL)
             
             if rawRows.isEmpty {
-                error = "No valid data found in CSV file. Make sure the file has a header row and at least one data row."
+                error = "No valid data found in the Excel file. Make sure the Transactions sheet has a header row and at least one data row."
                 isLoading = false
                 return
             }
             
-            // Validate rows
+            // Validate transaction rows
             let (validatedRows, importSummary) = importExportService.validateRows(
                 rawRows,
                 existingCategories: existingCategories,
@@ -82,60 +83,30 @@ final class ImportStagingViewModel {
             
             importRows = validatedRows
             summary = importSummary
-        } catch {
-            self.error = "Failed to read CSV file: \(error.localizedDescription)"
-        }
-        
-        isLoading = false
-    }
-    
-    /// Parses and validates an optional splits CSV file
-    @MainActor
-    func parseAndValidateSplits(
-        fileURL: URL,
-        existingMembers: [HouseholdMember]
-    ) async {
-        isLoading = true
-        
-        do {
-            // Parse splits CSV
-            let rawSplitRows = try importExportService.parseSplitsCSV(from: fileURL)
             
-            if rawSplitRows.isEmpty {
-                error = "No valid split data found in CSV file."
-                isLoading = false
-                return
+            // Validate split rows if present
+            if !rawSplitRows.isEmpty {
+                let validatedSplitRows = importExportService.validateSplitRows(
+                    rawSplitRows,
+                    existingMembers: existingMembers
+                )
+                
+                splitRows = validatedSplitRows
+                hasSplitData = true
+                
+                // Update summary with split info
+                summary.totalSplitRows = splitRows.count
+                
+                // Count how many transactions have splits
+                let transactionRowsWithSplits = Set(splitRows.compactMap { $0.parsedTransactionRow })
+                summary.transactionsWithSplits = transactionRowsWithSplits.count
             }
             
-            // Validate split rows
-            let validatedSplitRows = importExportService.validateSplitRows(
-                rawSplitRows,
-                existingMembers: existingMembers
-            )
-            
-            splitRows = validatedSplitRows
-            splitsFileLoaded = true
-            
-            // Update summary with split info
-            summary.totalSplitRows = splitRows.count
-            
-            // Count how many transactions have splits
-            let transactionRowsWithSplits = Set(splitRows.compactMap { $0.parsedTransactionRow })
-            summary.transactionsWithSplits = transactionRowsWithSplits.count
-            
         } catch {
-            self.error = "Failed to read splits CSV file: \(error.localizedDescription)"
+            self.error = "Failed to read Excel file: \(error.localizedDescription)"
         }
         
         isLoading = false
-    }
-    
-    /// Clears the loaded splits data
-    func clearSplits() {
-        splitRows = []
-        splitsFileLoaded = false
-        summary.totalSplitRows = 0
-        summary.transactionsWithSplits = 0
     }
     
     // MARK: - Import Actions
@@ -365,18 +336,9 @@ final class ImportStagingViewModel {
     
     // MARK: - Export Failed Rows
     
-    func getFailedRowsCSV() -> String {
-        importExportService.generateFailedRowsCSV(importRows)
-    }
-    
     func getFailedRowsFileURL() -> URL? {
-        let csv = getFailedRowsCSV()
-        let tempDir = FileManager.default.temporaryDirectory
-        let fileURL = tempDir.appendingPathComponent("failed_imports_\(Date().timeIntervalSince1970).csv")
-        
         do {
-            try csv.write(to: fileURL, atomically: true, encoding: .utf8)
-            return fileURL
+            return try importExportService.generateFailedRowsXLSX(importRows)
         } catch {
             return nil
         }
@@ -393,7 +355,7 @@ final class ImportStagingViewModel {
         error = nil
         importResult = nil
         filterStatus = .all
-        splitsFileLoaded = false
+        hasSplitData = false
     }
     
     // MARK: - Helpers
@@ -408,4 +370,3 @@ final class ImportStagingViewModel {
         return colors.randomElement() ?? "#4ECDC4"
     }
 }
-
