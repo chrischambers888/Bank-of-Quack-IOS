@@ -187,10 +187,6 @@ struct DashboardFilterSheet: View {
         return filter.selectedSectorIds == allSectorIds && filter.selectedCategoryIds == allCategoryIds
     }
     
-    /// Check if any sectors or categories are selected
-    private var hasCategorySelection: Bool {
-        !filter.selectedSectorIds.isEmpty || !filter.selectedCategoryIds.isEmpty
-    }
     
     private var categoryFilterSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -201,7 +197,7 @@ struct DashboardFilterSheet: View {
                 
                 Spacer()
                 
-                if hasCategorySelection {
+                if !sectors.isEmpty || !categories.isEmpty {
                     Button(allCategoriesSelected ? "Clear All" : "Select All") {
                         withAnimation {
                             if allCategoriesSelected {
