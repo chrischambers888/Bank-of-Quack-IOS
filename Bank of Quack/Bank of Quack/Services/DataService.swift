@@ -107,6 +107,26 @@ actor DataService {
             .value
     }
     
+    func fetchBalanceHealthCheck(householdId: UUID) async throws -> BalanceHealthCheck? {
+        let results: [BalanceHealthCheck] = try await supabase
+            .from(.balanceHealthCheck)
+            .select()
+            .eq("household_id", value: householdId.uuidString)
+            .execute()
+            .value
+        return results.first
+    }
+    
+    func fetchProblematicTransactions(householdId: UUID) async throws -> [ProblematicTransaction] {
+        try await supabase
+            .from(.problematicTransactions)
+            .select()
+            .eq("household_id", value: householdId.uuidString)
+            .order("date", ascending: false)
+            .execute()
+            .value
+    }
+    
     // MARK: - Member Approval
     
     func fetchPendingMembers(householdId: UUID) async throws -> [HouseholdMember] {

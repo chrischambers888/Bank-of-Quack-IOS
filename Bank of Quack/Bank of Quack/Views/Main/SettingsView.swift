@@ -25,6 +25,15 @@ struct SettingsView: View {
     @State private var templateURL: URL?
     @State private var isExporting = false
     
+    // Balance health check state
+    @State private var balanceHealthCheck: BalanceHealthCheck?
+    @State private var isCheckingBalance = false
+    @State private var showProblematicTransactions = false
+    @State private var problematicTransactions: [ProblematicTransaction] = []
+    @State private var isLoadingProblematicTransactions = false
+    @State private var transactionToEdit: TransactionView?
+    @State private var isLoadingTransaction = false
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -108,6 +117,25 @@ struct SettingsView: View {
         .sheet(item: $templateURL) { url in
             ShareSheet(items: [url])
         }
+        .sheet(isPresented: $showProblematicTransactions) {
+            ProblematicTransactionsSheet(
+                transactions: problematicTransactions,
+                isLoading: isLoadingProblematicTransactions,
+                totalImbalance: balanceHealthCheck?.totalImbalance ?? 0,
+                onTransactionTapped: { transactionId in
+                    loadTransactionForEditing(transactionId: transactionId)
+                }
+            )
+        }
+        .sheet(item: $transactionToEdit) { transaction in
+            EditTransactionView(transaction: transaction)
+        }
+        .onChange(of: transactionToEdit) { oldValue, newValue in
+            // When the edit sheet closes (transaction becomes nil), refresh data
+            if oldValue != nil && newValue == nil {
+                checkBalanceHealth()
+            }
+        }
         .alert("Leave Bank?", isPresented: $showLeaveHouseholdConfirm) {
             Button("Cancel", role: .cancel) { }
             Button("Leave", role: .destructive) {
@@ -120,6 +148,12 @@ struct SettingsView: View {
             }
         } message: {
             Text("Your transaction history will be preserved. You can rejoin anytime with an invite code.")
+        }
+        .task {
+            // Check balance health when view appears
+            if balanceHealthCheck == nil {
+                checkBalanceHealth()
+            }
         }
     }
     
@@ -143,6 +177,7 @@ struct SettingsView: View {
             )
             
             PrivacySettingsSection()
+            diagnosticsSection
             accountSection
             
             Text("Bank of Quack v1.0.0")
@@ -379,9 +414,229 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - Account Section
+    // MARK: - Diagnostics Section (only shown when there's an issue)
     
     @ViewBuilder
+    private var diagnosticsSection: some View {
+        // Only show this section if there's an imbalance detected
+        if let health = balanceHealthCheck, health.hasImbalance {
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Text("⚠️ DATA ISSUE DETECTED")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(Theme.Colors.error)
+                    .padding(.horizontal, Theme.Spacing.md)
+                
+                VStack(spacing: 0) {
+                    // Warning header
+                    HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                        Image(systemName: "ladybug.fill")
+                            .font(.title2)
+                            .foregroundStyle(Theme.Colors.error)
+                            .frame(width: 32)
+                        
+                        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                            Text("Unexpected Balance Imbalance")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.error)
+                            
+                            Text("Your household balances are off by \(health.totalImbalance.formatted(as: .standard, applyPrivacy: false)). This indicates a bug in the app.")
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(Theme.Spacing.md)
+                    .background(Theme.Colors.error.opacity(0.1))
+                    
+                    Divider()
+                    
+                    // View Problem Transactions button
+                    Button {
+                        loadProblematicTransactions()
+                    } label: {
+                        HStack {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.body)
+                                .foregroundStyle(Theme.Colors.accent)
+                                .frame(width: 24)
+                            
+                            Text("View Problem Transactions")
+                                .font(.body)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Spacer()
+                            
+                            if isLoadingProblematicTransactions {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textSecondary)
+                            }
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.vertical, Theme.Spacing.md)
+                    }
+                    
+                    Divider()
+                        .padding(.leading, Theme.Spacing.md + 24 + Theme.Spacing.sm)
+                    
+                    // Contact support button
+                    Button {
+                        openSupportEmail()
+                    } label: {
+                        HStack {
+                            Image(systemName: "envelope.fill")
+                                .font(.body)
+                                .foregroundStyle(Theme.Colors.accent)
+                                .frame(width: 24)
+                            
+                            Text("Contact Support")
+                                .font(.body)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Spacer()
+                            
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.vertical, Theme.Spacing.md)
+                    }
+                    
+                    Divider()
+                        .padding(.leading, Theme.Spacing.md + 24 + Theme.Spacing.sm)
+                    
+                    // Help text
+                    VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                        Text("You can also fix this yourself:")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                        
+                        Text("1. View problem transactions above\n2. Tap each one to edit the splits\n3. Adjust amounts so they sum to the total")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(Theme.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.Colors.backgroundSecondary.opacity(0.5))
+                }
+                .background(Theme.Colors.backgroundCard)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
+                        .stroke(Theme.Colors.error.opacity(0.3), lineWidth: 1)
+                )
+                .padding(.horizontal, Theme.Spacing.md)
+            }
+        }
+    }
+    
+    private func checkBalanceHealth() {
+        guard let household = authViewModel.currentHousehold else { return }
+        
+        isCheckingBalance = true
+        
+        Task {
+            do {
+                let dataService = DataService()
+                let health = try await dataService.fetchBalanceHealthCheck(householdId: household.id)
+                await MainActor.run {
+                    self.balanceHealthCheck = health
+                    isCheckingBalance = false
+                }
+            } catch {
+                await MainActor.run {
+                    isCheckingBalance = false
+                }
+            }
+        }
+    }
+    
+    private func loadProblematicTransactions() {
+        guard let household = authViewModel.currentHousehold else { return }
+        
+        isLoadingProblematicTransactions = true
+        
+        Task {
+            do {
+                let dataService = DataService()
+                let transactions = try await dataService.fetchProblematicTransactions(householdId: household.id)
+                await MainActor.run {
+                    self.problematicTransactions = transactions
+                    self.isLoadingProblematicTransactions = false
+                    self.showProblematicTransactions = true
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoadingProblematicTransactions = false
+                }
+            }
+        }
+    }
+    
+    private func loadTransactionForEditing(transactionId: UUID) {
+        guard let household = authViewModel.currentHousehold else { return }
+        
+        isLoadingTransaction = true
+        
+        Task {
+            do {
+                let dataService = DataService()
+                let transactions = try await dataService.fetchTransactions(householdId: household.id)
+                
+                await MainActor.run {
+                    if let transaction = transactions.first(where: { $0.id == transactionId }) {
+                        self.transactionToEdit = transaction
+                        self.showProblematicTransactions = false // Close the sheet first
+                    }
+                    self.isLoadingTransaction = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoadingTransaction = false
+                }
+            }
+        }
+    }
+    
+    private func openSupportEmail() {
+        let imbalance = balanceHealthCheck?.totalImbalance ?? 0
+        let transactionCount = problematicTransactions.count
+        let transactionIds = problematicTransactions.prefix(5).map { $0.transactionId.uuidString.prefix(8) }.joined(separator: ", ")
+        
+        let subject = "Bank of Quack - Balance Issue Report"
+        let body = """
+        Hi,
+        
+        I'm experiencing a balance discrepancy in my household.
+        
+        --- Diagnostic Info ---
+        Total Imbalance: \(imbalance.formatted(as: .standard, applyPrivacy: false))
+        Problem Transactions: \(transactionCount)
+        \(transactionCount > 0 ? "Transaction IDs: \(transactionIds)\(transactionCount > 5 ? "..." : "")" : "")
+        
+        [Please describe any additional context or steps that led to this issue]
+        
+        Thanks!
+        """
+        
+        let encodedSubject = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let encodedBody = body.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        
+        // TODO: Replace with your actual support email
+        if let url = URL(string: "mailto:support@bankofquack.com?subject=\(encodedSubject)&body=\(encodedBody)") {
+            UIApplication.shared.open(url)
+        }
+    }
+    
+    // MARK: - Account Section
+    
     private var accountSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             Text("ACCOUNT")
@@ -1507,6 +1762,248 @@ struct PrivacyToggleRow: View {
         }
         .padding(Theme.Spacing.md)
         .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Problematic Transactions Sheet
+
+struct ProblematicTransactionsSheet: View {
+    let transactions: [ProblematicTransaction]
+    let isLoading: Bool
+    let totalImbalance: Decimal
+    let onTransactionTapped: (UUID) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                if isLoading {
+                    ProgressView("Loading...")
+                } else if transactions.isEmpty {
+                    emptyState
+                } else {
+                    transactionsList
+                }
+            }
+            .navigationTitle("Problem Transactions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+    
+    private var emptyState: some View {
+        VStack(spacing: Theme.Spacing.md) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(Theme.Colors.income)
+            
+            Text("No Problem Transactions Found")
+                .font(.headline)
+                .foregroundStyle(Theme.Colors.textPrimary)
+            
+            Text("All transactions have valid split totals. The imbalance may be due to other factors.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.Colors.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, Theme.Spacing.xl)
+            
+            contactSupportButton
+                .padding(.top, Theme.Spacing.lg)
+        }
+    }
+    
+    private var transactionsList: some View {
+        ScrollView {
+            VStack(spacing: Theme.Spacing.sm) {
+                // Header info
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                    Text("Found \(transactions.count) transaction\(transactions.count == 1 ? "" : "s") with split issues")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    
+                    Text("Tap a transaction to edit and fix the splits.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Theme.Spacing.md)
+                .padding(.top, Theme.Spacing.md)
+                
+                // Transaction cards
+                ForEach(transactions) { transaction in
+                    Button {
+                        onTransactionTapped(transaction.transactionId)
+                    } label: {
+                        ProblematicTransactionCard(transaction: transaction)
+                    }
+                    .buttonStyle(.plain)
+                }
+                
+                // Contact support section
+                VStack(spacing: Theme.Spacing.sm) {
+                    Text("Need help?")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    
+                    contactSupportButton
+                }
+                .padding(.top, Theme.Spacing.lg)
+                
+                Spacer(minLength: 50)
+            }
+        }
+    }
+    
+    private var contactSupportButton: some View {
+        Button {
+            openSupportEmail()
+        } label: {
+            HStack {
+                Image(systemName: "envelope.fill")
+                Text("Contact Support")
+            }
+            .font(.body)
+            .fontWeight(.medium)
+            .foregroundStyle(.white)
+            .padding(.horizontal, Theme.Spacing.lg)
+            .padding(.vertical, Theme.Spacing.sm)
+            .background(Theme.Colors.accent)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+        }
+    }
+    
+    private func openSupportEmail() {
+        let subject = "Bank of Quack - Balance Issue Report"
+        let body = """
+        Hi,
+        
+        I'm experiencing a balance discrepancy in my household.
+        
+        --- Diagnostic Info ---
+        Total Imbalance: \(totalImbalance.formatted(as: .standard, applyPrivacy: false))
+        Problem Transactions: \(transactions.count)
+        Transaction IDs: \(transactions.map { $0.transactionId.uuidString.prefix(8) }.joined(separator: ", "))
+        
+        [Please describe any additional context or steps to reproduce]
+        
+        Thanks!
+        """
+        
+        let encodedSubject = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let encodedBody = body.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        
+        // TODO: Replace with your actual support email
+        if let url = URL(string: "mailto:support@bankofquack.com?subject=\(encodedSubject)&body=\(encodedBody)") {
+            UIApplication.shared.open(url)
+        }
+    }
+}
+
+struct ProblematicTransactionCard: View {
+    let transaction: ProblematicTransaction
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            // Header row
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(transaction.description)
+                        .font(.headline)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .lineLimit(1)
+                    
+                    Text(transaction.date.formatted(date: .abbreviated, time: .omitted))
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(transaction.expectedAmount.formatted(as: .standard, applyPrivacy: false))
+                        .font(.headline)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                    
+                    // Tap to edit hint
+                    HStack(spacing: 2) {
+                        Text("Tap to fix")
+                            .font(.caption2)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            
+            Divider()
+            
+            // Issue details
+            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                Text("Issue Details")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textMuted)
+                
+                HStack {
+                    Text("Expected:")
+                    Spacer()
+                    Text(transaction.expectedAmount.formatted(as: .standard, applyPrivacy: false))
+                }
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textSecondary)
+                
+                if abs(transaction.owedDifference) > 0.01 {
+                    HStack {
+                        Text("Owed sum:")
+                        Spacer()
+                        Text(transaction.actualOwedSum.formatted(as: .standard, applyPrivacy: false))
+                        Text("(\(transaction.owedDifference > 0 ? "-" : "+")\(abs(transaction.owedDifference).formatted(as: .standard, applyPrivacy: false)))")
+                            .foregroundStyle(Theme.Colors.error)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+                
+                if abs(transaction.paidDifference) > 0.01 {
+                    HStack {
+                        Text("Paid sum:")
+                        Spacer()
+                        Text(transaction.actualPaidSum.formatted(as: .standard, applyPrivacy: false))
+                        Text("(\(transaction.paidDifference > 0 ? "-" : "+")\(abs(transaction.paidDifference).formatted(as: .standard, applyPrivacy: false)))")
+                            .foregroundStyle(Theme.Colors.error)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                }
+            }
+            
+            // Transaction ID for support
+            HStack {
+                Text("ID:")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.textMuted)
+                Text(transaction.transactionId.uuidString.prefix(8) + "...")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+        }
+        .padding(Theme.Spacing.md)
+        .background(Theme.Colors.backgroundCard)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
+                .stroke(Theme.Colors.error.opacity(0.3), lineWidth: 1)
+        )
+        .padding(.horizontal, Theme.Spacing.md)
     }
 }
 

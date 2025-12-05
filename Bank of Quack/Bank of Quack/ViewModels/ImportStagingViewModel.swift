@@ -353,11 +353,19 @@ final class ImportStagingViewModel {
                 
                 // Get splits for this transaction if available
                 let rowNumber = row.parsedCsvRow ?? row.rowNumber
+                let splitRowsForTransaction = splitsMap[rowNumber] ?? []
                 let memberSplits = buildMemberSplits(
-                    from: splitsMap[rowNumber] ?? [],
+                    from: splitRowsForTransaction,
                     memberIdMap: memberIdMap,
                     totalAmount: row.parsedAmount ?? 0
                 )
+                
+                // Check if split building failed (unmatched members)
+                if !splitRowsForTransaction.isEmpty && memberSplits == nil {
+                    failedCount += 1
+                    errors.append("Row \(row.rowNumber): Failed to build splits - one or more members in the Splits sheet don't exist in the household")
+                    continue
+                }
                 
                 // Convert 'equal' to 'custom' since DB no longer supports 'equal'
                 let effectiveSplitType: SplitType = {
@@ -445,11 +453,19 @@ final class ImportStagingViewModel {
                 
                 // Get splits for this transaction if available
                 let rowNumber = row.parsedCsvRow ?? row.rowNumber
+                let splitRowsForReimbursement = splitsMap[rowNumber] ?? []
                 let memberSplits = buildMemberSplits(
-                    from: splitsMap[rowNumber] ?? [],
+                    from: splitRowsForReimbursement,
                     memberIdMap: memberIdMap,
                     totalAmount: row.parsedAmount ?? 0
                 )
+                
+                // Check if split building failed (unmatched members)
+                if !splitRowsForReimbursement.isEmpty && memberSplits == nil {
+                    failedCount += 1
+                    errors.append("Row \(row.rowNumber): Failed to build splits - one or more members in the Splits sheet don't exist in the household")
+                    continue
+                }
                 
                 // Convert 'equal' to 'custom' since DB no longer supports 'equal'
                 let effectiveSplitType: SplitType = {
@@ -540,6 +556,7 @@ final class ImportStagingViewModel {
     }
     
     /// Builds MemberSplit array from ImportSplitRow data
+    /// Returns nil if any split member wasn't matched (validation should catch this earlier)
     private func buildMemberSplits(
         from splitRows: [ImportSplitRow],
         memberIdMap: [UUID: HouseholdMember],
@@ -552,16 +569,41 @@ final class ImportStagingViewModel {
         for splitRow in splitRows {
             guard let memberId = splitRow.matchedMemberId,
                   let member = memberIdMap[memberId] else {
-                continue
+                // If any split has an unmatched member, return nil to prevent partial splits
+                // This should have been caught by validation, but acts as a safety net
+                return nil
+            }
+            
+            let owedAmount = splitRow.parsedOwedAmount ?? 0
+            let paidAmount = splitRow.parsedPaidAmount ?? 0
+            
+            // Auto-calculate percentages from amounts if not provided
+            // This ensures reimbursement calculations work correctly in member_balances view
+            let owedPercentage: Decimal
+            if let providedPercentage = splitRow.parsedOwedPercentage, providedPercentage > 0 {
+                owedPercentage = providedPercentage
+            } else if totalAmount > 0 {
+                owedPercentage = (owedAmount / totalAmount) * 100
+            } else {
+                owedPercentage = 0
+            }
+            
+            let paidPercentage: Decimal
+            if let providedPercentage = splitRow.parsedPaidPercentage, providedPercentage > 0 {
+                paidPercentage = providedPercentage
+            } else if totalAmount > 0 {
+                paidPercentage = (paidAmount / totalAmount) * 100
+            } else {
+                paidPercentage = 0
             }
             
             let memberSplit = MemberSplit(
                 id: memberId,
                 displayName: member.displayName,
-                owedAmount: splitRow.parsedOwedAmount ?? 0,
-                owedPercentage: splitRow.parsedOwedPercentage ?? 0,
-                paidAmount: splitRow.parsedPaidAmount ?? 0,
-                paidPercentage: splitRow.parsedPaidPercentage ?? 0
+                owedAmount: owedAmount,
+                owedPercentage: owedPercentage,
+                paidAmount: paidAmount,
+                paidPercentage: paidPercentage
             )
             memberSplits.append(memberSplit)
         }

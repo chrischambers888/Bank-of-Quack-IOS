@@ -76,6 +76,9 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
     case unknownMember(name: String)
     case invalidExpenseFor(value: String)
     case customWithoutSplits(field: String)  // "Paid By" or "Expense For" is "Custom" but no splits data
+    case splitOwedSumMismatch(expected: Decimal, actual: Decimal)  // Split owed amounts don't sum to transaction amount
+    case splitPaidSumMismatch(expected: Decimal, actual: Decimal)  // Split paid amounts don't sum to transaction amount
+    case unmatchedMemberInSplit(name: String)  // Split references a member that doesn't exist
     
     var id: String {
         switch self {
@@ -86,6 +89,9 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
         case .unknownMember(let name): return "member_\(name)"
         case .invalidExpenseFor(let value): return "expense_for_\(value)"
         case .customWithoutSplits(let field): return "custom_no_splits_\(field)"
+        case .splitOwedSumMismatch(let expected, let actual): return "split_owed_mismatch_\(expected)_\(actual)"
+        case .splitPaidSumMismatch(let expected, let actual): return "split_paid_mismatch_\(expected)_\(actual)"
+        case .unmatchedMemberInSplit(let name): return "unmatched_member_\(name)"
         }
     }
     
@@ -105,6 +111,12 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
             return "Invalid 'Expense For' value: \"\(value)\". Use a member name, 'Equal', or 'Custom'."
         case .customWithoutSplits(let field):
             return "'\(field)' is set to 'Custom' but no matching splits found in Splits sheet."
+        case .splitOwedSumMismatch(let expected, let actual):
+            return "Split owed amounts (\(actual)) don't match transaction amount (\(expected)). Fix the Splits sheet."
+        case .splitPaidSumMismatch(let expected, let actual):
+            return "Split paid amounts (\(actual)) don't match transaction amount (\(expected)). Fix the Splits sheet."
+        case .unmatchedMemberInSplit(let name):
+            return "Split references unknown member \"\(name)\". Member must exist in household."
         }
     }
 }

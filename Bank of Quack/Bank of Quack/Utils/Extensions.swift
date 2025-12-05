@@ -46,6 +46,39 @@ extension Decimal {
         NSDecimalNumber(decimal: self).doubleValue
     }
     
+    /// Rounds to specified decimal places using banker's rounding
+    func rounded(_ decimalPlaces: Int) -> Decimal {
+        var result = Decimal()
+        var value = self
+        NSDecimalRound(&result, &value, decimalPlaces, .bankers)
+        return result
+    }
+    
+    /// Calculates equal shares with remainder allocation to prevent rounding drift
+    /// - Parameters:
+    ///   - total: The total amount to split
+    ///   - memberCount: Number of members to split among
+    ///   - memberIndex: Index of the current member (0-based)
+    /// - Returns: The share for this member, with any remainder allocated to the first member
+    static func calculateEqualShare(total: Decimal, memberCount: Int, memberIndex: Int) -> Decimal {
+        guard memberCount > 0 else { return 0 }
+        
+        // Round each share to 2 decimal places
+        let equalShare = (total / Decimal(memberCount)).rounded(2)
+        
+        // Calculate what the sum would be
+        let totalAllocated = equalShare * Decimal(memberCount)
+        
+        // Calculate remainder (could be positive or negative due to rounding)
+        let remainder = total - totalAllocated
+        
+        // Assign remainder to first member to ensure exact sum
+        if memberIndex == 0 {
+            return equalShare + remainder
+        }
+        return equalShare
+    }
+    
     func formatted(as style: MoneyFormatStyle = .standard, applyPrivacy: Bool = true) -> String {
         let displayValue: Decimal
         if applyPrivacy && PrivacyManager.shared.randomizeValues {

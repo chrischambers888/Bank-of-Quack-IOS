@@ -1076,10 +1076,11 @@ struct AddTransactionView: View {
         let memberCount = approvedMembers.count
         guard memberCount > 0 else { return }
         
-        let equalShare = total / Decimal(memberCount)
-        let equalPercentage: Decimal = 100 / Decimal(memberCount)
-        
         for i in memberSplits.indices {
+            // Calculate equal share with remainder allocation to prevent rounding drift
+            let equalShare = Decimal.calculateEqualShare(total: total, memberCount: memberCount, memberIndex: i)
+            let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: memberCount, memberIndex: i)
+            
             // Update owed amounts based on split type
             switch splitType {
             case .equal:
@@ -1094,8 +1095,8 @@ struct AddTransactionView: View {
                     memberSplits[i].owedPercentage = 0
                 }
             case .custom, .payerOnly:
-                // Keep percentages, recalculate amounts
-                memberSplits[i].owedAmount = total * memberSplits[i].owedPercentage / 100
+                // Keep percentages, recalculate amounts (round to prevent drift)
+                memberSplits[i].owedAmount = (total * memberSplits[i].owedPercentage / 100).rounded(2)
             }
             
             // Update paid amounts based on paid by type
@@ -1112,8 +1113,8 @@ struct AddTransactionView: View {
                 memberSplits[i].paidAmount = equalShare
                 memberSplits[i].paidPercentage = equalPercentage
             case .custom:
-                // Keep percentages, recalculate amounts
-                memberSplits[i].paidAmount = total * memberSplits[i].paidPercentage / 100
+                // Keep percentages, recalculate amounts (round to prevent drift)
+                memberSplits[i].paidAmount = (total * memberSplits[i].paidPercentage / 100).rounded(2)
             }
         }
         
@@ -1125,10 +1126,11 @@ struct AddTransactionView: View {
         let memberCount = approvedMembers.count
         guard memberCount > 0 else { return }
         
-        let equalShare = total / Decimal(memberCount)
-        let equalPercentage: Decimal = 100 / Decimal(memberCount)
-        
         for i in memberSplits.indices {
+            // Calculate equal share with remainder allocation to prevent rounding drift
+            let equalShare = Decimal.calculateEqualShare(total: total, memberCount: memberCount, memberIndex: i)
+            let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: memberCount, memberIndex: i)
+            
             switch splitType {
             case .equal:
                 memberSplits[i].owedAmount = equalShare
@@ -1154,10 +1156,11 @@ struct AddTransactionView: View {
         let memberCount = approvedMembers.count
         guard memberCount > 0 else { return }
         
-        let equalShare = total / Decimal(memberCount)
-        let equalPercentage: Decimal = 100 / Decimal(memberCount)
-        
         for i in memberSplits.indices {
+            // Calculate equal share with remainder allocation to prevent rounding drift
+            let equalShare = Decimal.calculateEqualShare(total: total, memberCount: memberCount, memberIndex: i)
+            let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: memberCount, memberIndex: i)
+            
             switch paidByType {
             case .single:
                 if memberSplits[i].memberId == paidByMemberId {

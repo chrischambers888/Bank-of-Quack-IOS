@@ -1135,6 +1135,35 @@ final class ImportExportService: Sendable {
             
             } // End of expense transaction type validation
             
+            // Validate custom splits sum correctly (for expenses with custom splits)
+            if transactionType == .expense,
+               let csvRow = row.parsedCsvRow,
+               let splits = splitRowsByTransaction[csvRow],
+               !splits.isEmpty,
+               let transactionAmount = row.parsedAmount {
+                
+                // Check for unmatched members in splits (this is now an ERROR, not silently skipped)
+                for split in splits {
+                    if split.matchedMemberId == nil && !split.memberName.trimmingCharacters(in: .whitespaces).isEmpty {
+                        row.validationErrors.append(.unmatchedMemberInSplit(name: split.memberName))
+                    }
+                }
+                
+                // Calculate sum of owed amounts
+                let totalOwed = splits.reduce(Decimal(0)) { $0 + ($1.parsedOwedAmount ?? 0) }
+                if abs(totalOwed - transactionAmount) > 0.01 {
+                    row.validationErrors.append(.splitOwedSumMismatch(expected: transactionAmount, actual: totalOwed))
+                }
+                
+                // Calculate sum of paid amounts (only validate if custom paid by type)
+                if row.parsedPaidByType == .custom {
+                    let totalPaid = splits.reduce(Decimal(0)) { $0 + ($1.parsedPaidAmount ?? 0) }
+                    if abs(totalPaid - transactionAmount) > 0.01 {
+                        row.validationErrors.append(.splitPaidSumMismatch(expected: transactionAmount, actual: totalPaid))
+                    }
+                }
+            }
+            
             // Parse reimburses row (for reimbursement transactions)
             if !row.reimbursesRow.isEmpty {
                 row.parsedReimbursesRow = Int(row.reimbursesRow.trimmingCharacters(in: .whitespaces))

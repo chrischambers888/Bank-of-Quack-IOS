@@ -57,6 +57,8 @@ enum Table: String {
     // Views
     case transactionsView = "transactions_view"
     case memberBalances = "member_balances"
+    case balanceHealthCheck = "balance_health_check"
+    case problematicTransactions = "problematic_transactions"
 }
 
 // MARK: - RPC Functions

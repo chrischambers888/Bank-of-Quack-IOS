@@ -604,3 +604,73 @@ struct UpdateMemberPermissionsRequest: Encodable, Sendable {
     }
 }
 
+// MARK: - Balance Health Check
+
+/// Result from the balance_health_check view that monitors household balance integrity
+struct BalanceHealthCheck: Codable, Sendable {
+    let householdId: UUID
+    let totalImbalance: Decimal
+    let memberCount: Int
+    let status: String
+    let message: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case householdId = "household_id"
+        case totalImbalance = "total_imbalance"
+        case memberCount = "member_count"
+        case status
+        case message
+    }
+    
+    /// Returns true if the balance status is OK (within tolerance)
+    var isHealthy: Bool {
+        status == "OK"
+    }
+    
+    /// Returns true if there's an imbalance detected
+    var hasImbalance: Bool {
+        status == "IMBALANCED"
+    }
+}
+
+// MARK: - Problematic Transaction
+
+/// Transaction identified as having split sum issues
+struct ProblematicTransaction: Codable, Identifiable, Sendable {
+    let transactionId: UUID
+    let householdId: UUID
+    let date: Date
+    let description: String
+    let expectedAmount: Decimal
+    let actualOwedSum: Decimal
+    let actualPaidSum: Decimal
+    let owedDifference: Decimal
+    let paidDifference: Decimal
+    
+    var id: UUID { transactionId }
+    
+    enum CodingKeys: String, CodingKey {
+        case transactionId = "transaction_id"
+        case householdId = "household_id"
+        case date
+        case description
+        case expectedAmount = "expected_amount"
+        case actualOwedSum = "actual_owed_sum"
+        case actualPaidSum = "actual_paid_sum"
+        case owedDifference = "owed_difference"
+        case paidDifference = "paid_difference"
+    }
+    
+    /// Returns a human-readable description of what's wrong
+    var issueDescription: String {
+        var issues: [String] = []
+        if abs(owedDifference) > 0.01 {
+            issues.append("Owed amounts off by \(owedDifference.formatted(as: .standard, applyPrivacy: false))")
+        }
+        if abs(paidDifference) > 0.01 {
+            issues.append("Paid amounts off by \(paidDifference.formatted(as: .standard, applyPrivacy: false))")
+        }
+        return issues.joined(separator: ", ")
+    }
+}
+
