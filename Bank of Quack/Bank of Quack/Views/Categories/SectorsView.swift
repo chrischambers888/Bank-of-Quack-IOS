@@ -187,7 +187,7 @@ struct SectorsView: View {
                     }
                 }
                 
-                ForEach(authViewModel.sectors) { sector in
+                ForEach(authViewModel.sectors.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { sector in
                     if isSelectionMode {
                         SectorRowSelectable(
                             sector: sector,
@@ -220,7 +220,9 @@ struct SectorsView: View {
     
     private func linkedCategories(for sector: Sector) -> [Category] {
         let categoryIds = authViewModel.sectorCategories[sector.id] ?? []
-        return authViewModel.categories.filter { categoryIds.contains($0.id) }
+        return authViewModel.categories
+            .filter { categoryIds.contains($0.id) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     
     private func toggleSelection(_ id: UUID) {

@@ -720,7 +720,18 @@ struct ImportStagingView: View {
         }
         
         if result.failedCount > 0 {
-            message += "\n\n\(result.failedCount) transactions failed to import."
+            message += "\n\n\(result.failedCount) transaction(s) failed to import."
+            
+            // Show actual error messages (limit to first 5 for readability)
+            if !result.errors.isEmpty {
+                let maxErrorsToShow = 5
+                let errorsToShow = Array(result.errors.prefix(maxErrorsToShow))
+                message += "\n\nErrors:\n• " + errorsToShow.joined(separator: "\n• ")
+                
+                if result.errors.count > maxErrorsToShow {
+                    message += "\n\n...and \(result.errors.count - maxErrorsToShow) more error(s)."
+                }
+            }
         }
         
         return message

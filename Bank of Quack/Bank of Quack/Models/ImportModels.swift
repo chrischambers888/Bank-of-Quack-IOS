@@ -78,6 +78,8 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
     case customWithoutSplits(field: String)  // "Paid By" or "Expense For" is "Custom" but no splits data
     case splitOwedSumMismatch(expected: Decimal, actual: Decimal)  // Split owed amounts don't sum to transaction amount
     case splitPaidSumMismatch(expected: Decimal, actual: Decimal)  // Split paid amounts don't sum to transaction amount
+    case splitOwedPercentageMismatch(actual: Decimal)  // Split owed percentages don't sum to ~100%
+    case splitPaidPercentageMismatch(actual: Decimal)  // Split paid percentages don't sum to ~100%
     case unmatchedMemberInSplit(name: String)  // Split references a member that doesn't exist
     
     var id: String {
@@ -91,6 +93,8 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
         case .customWithoutSplits(let field): return "custom_no_splits_\(field)"
         case .splitOwedSumMismatch(let expected, let actual): return "split_owed_mismatch_\(expected)_\(actual)"
         case .splitPaidSumMismatch(let expected, let actual): return "split_paid_mismatch_\(expected)_\(actual)"
+        case .splitOwedPercentageMismatch(let actual): return "split_owed_pct_mismatch_\(actual)"
+        case .splitPaidPercentageMismatch(let actual): return "split_paid_pct_mismatch_\(actual)"
         case .unmatchedMemberInSplit(let name): return "unmatched_member_\(name)"
         }
     }
@@ -115,6 +119,10 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
             return "Split owed amounts (\(actual)) don't match transaction amount (\(expected)). Fix the Splits sheet."
         case .splitPaidSumMismatch(let expected, let actual):
             return "Split paid amounts (\(actual)) don't match transaction amount (\(expected)). Fix the Splits sheet."
+        case .splitOwedPercentageMismatch(let actual):
+            return "Split owed percentages (\(actual)%) don't add up to 100%. Fix the Splits sheet."
+        case .splitPaidPercentageMismatch(let actual):
+            return "Split paid percentages (\(actual)%) don't add up to 100%. Fix the Splits sheet."
         case .unmatchedMemberInSplit(let name):
             return "Split references unknown member \"\(name)\". Member must exist in household."
         }

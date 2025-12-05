@@ -1070,8 +1070,9 @@ final class ImportExportService: Sendable {
             } else if customValues.contains(paidByLower) {
                 // "Custom" = use splits sheet
                 row.parsedPaidByType = .custom
-                // Check if splits exist for this row
-                if let csvRow = row.parsedCsvRow, splitRowsByTransaction[csvRow] == nil {
+                // Check if splits exist for this row (use parsedCsvRow or fall back to rowNumber)
+                let lookupRow = row.parsedCsvRow ?? row.rowNumber
+                if splitRowsByTransaction[lookupRow] == nil {
                     row.validationErrors.append(.customWithoutSplits(field: "Paid By"))
                 }
             } else {
@@ -1116,8 +1117,9 @@ final class ImportExportService: Sendable {
             } else if customValues.contains(expenseForLower) {
                 // "Custom" = use splits sheet
                 row.parsedSplitType = .custom
-                // Check if splits exist for this row
-                if let csvRow = row.parsedCsvRow, splitRowsByTransaction[csvRow] == nil {
+                // Check if splits exist for this row (use parsedCsvRow or fall back to rowNumber)
+                let lookupRow = row.parsedCsvRow ?? row.rowNumber
+                if splitRowsByTransaction[lookupRow] == nil {
                     row.validationErrors.append(.customWithoutSplits(field: "Expense For"))
                 }
             } else {
@@ -1136,9 +1138,10 @@ final class ImportExportService: Sendable {
             } // End of expense transaction type validation
             
             // Validate custom splits sum correctly (for expenses with custom splits)
+            // Use parsedCsvRow if available, otherwise fall back to rowNumber for split matching
+            let splitLookupRow = row.parsedCsvRow ?? row.rowNumber
             if transactionType == .expense,
-               let csvRow = row.parsedCsvRow,
-               let splits = splitRowsByTransaction[csvRow],
+               let splits = splitRowsByTransaction[splitLookupRow],
                !splits.isEmpty,
                let transactionAmount = row.parsedAmount {
                 
@@ -1155,12 +1158,23 @@ final class ImportExportService: Sendable {
                     row.validationErrors.append(.splitOwedSumMismatch(expected: transactionAmount, actual: totalOwed))
                 }
                 
-                // Calculate sum of paid amounts (only validate if custom paid by type)
-                if row.parsedPaidByType == .custom {
-                    let totalPaid = splits.reduce(Decimal(0)) { $0 + ($1.parsedPaidAmount ?? 0) }
-                    if abs(totalPaid - transactionAmount) > 0.01 {
-                        row.validationErrors.append(.splitPaidSumMismatch(expected: transactionAmount, actual: totalPaid))
-                    }
+                // Calculate sum of owed percentages (should sum to ~100%)
+                let totalOwedPercentage = splits.reduce(Decimal(0)) { $0 + ($1.parsedOwedPercentage ?? 0) }
+                if totalOwedPercentage > 0 && abs(totalOwedPercentage - 100) > 1 {
+                    row.validationErrors.append(.splitOwedPercentageMismatch(actual: totalOwedPercentage))
+                }
+                
+                // Calculate sum of paid amounts - validate whenever splits have non-zero paid values
+                // (the database always validates this, so we should catch it in staging too)
+                let totalPaid = splits.reduce(Decimal(0)) { $0 + ($1.parsedPaidAmount ?? 0) }
+                if totalPaid > 0 && abs(totalPaid - transactionAmount) > 0.01 {
+                    row.validationErrors.append(.splitPaidSumMismatch(expected: transactionAmount, actual: totalPaid))
+                }
+                
+                // Calculate sum of paid percentages (should sum to ~100% if any are provided)
+                let totalPaidPercentage = splits.reduce(Decimal(0)) { $0 + ($1.parsedPaidPercentage ?? 0) }
+                if totalPaidPercentage > 0 && abs(totalPaidPercentage - 100) > 1 {
+                    row.validationErrors.append(.splitPaidPercentageMismatch(actual: totalPaidPercentage))
                 }
             }
             

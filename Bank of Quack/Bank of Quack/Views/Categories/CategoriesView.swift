@@ -187,7 +187,7 @@ struct CategoriesView: View {
                     }
                 }
                 
-                ForEach(authViewModel.categories) { category in
+                ForEach(authViewModel.categories.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { category in
                     if isSelectionMode {
                         CategoryRowSelectable(
                             category: category,
