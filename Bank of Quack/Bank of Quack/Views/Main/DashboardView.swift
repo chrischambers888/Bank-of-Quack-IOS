@@ -828,6 +828,18 @@ struct DashboardView: View {
                         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
                         .padding(.horizontal, Theme.Spacing.md)
                         
+                        // Member Balance - show when:
+                        // - Multiple active members, OR
+                        // - Only one active member but has non-zero balance (due to inactive members/old transactions)
+                        if shouldShowBalanceWidget {
+                            MemberBalanceCardWithInfo(
+                                balance: filteredCurrentMemberBalance,
+                                memberCount: membersWithNonZeroBalance,
+                                onInfoTapped: { showBalanceDetails = true }
+                            )
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
                         // Balance Cards (using filtered totals)
                         HStack(spacing: Theme.Spacing.md) {
                             Button {
@@ -859,7 +871,7 @@ struct DashboardView: View {
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Net Balance (using filtered totals) - hide when income is hidden
+                        // Net Saved (using filtered totals) - hide when income is hidden
                         if !privacyManager.hideIncomeData {
                             Button {
                                 showNetBalanceDetail = true
@@ -870,18 +882,6 @@ struct DashboardView: View {
                                 )
                             }
                             .buttonStyle(.plain)
-                            .padding(.horizontal, Theme.Spacing.md)
-                        }
-                        
-                        // Member Balance - show when:
-                        // - Multiple active members, OR
-                        // - Only one active member but has non-zero balance (due to inactive members/old transactions)
-                        if shouldShowBalanceWidget {
-                            MemberBalanceCardWithInfo(
-                                balance: filteredCurrentMemberBalance,
-                                memberCount: membersWithNonZeroBalance,
-                                onInfoTapped: { showBalanceDetails = true }
-                            )
                             .padding(.horizontal, Theme.Spacing.md)
                         }
                         

@@ -118,18 +118,21 @@ struct DashboardFilter: Codable, Equatable, Sendable {
             return (targetMonth.startOfMonth, targetMonth.endOfMonth)
             
         case .thisYear:
-            guard let startOfYear = calendar.dateInterval(of: .year, for: now)?.start,
-                  let endOfYear = calendar.dateInterval(of: .year, for: now)?.end else { return nil }
+            guard let startOfYear = calendar.dateInterval(of: .year, for: now)?.start else { return nil }
+            // Subtract 1 second from end to avoid including first moment of next year
+            guard let endOfYearInterval = calendar.dateInterval(of: .year, for: now)?.end else { return nil }
+            let endOfYear = endOfYearInterval.addingTimeInterval(-1)
             return (startOfYear, endOfYear)
             
         case .allTime:
             return nil // No date restriction
             
         case .custom:
-            guard let start = customStartDate, let end = customEndDate else { return nil }
+            // Use current month as default if dates aren't set
+            let start = customStartDate ?? now.startOfMonth
+            let end = customEndDate ?? now
             // Ensure end date includes the entire day
-            let endOfDay = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end
-            return (start.startOfDay, endOfDay)
+            return (start.startOfDay, end.endOfDay)
         }
     }
     

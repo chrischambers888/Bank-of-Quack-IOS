@@ -95,6 +95,15 @@ struct DashboardFilterSheet: View {
                             if preset == .thisMonth {
                                 filter.monthOffset = 0
                             }
+                            // Initialize custom dates when switching to custom
+                            if preset == .custom {
+                                if filter.customStartDate == nil {
+                                    filter.customStartDate = Date().startOfMonth
+                                }
+                                if filter.customEndDate == nil {
+                                    filter.customEndDate = Date()
+                                }
+                            }
                         }
                     }
                 }

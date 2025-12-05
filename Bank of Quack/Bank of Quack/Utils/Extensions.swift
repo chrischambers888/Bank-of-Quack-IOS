@@ -8,7 +8,15 @@ extension Date {
     }
     
     var endOfMonth: Date {
-        Calendar.current.dateInterval(of: .month, for: self)?.end ?? self
+        // dateInterval.end returns the start of the NEXT month, so we subtract 1 second
+        // to get the last moment of the current month
+        guard let interval = Calendar.current.dateInterval(of: .month, for: self) else { return self }
+        return interval.end.addingTimeInterval(-1)
+    }
+    
+    var endOfDay: Date {
+        let calendar = Calendar.current
+        return calendar.date(bySettingHour: 23, minute: 59, second: 59, of: self) ?? self
     }
     
     var startOfDay: Date {
