@@ -193,6 +193,58 @@ struct TransactionsListView: View {
         return result
     }
     
+    // MARK: - Portion Mode (Member Share Filtering)
+    
+    /// Whether "portion mode" is active - showing only selected members' share of shared transactions
+    private var isPortionModeActive: Bool {
+        let filter = filterManager.filter
+        return !filter.selectedMemberIds.isEmpty && filter.includeShared
+    }
+    
+    /// Calculate the portion amount and percentage for a transaction based on selected members
+    /// Returns nil if the transaction should show full amount (not shared or portion mode not active)
+    private func portionInfo(for transaction: TransactionView, reimbursedAmount: Decimal = 0) -> (amount: Decimal, percentage: Decimal)? {
+        guard isPortionModeActive,
+              transaction.transactionType == .expense else {
+            return nil
+        }
+        
+        let selectedMembers = filterManager.filter.selectedMemberIds
+        
+        // Get splits for this transaction
+        guard let splits = allSplits[transaction.id] else {
+            return nil
+        }
+        
+        // Calculate effective amount after reimbursements
+        let effectiveAmount = max(transaction.amount - reimbursedAmount, 0)
+        guard effectiveAmount > 0 else { return nil }
+        
+        // Calculate the reimbursement ratio to apply to portions
+        let reimbursementRatio = transaction.amount > 0 ? effectiveAmount / transaction.amount : 1
+        
+        // Sum the owed amounts for selected members
+        let selectedMembersOwed = splits
+            .filter { selectedMembers.contains($0.memberId) && $0.owedAmount > 0 }
+            .reduce(Decimal(0)) { $0 + $1.owedAmount }
+        
+        // Calculate total owed (for percentage)
+        let totalOwed = splits
+            .filter { $0.owedAmount > 0 }
+            .reduce(Decimal(0)) { $0 + $1.owedAmount }
+        
+        // If selected members' share equals the full amount, no need for portion display
+        guard selectedMembersOwed > 0, selectedMembersOwed < totalOwed else {
+            return nil
+        }
+        
+        // Apply reimbursement ratio to the portion
+        let portionAmount = selectedMembersOwed * reimbursementRatio
+        let percentage = totalOwed > 0 ? (selectedMembersOwed / totalOwed) * 100 : 0
+        
+        return (amount: portionAmount, percentage: percentage)
+    }
+    
     private var groupedTransactions: [(String, [TransactionView])] {
         let grouped = Dictionary(grouping: filteredTransactions) { transaction in
             transaction.date.formatted(as: .monthYear)
@@ -247,9 +299,13 @@ struct TransactionsListView: View {
                                 ForEach(groupedTransactions, id: \.0) { month, transactions in
                                     Section {
                                         ForEach(transactions) { transaction in
+                                            let reimbursedAmount = reimbursementsByExpense[transaction.id] ?? 0
+                                            let portion = portionInfo(for: transaction, reimbursedAmount: reimbursedAmount)
                                             TransactionRowSelectable(
                                                 transaction: transaction,
-                                                reimbursedAmount: reimbursementsByExpense[transaction.id] ?? 0,
+                                                reimbursedAmount: reimbursedAmount,
+                                                portionAmount: portion?.amount,
+                                                portionPercentage: portion?.percentage,
                                                 isSelectionMode: isSelectionMode,
                                                 isSelected: selectedTransactionIds.contains(transaction.id),
                                                 onTap: {
@@ -494,6 +550,8 @@ struct TransactionsListView: View {
 struct TransactionRowSelectable: View {
     let transaction: TransactionView
     let reimbursedAmount: Decimal
+    var portionAmount: Decimal? = nil
+    var portionPercentage: Decimal? = nil
     let isSelectionMode: Bool
     let isSelected: Bool
     let onTap: () -> Void
@@ -510,7 +568,9 @@ struct TransactionRowSelectable: View {
                 
                 TransactionRow(
                     transaction: transaction,
-                    reimbursedAmount: reimbursedAmount
+                    reimbursedAmount: reimbursedAmount,
+                    portionAmount: portionAmount,
+                    portionPercentage: portionPercentage
                 )
             }
             .contentShape(Rectangle())

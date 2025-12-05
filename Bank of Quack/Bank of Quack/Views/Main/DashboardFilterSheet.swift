@@ -225,7 +225,7 @@ struct DashboardFilterSheet: View {
             } else {
                 VStack(spacing: 0) {
                     // Sectors with nested categories
-                    ForEach(sectors) { sector in
+                    ForEach(sectors.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { sector in
                         let sectorCats = categoriesForSector(sector.id)
                         SectorFilterRow(
                             sector: sector,
@@ -447,12 +447,16 @@ struct DashboardFilterSheet: View {
     
     private func categoriesForSector(_ sectorId: UUID) -> [Category] {
         let categoryIds = sectorCategories[sectorId] ?? []
-        return categories.filter { categoryIds.contains($0.id) }
+        return categories
+            .filter { categoryIds.contains($0.id) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     
     private var uncategorizedCategories: [Category] {
         let allSectorCategoryIds = Set(sectorCategories.values.flatMap { $0 })
-        return categories.filter { !allSectorCategoryIds.contains($0.id) }
+        return categories
+            .filter { !allSectorCategoryIds.contains($0.id) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     
     /// Toggle a sector and automatically select/deselect all its categories

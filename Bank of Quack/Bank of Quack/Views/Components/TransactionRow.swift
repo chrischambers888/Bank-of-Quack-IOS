@@ -4,13 +4,33 @@ struct TransactionRow: View {
     let transaction: TransactionView
     /// Total amount reimbursed for this expense (if any)
     var reimbursedAmount: Decimal = 0
+    /// Optional: The portion amount when filtering by member(s) - only the selected members' share
+    var portionAmount: Decimal? = nil
+    /// Optional: The percentage of the total that this portion represents (0-100)
+    var portionPercentage: Decimal? = nil
     
-    /// Effective amount after reimbursements
+    /// Effective amount after reimbursements (full transaction amount)
     private var effectiveAmount: Decimal {
         if transaction.transactionType == .expense && reimbursedAmount > 0 {
             return max(transaction.amount - reimbursedAmount, 0)
         }
         return transaction.amount
+    }
+    
+    /// Display amount - uses portion if provided and different from full amount
+    private var displayAmount: Decimal {
+        if let portion = portionAmount, portion != effectiveAmount {
+            return portion
+        }
+        return effectiveAmount
+    }
+    
+    /// Whether showing a member's portion (not full amount)
+    private var isShowingPortion: Bool {
+        if let portion = portionAmount, portion != effectiveAmount {
+            return true
+        }
+        return false
     }
     
     /// Whether this expense has reimbursements
@@ -77,6 +97,11 @@ struct TransactionRow: View {
                             .foregroundStyle(Theme.Colors.reimbursement)
                     }
                     
+                    // Portion badge when showing member's share
+                    if isShowingPortion, let percentage = portionPercentage {
+                        PortionBadge(percentage: percentage)
+                    }
+                    
                     Text(amountText)
                         .font(.body)
                         .fontWeight(.semibold)
@@ -101,7 +126,7 @@ struct TransactionRow: View {
     }
     
     private var amountText: String {
-        let formatted = effectiveAmount.doubleValue.formattedAsMoney()
+        let formatted = displayAmount.doubleValue.formattedAsMoney()
         switch transaction.transactionType {
         case .expense:
             return "-\(formatted)"
@@ -178,6 +203,28 @@ struct RecentTransactionsCard: View {
         }
         .background(Theme.Colors.backgroundCard)
         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+    }
+}
+
+// MARK: - Portion Badge
+
+/// Badge showing the percentage of a shared transaction when filtering by member
+struct PortionBadge: View {
+    let percentage: Decimal
+    
+    private var displayText: String {
+        let rounded = NSDecimalNumber(decimal: percentage).intValue
+        return "\(rounded)%"
+    }
+    
+    var body: some View {
+        Text(displayText)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(Theme.Colors.accent)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Theme.Colors.accent.opacity(0.15))
+            .clipShape(Capsule())
     }
 }
 

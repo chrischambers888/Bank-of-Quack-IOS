@@ -71,6 +71,7 @@ struct SectorFormView: View {
             }
             return true
         }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     
     // Get categories that are unavailable (in other sectors)
@@ -94,7 +95,7 @@ struct SectorFormView: View {
             }
         }
         
-        return result
+        return result.sorted { $0.0.name.localizedCaseInsensitiveCompare($1.0.name) == .orderedAscending }
     }
     
     private var appliedThemeName: String {

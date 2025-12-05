@@ -196,7 +196,13 @@ struct DashboardView: View {
     
     /// Whether to show the balance widget on the dashboard
     /// Show when: multiple active members OR single active member with non-zero balance
+    /// Hide when: any member filtering is active (balance concept is confusing when filtering by members)
     private var shouldShowBalanceWidget: Bool {
+        // Hide when member filtering is active - balance is confusing in this context
+        if !filterManager.filter.selectedMemberIds.isEmpty || filterManager.filter.sharedOnly {
+            return false
+        }
+        
         // Multiple active members - always show (balance tracking makes sense)
         if activeMembers.count > 1 {
             return true
@@ -351,7 +357,7 @@ struct DashboardView: View {
         }
     }
     
-    /// Filtered totals for expenses
+    /// Filtered totals for expenses (uses portion amounts when filtering by members with include shared)
     private var filteredTotalExpenses: Decimal {
         // Get IDs of expenses that are visible in the filtered view
         let visibleExpenseIds = Set(filteredTransactions.filter { $0.transactionType == .expense }.map { $0.id })
@@ -370,7 +376,8 @@ struct DashboardView: View {
         var total: Decimal = 0
         for transaction in filteredTransactions where transaction.transactionType == .expense {
             let reimbursedAmount = reimbursementsByExpense[transaction.id] ?? 0
-            total += max(transaction.amount - reimbursedAmount, 0)
+            // Use portion amount when in portion mode, otherwise full effective amount
+            total += effectivePortionAmount(for: transaction, reimbursedAmount: reimbursedAmount)
         }
         return total
     }
@@ -412,26 +419,46 @@ struct DashboardView: View {
         // Track total adjusted expense for percentage calculation
         var totalAdjustedExpense: Decimal = 0
         
+        // Check if we're in portion mode (filtering by members with include shared)
+        let selectedMembers = filterManager.filter.selectedMemberIds
+        let usePortionMode = isPortionModeActive
+        
         for expense in expenses {
             // Calculate the effective amount after reimbursements
             let reimbursedAmount = reimbursementsByExpense[expense.id] ?? 0
-            let effectiveAmount = max(expense.amount - reimbursedAmount, 0)
+            let fullEffectiveAmount = max(expense.amount - reimbursedAmount, 0)
             
             // Skip fully reimbursed expenses
+            guard fullEffectiveAmount > 0 else { continue }
+            
+            // Calculate the reimbursement ratio to apply to member splits
+            let reimbursementRatio = expense.amount > 0 ? fullEffectiveAmount / expense.amount : 1
+            
+            // In portion mode, use only the selected members' share
+            let effectiveAmount: Decimal
+            if usePortionMode, let portionData = portionInfo(for: expense, reimbursedAmount: reimbursedAmount) {
+                effectiveAmount = portionData.amount
+            } else {
+                effectiveAmount = fullEffectiveAmount
+            }
+            
+            // Skip if effective amount is zero
             guard effectiveAmount > 0 else { continue }
             
             // Add to total adjusted expense
             totalAdjustedExpense += effectiveAmount
             
-            // Calculate the reimbursement ratio to apply to member splits
-            let reimbursementRatio = expense.amount > 0 ? effectiveAmount / expense.amount : 1
-            
             if let categoryId = expense.categoryId {
                 expensesByCategory[categoryId, default: 0] += effectiveAmount
                 
                 // Use splits to determine who the expense is FOR (owedAmount), adjusted for reimbursements
+                // In portion mode, only include selected members' amounts
                 if let splits = allSplits[expense.id] {
                     for split in splits where split.owedAmount > 0 {
+                        // In portion mode, only include selected members
+                        if usePortionMode && !selectedMembers.contains(split.memberId) {
+                            continue
+                        }
                         let adjustedOwedAmount = split.owedAmount * reimbursementRatio
                         expensesByCategoryAndMember[categoryId, default: [:]][split.memberId, default: 0] += adjustedOwedAmount
                     }
@@ -442,6 +469,10 @@ struct DashboardView: View {
                 // Use splits for uncategorized expenses too, adjusted for reimbursements
                 if let splits = allSplits[expense.id] {
                     for split in splits where split.owedAmount > 0 {
+                        // In portion mode, only include selected members
+                        if usePortionMode && !selectedMembers.contains(split.memberId) {
+                            continue
+                        }
                         let adjustedOwedAmount = split.owedAmount * reimbursementRatio
                         uncategorizedByMember[split.memberId, default: 0] += adjustedOwedAmount
                     }
@@ -616,6 +647,69 @@ struct DashboardView: View {
                 isInactive: member.isInactive
             )
         }.sorted { $0.amount > $1.amount }
+    }
+    
+    // MARK: - Portion Mode (Member Share Filtering)
+    
+    /// Whether "portion mode" is active - showing only selected members' share of shared transactions
+    private var isPortionModeActive: Bool {
+        let filter = filterManager.filter
+        return !filter.selectedMemberIds.isEmpty && filter.includeShared
+    }
+    
+    /// Calculate the portion amount and percentage for a transaction based on selected members
+    /// Returns nil if the transaction should show full amount (not shared or portion mode not active)
+    private func portionInfo(for transaction: TransactionView, reimbursedAmount: Decimal = 0) -> (amount: Decimal, percentage: Decimal)? {
+        guard isPortionModeActive,
+              transaction.transactionType == .expense else {
+            return nil
+        }
+        
+        let selectedMembers = filterManager.filter.selectedMemberIds
+        
+        // Get splits for this transaction
+        guard let splits = allSplits[transaction.id] else {
+            return nil
+        }
+        
+        // Calculate effective amount after reimbursements
+        let effectiveAmount = max(transaction.amount - reimbursedAmount, 0)
+        guard effectiveAmount > 0 else { return nil }
+        
+        // Calculate the reimbursement ratio to apply to portions
+        let reimbursementRatio = transaction.amount > 0 ? effectiveAmount / transaction.amount : 1
+        
+        // Sum the owed amounts for selected members
+        let selectedMembersOwed = splits
+            .filter { selectedMembers.contains($0.memberId) && $0.owedAmount > 0 }
+            .reduce(Decimal(0)) { $0 + $1.owedAmount }
+        
+        // Calculate total owed (for percentage)
+        let totalOwed = splits
+            .filter { $0.owedAmount > 0 }
+            .reduce(Decimal(0)) { $0 + $1.owedAmount }
+        
+        // If selected members' share equals the full amount, no need for portion display
+        guard selectedMembersOwed > 0, selectedMembersOwed < totalOwed else {
+            return nil
+        }
+        
+        // Apply reimbursement ratio to the portion
+        let portionAmount = selectedMembersOwed * reimbursementRatio
+        let percentage = totalOwed > 0 ? (selectedMembersOwed / totalOwed) * 100 : 0
+        
+        return (amount: portionAmount, percentage: percentage)
+    }
+    
+    /// Get the portion amount for a transaction (or full effective amount if not in portion mode)
+    private func effectivePortionAmount(for transaction: TransactionView, reimbursedAmount: Decimal = 0) -> Decimal {
+        let effectiveAmount = max(transaction.amount - reimbursedAmount, 0)
+        
+        if let portion = portionInfo(for: transaction, reimbursedAmount: reimbursedAmount) {
+            return portion.amount
+        }
+        
+        return effectiveAmount
     }
     
     /// Returns filtered transactions that impact member balances (expenses where paid != owed, and settlements)

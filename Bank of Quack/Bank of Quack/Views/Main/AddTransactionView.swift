@@ -1725,12 +1725,16 @@ struct CategoryPickerSheet: View {
     }
     
     private var uncategorizedCategories: [Category] {
-        filteredCategories.filter { !categoriesInSectors.contains($0.id) }
+        filteredCategories
+            .filter { !categoriesInSectors.contains($0.id) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     
     private func categoriesForSector(_ sector: Sector) -> [Category] {
         guard let categoryIds = sectorCategories[sector.id] else { return [] }
-        return filteredCategories.filter { categoryIds.contains($0.id) }
+        return filteredCategories
+            .filter { categoryIds.contains($0.id) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     
     var body: some View {
@@ -1755,7 +1759,7 @@ struct CategoryPickerSheet: View {
                         .padding(.top, Theme.Spacing.sm)
                         
                         // Sectors with their categories
-                        ForEach(sectors) { sector in
+                        ForEach(sectors.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { sector in
                             let sectorCats = categoriesForSector(sector)
                             if !sectorCats.isEmpty {
                                 VStack(alignment: .leading, spacing: Theme.Spacing.xs) {

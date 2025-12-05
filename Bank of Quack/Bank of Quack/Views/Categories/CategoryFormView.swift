@@ -262,7 +262,7 @@ struct CategoryFormView: View {
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Theme.Spacing.sm) {
-                    ForEach(authViewModel.sectors) { sector in
+                    ForEach(authViewModel.sectors.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { sector in
                         Button {
                             if selectedSectorId == sector.id {
                                 selectedSectorId = nil
