@@ -16,3 +16,5 @@ CREATE INDEX IF NOT EXISTS idx_transaction_templates_sort_order
   ON public.transaction_templates(household_id, sort_order);
 
 
+
+
