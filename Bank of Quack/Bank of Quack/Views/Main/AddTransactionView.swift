@@ -27,6 +27,10 @@ struct AddTransactionView: View {
     @State private var splitValidationError: String?
     @State private var paidByValidationError: String?
     
+    // Multi-select member state (for equal split between subset of members)
+    @State private var selectedSplitMemberIds: Set<UUID> = []
+    @State private var selectedPaidByMemberIds: Set<UUID> = []
+    
     // Member balances (for filtering inactive members in settlements)
     @State private var memberBalances: [MemberBalance] = []
     private let dataService = DataService()
@@ -546,97 +550,40 @@ struct AddTransactionView: View {
                     )
                 }
             } else if approvedMembers.count > 1 {
-                // Paid By Type Picker (for expenses with multiple members)
-                if approvedMembers.count > 5 {
-                    // Compact layout for 6+ members
-                    VStack(spacing: Theme.Spacing.sm) {
-                        // Type selector row
-                        HStack(spacing: Theme.Spacing.sm) {
-                            PaidByOptionButton(
-                                title: "Split Equally",
-                                isSelected: paidByType == .shared,
-                                action: {
-                                    withAnimation {
-                                        paidByType = .shared
-                                        showCustomPaidByEditor = false
-                                        updateMemberSplitsForPaidByType()
-                                    }
-                                }
-                            )
-                            
-                            PaidByOptionButton(
-                                title: "Custom",
-                                isSelected: paidByType == .custom,
-                                action: {
-                                    withAnimation {
-                                        paidByType = .custom
-                                        showCustomPaidByEditor = true
-                                        clearCustomPaidByAmounts()
-                                    }
-                                }
-                            )
-                            
-                            Spacer()
+                // Multi-select member selector for expenses
+                MultiSelectMemberSelector(
+                    members: approvedMembers,
+                    selectedMemberIds: $selectedPaidByMemberIds,
+                    isCustomSelected: showCustomPaidByEditor,
+                    onSelectAll: {
+                        withAnimation {
+                            // Select all members
+                            selectedPaidByMemberIds = Set(approvedMembers.map { $0.id })
+                            paidByType = .custom
+                            paidByMemberId = nil
+                            showCustomPaidByEditor = false
+                            updateMemberSplitsForSelectedPaidByMembers()
                         }
-                        
-                        // Member picker button (only show when not shared/custom)
-                        if paidByType == .single || (paidByType != .shared && paidByType != .custom) {
-                            MemberPickerButton(
-                                members: approvedMembers,
-                                selectedId: paidByMemberId,
-                                excludeId: nil
-                            ) {
-                                showPaidByPicker = true
-                            }
+                    },
+                    onSelectCustom: {
+                        withAnimation {
+                            paidByType = .custom
+                            paidByMemberId = nil
+                            selectedPaidByMemberIds.removeAll()
+                            showCustomPaidByEditor = true
+                            clearCustomPaidByAmounts()
+                        }
+                    },
+                    onToggleMember: { memberId in
+                        withAnimation {
+                            togglePaidByMember(memberId)
                         }
                     }
-                } else {
-                    // Standard horizontal scroll for 5 or fewer members
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: Theme.Spacing.sm) {
-                            // Shared Equally option
-                            PaidByOptionButton(
-                                title: "Split Equally",
-                                isSelected: paidByType == .shared,
-                                action: {
-                                    withAnimation {
-                                        paidByType = .shared
-                                        showCustomPaidByEditor = false
-                                        updateMemberSplitsForPaidByType()
-                                    }
-                                }
-                            )
-                            
-                            // Individual member options
-                            ForEach(approvedMembers) { member in
-                                PaidByOptionButton(
-                                    title: member.displayName,
-                                    isSelected: paidByType == .single && paidByMemberId == member.id,
-                                    action: {
-                                        withAnimation {
-                                            paidByType = .single
-                                            paidByMemberId = member.id
-                                            showCustomPaidByEditor = false
-                                            updateMemberSplitsForPaidByType()
-                                        }
-                                    }
-                                )
-                            }
-                            
-                            // Custom option
-                            PaidByOptionButton(
-                                title: "Custom",
-                                isSelected: paidByType == .custom,
-                                action: {
-                                    withAnimation {
-                                        paidByType = .custom
-                                        showCustomPaidByEditor = true
-                                        clearCustomPaidByAmounts()
-                                    }
-                                }
-                            )
-                        }
-                    }
+                )
+                
+                // Show summary when multiple members are selected (not useful for single member)
+                if selectedPaidByMemberIds.count > 1 && !showCustomPaidByEditor {
+                    paidBySummaryView
                 }
                 
                 // Custom Paid By Editor
@@ -675,6 +622,96 @@ struct AddTransactionView: View {
         }
     }
     
+    /// Summary view showing equal paid split between selected members
+    private var paidBySummaryView: some View {
+        let selectedCount = selectedPaidByMemberIds.count
+        let shareAmount = selectedCount > 0 ? parsedAmount / Decimal(selectedCount) : 0
+        let selectedNames = approvedMembers
+            .filter { selectedPaidByMemberIds.contains($0.id) }
+            .map { $0.displayName }
+        
+        return VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Theme.Colors.success)
+                Text("Paid equally by \(selectedCount) members")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            
+            Text(selectedNames.joined(separator: ", "))
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textMuted)
+            
+            if parsedAmount > 0 {
+                Text("\(shareAmount.doubleValue.formattedAsMoney()) each")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+            }
+        }
+        .padding(Theme.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Colors.backgroundCard)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
+    }
+    
+    /// Toggle a member's selection for paid by
+    private func togglePaidByMember(_ memberId: UUID) {
+        // Exit "All" or "Custom" mode when toggling individual members
+        showCustomPaidByEditor = false
+        
+        if selectedPaidByMemberIds.contains(memberId) {
+            selectedPaidByMemberIds.remove(memberId)
+        } else {
+            selectedPaidByMemberIds.insert(memberId)
+        }
+        
+        // Update paid by type based on selection
+        if selectedPaidByMemberIds.isEmpty {
+            // No members selected - revert to shared
+            paidByType = .shared
+            paidByMemberId = nil
+        } else if selectedPaidByMemberIds.count == 1 {
+            // Single member selected
+            paidByType = .single
+            paidByMemberId = selectedPaidByMemberIds.first
+        } else {
+            // Multiple members selected - use custom with equal amounts
+            paidByType = .custom
+            paidByMemberId = nil
+        }
+        
+        updateMemberSplitsForSelectedPaidByMembers()
+    }
+    
+    /// Update member splits based on selected paid by members (equal split among selected)
+    private func updateMemberSplitsForSelectedPaidByMembers() {
+        let total = parsedAmount
+        let selectedCount = selectedPaidByMemberIds.isEmpty ? approvedMembers.count : selectedPaidByMemberIds.count
+        guard selectedCount > 0 else { return }
+        
+        for i in memberSplits.indices {
+            let isSelected = selectedPaidByMemberIds.isEmpty || selectedPaidByMemberIds.contains(memberSplits[i].memberId)
+            
+            if isSelected {
+                // Calculate equal share for selected members
+                let shareIndex = selectedPaidByMemberIds.isEmpty ? i :
+                    Array(selectedPaidByMemberIds.sorted()).firstIndex(of: memberSplits[i].memberId) ?? 0
+                let equalShare = Decimal.calculateEqualShare(total: total, memberCount: selectedCount, memberIndex: shareIndex)
+                let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: selectedCount, memberIndex: shareIndex)
+                memberSplits[i].paidAmount = equalShare
+                memberSplits[i].paidPercentage = equalPercentage
+            } else {
+                // Not selected - zero out
+                memberSplits[i].paidAmount = 0
+                memberSplits[i].paidPercentage = 0
+            }
+        }
+        
+        paidByValidationError = nil
+    }
+    
     // MARK: - Split Section (Expense For)
     
     private var splitSection: some View {
@@ -683,117 +720,40 @@ struct AddTransactionView: View {
                 .font(.caption)
                 .foregroundStyle(Theme.Colors.textSecondary)
             
-            // Split Type Picker
-            if approvedMembers.count > 5 {
-                // Compact layout for 6+ members
-                VStack(spacing: Theme.Spacing.sm) {
-                    // Type selector row
-                    HStack(spacing: Theme.Spacing.sm) {
-                        SplitOptionButton(
-                            title: "Split Equally",
-                            isSelected: splitType == .equal,
-                            action: {
-                                withAnimation {
-                                    splitType = .equal
-                                    splitMemberId = nil
-                                    showCustomSplitEditor = false
-                                    updateMemberSplitsForSplitType()
-                                }
-                            }
-                        )
-                        
-                        SplitOptionButton(
-                            title: "Custom",
-                            isSelected: splitType == .custom,
-                            action: {
-                                withAnimation {
-                                    splitType = .custom
-                                    splitMemberId = nil
-                                    showCustomSplitEditor = true
-                                    clearCustomSplitAmounts()
-                                }
-                            }
-                        )
-                        
-                        Spacer()
+            // Multi-select member selector
+            MultiSelectMemberSelector(
+                members: approvedMembers,
+                selectedMemberIds: $selectedSplitMemberIds,
+                isCustomSelected: showCustomSplitEditor,
+                onSelectAll: {
+                    withAnimation {
+                        // Select all members
+                        selectedSplitMemberIds = Set(approvedMembers.map { $0.id })
+                        splitType = .custom
+                        splitMemberId = nil
+                        showCustomSplitEditor = false
+                        updateMemberSplitsForSelectedMembers()
                     }
-                    
-                    // Member picker button (for single member selection)
-                    if splitType == .memberOnly || (splitType != .equal && splitType != .custom) {
-                        MemberPickerButton(
-                            members: approvedMembers,
-                            selectedId: splitMemberId,
-                            excludeId: nil
-                        ) {
-                            showSplitMemberPicker = true
-                        }
-                    } else if splitType != .equal && splitType != .custom {
-                        // Show picker option for selecting a single member
-                        Button {
-                            showSplitMemberPicker = true
-                        } label: {
-                            HStack {
-                                Text("Select one person")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.Colors.textMuted)
-                                Spacer()
-                                Image(systemName: "chevron.down")
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.Colors.textSecondary)
-                            }
-                            .inputFieldStyle()
-                        }
+                },
+                onSelectCustom: {
+                    withAnimation {
+                        splitType = .custom
+                        splitMemberId = nil
+                        selectedSplitMemberIds.removeAll()
+                        showCustomSplitEditor = true
+                        clearCustomSplitAmounts()
+                    }
+                },
+                onToggleMember: { memberId in
+                    withAnimation {
+                        toggleSplitMember(memberId)
                     }
                 }
-            } else {
-                // Standard horizontal scroll for 5 or fewer members
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: Theme.Spacing.sm) {
-                        // Split Equally option
-                        SplitOptionButton(
-                            title: "Split Equally",
-                            isSelected: splitType == .equal,
-                            action: {
-                                withAnimation {
-                                    splitType = .equal
-                                    splitMemberId = nil
-                                    showCustomSplitEditor = false
-                                    updateMemberSplitsForSplitType()
-                                }
-                            }
-                        )
-                        
-                        // Individual member only options
-                        ForEach(approvedMembers) { member in
-                            SplitOptionButton(
-                                title: member.displayName,
-                                isSelected: splitType == .memberOnly && splitMemberId == member.id,
-                                action: {
-                                    withAnimation {
-                                        splitType = .memberOnly
-                                        splitMemberId = member.id
-                                        showCustomSplitEditor = false
-                                        updateMemberSplitsForSplitType()
-                                    }
-                                }
-                            )
-                        }
-                        
-                        // Custom option
-                        SplitOptionButton(
-                            title: "Custom",
-                            isSelected: splitType == .custom,
-                            action: {
-                                withAnimation {
-                                    splitType = .custom
-                                    splitMemberId = nil
-                                    showCustomSplitEditor = true
-                                    clearCustomSplitAmounts()
-                                }
-                            }
-                        )
-                    }
-                }
+            )
+            
+            // Show summary when multiple members are selected (not useful for single member)
+            if selectedSplitMemberIds.count > 1 && !showCustomSplitEditor {
+                splitSummaryView
             }
             
             // Custom Split Editor
@@ -807,21 +767,95 @@ struct AddTransactionView: View {
                 )
             }
         }
-        .sheet(isPresented: $showSplitMemberPicker) {
-            MemberPickerSheet(
-                members: approvedMembers,
-                excludeId: nil,
-                title: "Expense For",
-                selectedId: $splitMemberId
-            )
-            .presentationDetents([.medium])
-            .onDisappear {
-                if splitMemberId != nil {
-                    splitType = .memberOnly
-                    updateMemberSplitsForSplitType()
-                }
+    }
+    
+    /// Summary view showing equal split between selected members
+    private var splitSummaryView: some View {
+        let selectedCount = selectedSplitMemberIds.count
+        let shareAmount = selectedCount > 0 ? parsedAmount / Decimal(selectedCount) : 0
+        let selectedNames = approvedMembers
+            .filter { selectedSplitMemberIds.contains($0.id) }
+            .map { $0.displayName }
+        
+        return VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Theme.Colors.success)
+                Text("Split equally between \(selectedCount) members")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+            }
+            
+            Text(selectedNames.joined(separator: ", "))
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textMuted)
+            
+            if parsedAmount > 0 {
+                Text("\(shareAmount.doubleValue.formattedAsMoney()) each")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
             }
         }
+        .padding(Theme.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Colors.backgroundCard)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
+    }
+    
+    /// Toggle a member's selection for split
+    private func toggleSplitMember(_ memberId: UUID) {
+        // Exit "All" or "Custom" mode when toggling individual members
+        showCustomSplitEditor = false
+        
+        if selectedSplitMemberIds.contains(memberId) {
+            selectedSplitMemberIds.remove(memberId)
+        } else {
+            selectedSplitMemberIds.insert(memberId)
+        }
+        
+        // Update split type based on selection
+        if selectedSplitMemberIds.isEmpty {
+            // No members selected - revert to all
+            splitType = .equal
+        } else if selectedSplitMemberIds.count == 1 {
+            // Single member selected
+            splitType = .memberOnly
+            splitMemberId = selectedSplitMemberIds.first
+        } else {
+            // Multiple members selected - use custom with equal amounts
+            splitType = .custom
+            splitMemberId = nil
+        }
+        
+        updateMemberSplitsForSelectedMembers()
+    }
+    
+    /// Update member splits based on selected members (equal split among selected)
+    private func updateMemberSplitsForSelectedMembers() {
+        let total = parsedAmount
+        let selectedCount = selectedSplitMemberIds.isEmpty ? approvedMembers.count : selectedSplitMemberIds.count
+        guard selectedCount > 0 else { return }
+        
+        for i in memberSplits.indices {
+            let isSelected = selectedSplitMemberIds.isEmpty || selectedSplitMemberIds.contains(memberSplits[i].memberId)
+            
+            if isSelected {
+                // Calculate equal share for selected members
+                let shareIndex = selectedSplitMemberIds.isEmpty ? i : 
+                    Array(selectedSplitMemberIds.sorted()).firstIndex(of: memberSplits[i].memberId) ?? 0
+                let equalShare = Decimal.calculateEqualShare(total: total, memberCount: selectedCount, memberIndex: shareIndex)
+                let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: selectedCount, memberIndex: shareIndex)
+                memberSplits[i].owedAmount = equalShare
+                memberSplits[i].owedPercentage = equalPercentage
+            } else {
+                // Not selected - zero out
+                memberSplits[i].owedAmount = 0
+                memberSplits[i].owedPercentage = 0
+            }
+        }
+        
+        splitValidationError = nil
     }
     
     // MARK: - Reimbursement Link Section
@@ -1069,6 +1103,12 @@ struct AddTransactionView: View {
         memberSplits = approvedMembers.map { member in
             MemberSplit(member: member, totalAmount: parsedAmount, memberCount: approvedMembers.count)
         }
+        
+        // By default, select just the current user for both split and paid by
+        if let currentMemberId = paidByMemberId ?? authViewModel.currentMember?.id {
+            selectedSplitMemberIds = [currentMemberId]
+            selectedPaidByMemberIds = [currentMemberId]
+        }
     }
     
     private func updateMemberSplitsForAmount() {
@@ -1076,14 +1116,29 @@ struct AddTransactionView: View {
         let memberCount = approvedMembers.count
         guard memberCount > 0 else { return }
         
+        // Calculate counts for selected subsets (if any)
+        let splitSelectedCount = selectedSplitMemberIds.isEmpty ? memberCount : selectedSplitMemberIds.count
+        let paidBySelectedCount = selectedPaidByMemberIds.isEmpty ? memberCount : selectedPaidByMemberIds.count
+        
         for i in memberSplits.indices {
-            // Calculate equal share with remainder allocation to prevent rounding drift
-            let equalShare = Decimal.calculateEqualShare(total: total, memberCount: memberCount, memberIndex: i)
-            let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: memberCount, memberIndex: i)
+            let memberId = memberSplits[i].memberId
+            
+            // Determine if this member is in the split selection
+            let isInSplitSelection = selectedSplitMemberIds.isEmpty || selectedSplitMemberIds.contains(memberId)
+            let splitShareIndex = selectedSplitMemberIds.isEmpty ? i :
+                Array(selectedSplitMemberIds.sorted()).firstIndex(of: memberId) ?? 0
+            
+            // Determine if this member is in the paid by selection
+            let isInPaidBySelection = selectedPaidByMemberIds.isEmpty || selectedPaidByMemberIds.contains(memberId)
+            let paidByShareIndex = selectedPaidByMemberIds.isEmpty ? i :
+                Array(selectedPaidByMemberIds.sorted()).firstIndex(of: memberId) ?? 0
             
             // Update owed amounts based on split type
             switch splitType {
             case .equal:
+                // Equal split among all members
+                let equalShare = Decimal.calculateEqualShare(total: total, memberCount: memberCount, memberIndex: i)
+                let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: memberCount, memberIndex: i)
                 memberSplits[i].owedAmount = equalShare
                 memberSplits[i].owedPercentage = equalPercentage
             case .memberOnly:
@@ -1094,8 +1149,23 @@ struct AddTransactionView: View {
                     memberSplits[i].owedAmount = 0
                     memberSplits[i].owedPercentage = 0
                 }
-            case .custom, .payerOnly:
-                // Keep percentages, recalculate amounts (round to prevent drift)
+            case .custom:
+                // If we have a subset selected (not custom editor), recalculate equal among selected
+                if !selectedSplitMemberIds.isEmpty && !showCustomSplitEditor {
+                    if isInSplitSelection {
+                        let equalShare = Decimal.calculateEqualShare(total: total, memberCount: splitSelectedCount, memberIndex: splitShareIndex)
+                        let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: splitSelectedCount, memberIndex: splitShareIndex)
+                        memberSplits[i].owedAmount = equalShare
+                        memberSplits[i].owedPercentage = equalPercentage
+                    } else {
+                        memberSplits[i].owedAmount = 0
+                        memberSplits[i].owedPercentage = 0
+                    }
+                } else {
+                    // Keep percentages, recalculate amounts (round to prevent drift)
+                    memberSplits[i].owedAmount = (total * memberSplits[i].owedPercentage / 100).rounded(2)
+                }
+            case .payerOnly:
                 memberSplits[i].owedAmount = (total * memberSplits[i].owedPercentage / 100).rounded(2)
             }
             
@@ -1110,11 +1180,27 @@ struct AddTransactionView: View {
                     memberSplits[i].paidPercentage = 0
                 }
             case .shared:
+                // Shared equally among all members
+                let equalShare = Decimal.calculateEqualShare(total: total, memberCount: memberCount, memberIndex: i)
+                let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: memberCount, memberIndex: i)
                 memberSplits[i].paidAmount = equalShare
                 memberSplits[i].paidPercentage = equalPercentage
             case .custom:
-                // Keep percentages, recalculate amounts (round to prevent drift)
-                memberSplits[i].paidAmount = (total * memberSplits[i].paidPercentage / 100).rounded(2)
+                // If we have a subset selected (not custom editor), recalculate equal among selected
+                if !selectedPaidByMemberIds.isEmpty && !showCustomPaidByEditor {
+                    if isInPaidBySelection {
+                        let equalShare = Decimal.calculateEqualShare(total: total, memberCount: paidBySelectedCount, memberIndex: paidByShareIndex)
+                        let equalPercentage = Decimal.calculateEqualShare(total: 100, memberCount: paidBySelectedCount, memberIndex: paidByShareIndex)
+                        memberSplits[i].paidAmount = equalShare
+                        memberSplits[i].paidPercentage = equalPercentage
+                    } else {
+                        memberSplits[i].paidAmount = 0
+                        memberSplits[i].paidPercentage = 0
+                    }
+                } else {
+                    // Keep percentages, recalculate amounts (round to prevent drift)
+                    memberSplits[i].paidAmount = (total * memberSplits[i].paidPercentage / 100).rounded(2)
+                }
             }
         }
         
@@ -1200,8 +1286,8 @@ struct AddTransactionView: View {
     private func validateSplits() {
         let total = parsedAmount
         
-        // Validate owed amounts for custom split
-        if splitType == .custom {
+        // Validate owed amounts for custom split (only when using custom editor, not multi-select)
+        if splitType == .custom && showCustomSplitEditor {
             let totalOwed = memberSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
             if abs(totalOwed - total) > 0.01 {
                 splitValidationError = "Split amounts must equal \(total.doubleValue.formattedAsMoney(showSign: false))"
@@ -1212,8 +1298,8 @@ struct AddTransactionView: View {
             splitValidationError = nil
         }
         
-        // Validate paid amounts for custom paid by
-        if paidByType == .custom {
+        // Validate paid amounts for custom paid by (only when using custom editor, not multi-select)
+        if paidByType == .custom && showCustomPaidByEditor {
             let totalPaid = memberSplits.reduce(Decimal(0)) { $0 + $1.paidAmount }
             if abs(totalPaid - total) > 0.01 {
                 paidByValidationError = "Paid amounts must equal \(total.doubleValue.formattedAsMoney(showSign: false))"
@@ -1317,6 +1403,8 @@ struct AddTransactionView: View {
         excludedFromBudget = false
         showCustomSplitEditor = false
         showCustomPaidByEditor = false
+        selectedSplitMemberIds.removeAll()
+        selectedPaidByMemberIds.removeAll()
         initializeMemberSplits()
     }
 }
@@ -1812,6 +1900,80 @@ struct PaidByOptionButton: View {
                 .background(isSelected ? Theme.Colors.accent : Theme.Colors.backgroundCard)
                 .foregroundStyle(isSelected ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
                 .clipShape(Capsule())
+        }
+    }
+}
+
+// MARK: - Multi-Select Member Selector
+/// Allows selecting multiple members for equal split, or "All" for everyone, or "Custom" for manual amounts
+struct MultiSelectMemberSelector: View {
+    let members: [HouseholdMember]
+    @Binding var selectedMemberIds: Set<UUID>
+    let isCustomSelected: Bool
+    let onSelectAll: () -> Void
+    let onSelectCustom: () -> Void
+    let onToggleMember: (UUID) -> Void
+    
+    /// Check if all members are currently selected
+    private var allMembersSelected: Bool {
+        !isCustomSelected && selectedMemberIds.count == members.count && 
+        members.allSatisfy { selectedMemberIds.contains($0.id) }
+    }
+    
+    /// Check if a specific member is selected
+    private func isMemberSelected(_ memberId: UUID) -> Bool {
+        !isCustomSelected && selectedMemberIds.contains(memberId)
+    }
+    
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Theme.Spacing.sm) {
+                // "All" option - only show when not all members are selected
+                if !allMembersSelected && !isCustomSelected {
+                    Button(action: onSelectAll) {
+                        Text("All")
+                            .font(.subheadline)
+                            .padding(.horizontal, Theme.Spacing.md)
+                            .padding(.vertical, Theme.Spacing.sm)
+                            .background(Theme.Colors.backgroundCard)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .clipShape(Capsule())
+                    }
+                }
+                
+                // Individual members (multi-select)
+                ForEach(members) { member in
+                    Button {
+                        onToggleMember(member.id)
+                    } label: {
+                        HStack(spacing: 4) {
+                            // Show checkmark inside the pill when selected
+                            if isMemberSelected(member.id) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            Text(member.displayName)
+                        }
+                        .font(.subheadline)
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.vertical, Theme.Spacing.sm)
+                        .background(isMemberSelected(member.id) ? Theme.Colors.accent : Theme.Colors.backgroundCard)
+                        .foregroundStyle(isMemberSelected(member.id) ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
+                        .clipShape(Capsule())
+                    }
+                }
+                
+                // "Custom" option
+                Button(action: onSelectCustom) {
+                    Text("Custom")
+                        .font(.subheadline)
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.vertical, Theme.Spacing.sm)
+                        .background(isCustomSelected ? Theme.Colors.accent : Theme.Colors.backgroundCard)
+                        .foregroundStyle(isCustomSelected ? Theme.Colors.textInverse : Theme.Colors.textSecondary)
+                        .clipShape(Capsule())
+                }
+            }
         }
     }
 }

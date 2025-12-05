@@ -591,7 +591,14 @@ struct TransactionDetailView: View {
                 await transactionViewModel.fetchTransactionSplits(transactionId: currentTransaction.id)
             }
         }
-        .fullScreenCover(isPresented: $showEditSheet) {
+        .fullScreenCover(isPresented: $showEditSheet, onDismiss: {
+            // Re-fetch splits after editing to update the displayed values
+            if currentTransaction.transactionType == .expense {
+                Task {
+                    await transactionViewModel.fetchTransactionSplits(transactionId: currentTransaction.id)
+                }
+            }
+        }) {
             EditTransactionView(transaction: currentTransaction)
         }
         .alert(hasReimbursements ? "Delete Expense & Reimbursements?" : "Delete Transaction?", isPresented: $showDeleteConfirm) {
