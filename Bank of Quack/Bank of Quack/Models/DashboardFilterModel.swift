@@ -6,6 +6,7 @@ import SwiftUI
 enum DateFilterPreset: String, Codable, CaseIterable, Sendable {
     case thisMonth
     case lastMonth
+    case specificMonth // For navigating to other months
     case thisYear
     case allTime
     case custom
@@ -14,6 +15,7 @@ enum DateFilterPreset: String, Codable, CaseIterable, Sendable {
         switch self {
         case .thisMonth: return "This Month"
         case .lastMonth: return "Last Month"
+        case .specificMonth: return "Month"
         case .thisYear: return "This Year"
         case .allTime: return "All Time"
         case .custom: return "Custom"
@@ -24,10 +26,16 @@ enum DateFilterPreset: String, Codable, CaseIterable, Sendable {
         switch self {
         case .thisMonth: return "calendar"
         case .lastMonth: return "calendar.badge.clock"
+        case .specificMonth: return "calendar.badge.clock"
         case .thisYear: return "calendar.circle"
         case .allTime: return "infinity"
         case .custom: return "calendar.badge.plus"
         }
+    }
+    
+    /// Cases to show in the filter picker (excludes specificMonth which is navigated to)
+    static var pickerCases: [DateFilterPreset] {
+        [.thisMonth, .lastMonth, .thisYear, .allTime, .custom]
     }
 }
 
@@ -36,6 +44,7 @@ enum DateFilterPreset: String, Codable, CaseIterable, Sendable {
 struct DashboardFilter: Codable, Equatable, Sendable {
     var householdId: UUID? // Track which household this filter is for
     var datePreset: DateFilterPreset = .thisMonth
+    var monthOffset: Int = 0 // Offset from current month (0 = this month, -1 = last month, etc.)
     var customStartDate: Date?
     var customEndDate: Date?
     var selectedSectorIds: Set<UUID> = []
@@ -66,6 +75,7 @@ struct DashboardFilter: Codable, Equatable, Sendable {
     var isFiltered: Bool {
         // Check if anything differs from default
         if datePreset != .thisMonth { return true }
+        if datePreset == .specificMonth && monthOffset != 0 { return true }
         if !selectedSectorIds.isEmpty { return true }
         if !selectedCategoryIds.isEmpty { return true }
         // Only 3 filterable types (expense, income, settlement) - reimbursement is not filterable
@@ -103,6 +113,10 @@ struct DashboardFilter: Codable, Equatable, Sendable {
             guard let lastMonth = calendar.date(byAdding: .month, value: -1, to: now) else { return nil }
             return (lastMonth.startOfMonth, lastMonth.endOfMonth)
             
+        case .specificMonth:
+            guard let targetMonth = calendar.date(byAdding: .month, value: monthOffset, to: now) else { return nil }
+            return (targetMonth.startOfMonth, targetMonth.endOfMonth)
+            
         case .thisYear:
             guard let startOfYear = calendar.dateInterval(of: .year, for: now)?.start,
                   let endOfYear = calendar.dateInterval(of: .year, for: now)?.end else { return nil }
@@ -116,6 +130,89 @@ struct DashboardFilter: Codable, Equatable, Sendable {
             // Ensure end date includes the entire day
             let endOfDay = calendar.date(bySettingHour: 23, minute: 59, second: 59, of: end) ?? end
             return (start.startOfDay, endOfDay)
+        }
+    }
+    
+    /// Get the date representing the currently selected month for navigation
+    var selectedMonthDate: Date {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        switch datePreset {
+        case .thisMonth:
+            return now
+        case .lastMonth:
+            return calendar.date(byAdding: .month, value: -1, to: now) ?? now
+        case .specificMonth:
+            return calendar.date(byAdding: .month, value: monthOffset, to: now) ?? now
+        default:
+            return now
+        }
+    }
+    
+    /// Whether the current preset supports month navigation
+    var supportsMonthNavigation: Bool {
+        switch datePreset {
+        case .thisMonth, .lastMonth, .specificMonth:
+            return true
+        default:
+            return false
+        }
+    }
+    
+    /// Navigate to the previous month
+    mutating func goToPreviousMonth() {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        switch datePreset {
+        case .thisMonth:
+            datePreset = .lastMonth
+        case .lastMonth:
+            monthOffset = -2
+            datePreset = .specificMonth
+        case .specificMonth:
+            monthOffset -= 1
+        default:
+            // Calculate offset from current month for the current date range
+            if let range = dateRange {
+                let components = calendar.dateComponents([.month], from: now.startOfMonth, to: range.start)
+                monthOffset = (components.month ?? 0) - 1
+                datePreset = .specificMonth
+            }
+        }
+    }
+    
+    /// Navigate to the next month
+    mutating func goToNextMonth() {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        switch datePreset {
+        case .thisMonth:
+            // Going forward from this month
+            monthOffset = 1
+            datePreset = .specificMonth
+        case .lastMonth:
+            datePreset = .thisMonth
+        case .specificMonth:
+            let newOffset = monthOffset + 1
+            if newOffset == 0 {
+                datePreset = .thisMonth
+                monthOffset = 0
+            } else if newOffset == -1 {
+                datePreset = .lastMonth
+                monthOffset = 0
+            } else {
+                monthOffset = newOffset
+            }
+        default:
+            // Calculate offset from current month for the current date range
+            if let range = dateRange {
+                let components = calendar.dateComponents([.month], from: now.startOfMonth, to: range.start)
+                monthOffset = (components.month ?? 0) + 1
+                datePreset = .specificMonth
+            }
         }
     }
     
@@ -293,6 +390,13 @@ extension DashboardFilter {
             }
             return formatter.string(from: lastMonth)
             
+        case .specificMonth:
+            formatter.dateFormat = "MMMM yyyy"
+            guard let targetMonth = calendar.date(byAdding: .month, value: monthOffset, to: now) else {
+                return "Month"
+            }
+            return formatter.string(from: targetMonth)
+            
         case .thisYear:
             formatter.dateFormat = "yyyy"
             return formatter.string(from: now)
@@ -406,6 +510,13 @@ extension DashboardFilter {
             lines.append("Showing this month's transactions")
         case .lastMonth:
             lines.append("Showing last month's transactions")
+        case .specificMonth:
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMMM yyyy"
+            let calendar = Calendar.current
+            if let targetMonth = calendar.date(byAdding: .month, value: monthOffset, to: Date()) {
+                lines.append("Showing transactions for \(formatter.string(from: targetMonth))")
+            }
         case .thisYear:
             lines.append("Showing this year's transactions")
         case .allTime:

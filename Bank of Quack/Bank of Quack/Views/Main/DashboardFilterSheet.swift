@@ -84,16 +84,26 @@ struct DashboardFilterSheet: View {
                 GridItem(.flexible()),
                 GridItem(.flexible())
             ], spacing: Theme.Spacing.sm) {
-                ForEach(DateFilterPreset.allCases, id: \.self) { preset in
+                ForEach(DateFilterPreset.pickerCases, id: \.self) { preset in
                     DatePresetPill(
                         preset: preset,
-                        isSelected: filter.datePreset == preset
+                        isSelected: isPresetSelected(preset)
                     ) {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             filter.datePreset = preset
+                            // Reset month offset when selecting a standard preset
+                            if preset == .thisMonth {
+                                filter.monthOffset = 0
+                            }
                         }
                     }
                 }
+            }
+            
+            // Month Navigation (shown for month-based presets)
+            if filter.supportsMonthNavigation {
+                monthNavigationView
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
             
             // Custom Date Pickers (shown when custom is selected)
@@ -144,6 +154,66 @@ struct DashboardFilterSheet: View {
             }
         }
         .cardStyle()
+    }
+    
+    /// Check if a preset should appear selected (handles specificMonth mapping to standard presets)
+    private func isPresetSelected(_ preset: DateFilterPreset) -> Bool {
+        switch filter.datePreset {
+        case .specificMonth:
+            // specificMonth maps to thisMonth or lastMonth visually if offset matches
+            if filter.monthOffset == 0 && preset == .thisMonth { return true }
+            if filter.monthOffset == -1 && preset == .lastMonth { return true }
+            return false
+        default:
+            return filter.datePreset == preset
+        }
+    }
+    
+    // MARK: - Month Navigation View
+    
+    private var monthNavigationView: some View {
+        HStack(spacing: Theme.Spacing.md) {
+            // Previous Month Button
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    filter.goToPreviousMonth()
+                }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.Colors.accent)
+                    .frame(width: 36, height: 36)
+                    .background(Theme.Colors.accent.opacity(0.15))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            
+            // Current Month Display
+            Text(filter.dateDescription)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundStyle(Theme.Colors.textPrimary)
+                .frame(maxWidth: .infinity)
+            
+            // Next Month Button
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    filter.goToNextMonth()
+                }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.Colors.accent)
+                    .frame(width: 36, height: 36)
+                    .background(Theme.Colors.accent.opacity(0.15))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.vertical, Theme.Spacing.sm)
+        .background(Theme.Colors.backgroundCard)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
     }
     
     // MARK: - Transaction Types Section

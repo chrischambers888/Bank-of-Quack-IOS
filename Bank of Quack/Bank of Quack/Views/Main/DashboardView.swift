@@ -1134,6 +1134,7 @@ struct SettlementPair: Identifiable {
     let id = UUID()
     let from: MemberBalance
     let to: MemberBalance
+    let amount: Double
 }
 
 // MARK: - Balance Details Sheet
@@ -1149,6 +1150,8 @@ struct BalanceDetailsSheet: View {
     @State private var expandedMemberId: UUID? = nil
     @State private var selectedTab: BalanceTab = .balances
     @State private var selectedSettlementPair: SettlementPair? = nil
+    @State private var transactionsDisplayLimit: Int = 20
+    @State private var ledgerDisplayLimit: Int = 20
     
     enum BalanceTab: String, CaseIterable {
         case balances = "Balances"
@@ -1425,6 +1428,7 @@ struct BalanceDetailsSheet: View {
                 PairwiseBalanceSheet(
                     fromMember: pair.from,
                     toMember: pair.to,
+                    settlementAmount: pair.amount,
                     transactions: transactions,
                     transactionSplits: transactionSplits,
                     members: members
@@ -1513,7 +1517,7 @@ struct BalanceDetailsSheet: View {
                             let toMember = members.first { $0.id == settlement.to.memberId }
                             
                             Button {
-                                selectedSettlementPair = SettlementPair(from: settlement.from, to: settlement.to)
+                                selectedSettlementPair = SettlementPair(from: settlement.from, to: settlement.to, amount: settlement.amount)
                             } label: {
                                 HStack(spacing: Theme.Spacing.sm) {
                                     // From member
@@ -1596,7 +1600,7 @@ struct BalanceDetailsSheet: View {
                                     .padding(.vertical, Theme.Spacing.md)
                             } else {
                                 VStack(spacing: 0) {
-                                    ForEach(transactions.prefix(20)) { transaction in
+                                    ForEach(transactions.prefix(transactionsDisplayLimit)) { transaction in
                                         BalanceTransactionRow(
                                             transaction: transaction,
                                             splits: transactionSplits[transaction.id] ?? [],
@@ -1604,17 +1608,29 @@ struct BalanceDetailsSheet: View {
                                             memberName: memberName
                                         )
                                         
-                                        if transaction.id != transactions.prefix(20).last?.id {
+                                        if transaction.id != transactions.prefix(transactionsDisplayLimit).last?.id {
                                             Divider()
                                                 .background(Theme.Colors.textMuted.opacity(0.3))
                                         }
                                     }
                                     
-                                    if transactions.count > 20 {
-                                        Text("And \(transactions.count - 20) more transactions...")
-                                            .font(.caption)
-                                            .foregroundStyle(Theme.Colors.textMuted)
-                                            .padding(.top, Theme.Spacing.sm)
+                                    if transactions.count > transactionsDisplayLimit {
+                                        Button {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                transactionsDisplayLimit += 20
+                                            }
+                                        } label: {
+                                            HStack(spacing: Theme.Spacing.xs) {
+                                                Image(systemName: "arrow.down.circle")
+                                                Text("Load \(min(20, transactions.count - transactionsDisplayLimit)) more (\(transactions.count - transactionsDisplayLimit) remaining)")
+                                            }
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(Theme.Colors.accent)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, Theme.Spacing.md)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                                 .cardStyle()
@@ -1649,14 +1665,33 @@ struct BalanceDetailsSheet: View {
                 .padding(.vertical, Theme.Spacing.xl)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(ledgerEntries) { entry in
+                    ForEach(ledgerEntries.prefix(ledgerDisplayLimit)) { entry in
                         LedgerEntryRow(entry: entry)
                         
-                        if entry.id != ledgerEntries.last?.id {
+                        if entry.id != ledgerEntries.prefix(ledgerDisplayLimit).last?.id {
                             Divider()
                                 .background(Theme.Colors.textMuted.opacity(0.3))
                                 .padding(.leading, 60)
                         }
+                    }
+                    
+                    if ledgerEntries.count > ledgerDisplayLimit {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                ledgerDisplayLimit += 20
+                            }
+                        } label: {
+                            HStack(spacing: Theme.Spacing.xs) {
+                                Image(systemName: "arrow.down.circle")
+                                Text("Load \(min(20, ledgerEntries.count - ledgerDisplayLimit)) more (\(ledgerEntries.count - ledgerDisplayLimit) remaining)")
+                            }
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.Colors.accent)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Spacing.md)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .cardStyle()
@@ -2000,11 +2035,13 @@ struct BreakdownRow: View {
 struct PairwiseBalanceSheet: View {
     let fromMember: MemberBalance
     let toMember: MemberBalance
+    let settlementAmount: Double
     let transactions: [TransactionView]
     let transactionSplits: [UUID: [TransactionSplit]]
     let members: [HouseholdMember]
     
     @Environment(\.dismiss) private var dismiss
+    @State private var transactionsDisplayLimit: Int = 20
     
     private func member(for memberId: UUID) -> HouseholdMember? {
         members.first { $0.id == memberId }
@@ -2131,7 +2168,7 @@ struct PairwiseBalanceSheet: View {
                                         .font(.title2)
                                         .foregroundStyle(Theme.Colors.accent)
                                     
-                                    Text(netCalculation.netOwed > 0.01 ? "owes" : "settled")
+                                    Text(settlementAmount > 0.01 ? "owes" : "settled")
                                         .font(.caption)
                                         .foregroundStyle(Theme.Colors.textMuted)
                                 }
@@ -2155,8 +2192,8 @@ struct PairwiseBalanceSheet: View {
                             }
                             
                             // Net amount
-                            if netCalculation.netOwed > 0.01 {
-                                Text(netCalculation.netOwed.doubleValue.formattedAsMoney())
+                            if settlementAmount > 0.01 {
+                                Text(settlementAmount.formattedAsMoney())
                                     .font(.system(size: 36, weight: .bold))
                                     .foregroundStyle(Theme.Colors.error)
                             } else {
@@ -2215,17 +2252,17 @@ struct PairwiseBalanceSheet: View {
                                 }
                                 
                                 HStack {
-                                    Text("Net owed")
+                                    Text("Suggested settlement")
                                         .font(.subheadline)
                                         .fontWeight(.semibold)
                                         .foregroundStyle(Theme.Colors.textPrimary)
                                     
                                     Spacer()
                                     
-                                    Text(netCalculation.netOwed > 0.01 ? netCalculation.netOwed.doubleValue.formattedAsMoney() : "$0.00")
+                                    Text(settlementAmount > 0.01 ? settlementAmount.formattedAsMoney() : "$0.00")
                                         .font(.subheadline)
                                         .fontWeight(.bold)
-                                        .foregroundStyle(netCalculation.netOwed > 0.01 ? Theme.Colors.error : Theme.Colors.success)
+                                        .foregroundStyle(settlementAmount > 0.01 ? Theme.Colors.error : Theme.Colors.success)
                                 }
                                 .padding(Theme.Spacing.md)
                             }
@@ -2246,7 +2283,7 @@ struct PairwiseBalanceSheet: View {
                                     .padding(.vertical, Theme.Spacing.md)
                             } else {
                                 VStack(spacing: 0) {
-                                    ForEach(relevantTransactions.prefix(20), id: \.transaction.id) { item in
+                                    ForEach(relevantTransactions.prefix(transactionsDisplayLimit), id: \.transaction.id) { item in
                                         PairwiseTransactionRow(
                                             transaction: item.transaction,
                                             fromName: fromMember.displayName,
@@ -2257,17 +2294,29 @@ struct PairwiseBalanceSheet: View {
                                             toOwed: item.toOwed
                                         )
                                         
-                                        if item.transaction.id != relevantTransactions.prefix(20).last?.transaction.id {
+                                        if item.transaction.id != relevantTransactions.prefix(transactionsDisplayLimit).last?.transaction.id {
                                             Divider()
                                                 .background(Theme.Colors.borderLight)
                                         }
                                     }
                                     
-                                    if relevantTransactions.count > 20 {
-                                        Text("And \(relevantTransactions.count - 20) more...")
-                                            .font(.caption)
-                                            .foregroundStyle(Theme.Colors.textMuted)
-                                            .padding(.top, Theme.Spacing.sm)
+                                    if relevantTransactions.count > transactionsDisplayLimit {
+                                        Button {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                transactionsDisplayLimit += 20
+                                            }
+                                        } label: {
+                                            HStack(spacing: Theme.Spacing.xs) {
+                                                Image(systemName: "arrow.down.circle")
+                                                Text("Load \(min(20, relevantTransactions.count - transactionsDisplayLimit)) more (\(relevantTransactions.count - transactionsDisplayLimit) remaining)")
+                                            }
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(Theme.Colors.accent)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, Theme.Spacing.md)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                                 .background(Theme.Colors.backgroundCard)
@@ -2679,6 +2728,12 @@ struct TotalExpensesDetailSheet: View {
     
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTransaction: TransactionView?
+    @State private var chartData: MultiLineExpenseData?
+    @State private var isLoadingChart = true
+    @State private var displayLimit: Int = 50
+    
+    /// Maximum number of chart data points before downsampling
+    private let maxChartPoints = 100
     
     /// Expense transactions only, sorted by date
     private var expenseTransactions: [TransactionView] {
@@ -2705,9 +2760,19 @@ struct TotalExpensesDetailSheet: View {
         return result
     }
     
-    /// Combined chart data including total and per-member lines
-    private var multiLineChartData: MultiLineExpenseData {
-        guard !expenseTransactions.isEmpty else {
+    /// Expenses sorted by date descending for the list
+    private var sortedExpenses: [TransactionView] {
+        expenseTransactions.sorted { $0.date > $1.date }
+    }
+    
+    /// Compute chart data asynchronously
+    private func computeChartData() async -> MultiLineExpenseData {
+        let expenses = expenseTransactions
+        let activeMembersList = activeMembers
+        let reimbursements = reimbursementsByExpense
+        let splits = allSplits
+        
+        guard !expenses.isEmpty else {
             return MultiLineExpenseData(totalLine: [], memberLines: [])
         }
         
@@ -2716,13 +2781,13 @@ struct TotalExpensesDetailSheet: View {
         var memberExpensesByDate: [UUID: [Date: Decimal]] = [:]
         
         // Initialize member tracking
-        for member in activeMembers {
+        for member in activeMembersList {
             memberExpensesByDate[member.id] = [:]
         }
         
-        for expense in expenseTransactions {
+        for expense in expenses {
             let dateKey = Calendar.current.startOfDay(for: expense.date)
-            let reimbursedAmount = reimbursementsByExpense[expense.id] ?? 0
+            let reimbursedAmount = reimbursements[expense.id] ?? 0
             let effectiveAmount = max(expense.amount - reimbursedAmount, 0)
             
             // Skip fully reimbursed expenses
@@ -2735,25 +2800,35 @@ struct TotalExpensesDetailSheet: View {
             let reimbursementRatio = expense.amount > 0 ? effectiveAmount / expense.amount : 1
             
             // Add to member amounts based on owed (expense for)
-            if let splits = allSplits[expense.id], !splits.isEmpty {
-                for split in splits where split.owedAmount > 0 {
+            if let expenseSplits = splits[expense.id], !expenseSplits.isEmpty {
+                for split in expenseSplits where split.owedAmount > 0 {
                     let adjustedOwed = split.owedAmount * reimbursementRatio
                     memberExpensesByDate[split.memberId, default: [:]][dateKey, default: 0] += adjustedOwed
                 }
             } else if let payerId = expense.paidByMemberId {
                 // Fallback: attribute full expense to payer when splits are missing
                 memberExpensesByDate[payerId, default: [:]][dateKey, default: 0] += effectiveAmount
-            } else if !activeMembers.isEmpty {
+            } else if !activeMembersList.isEmpty {
                 // Last resort: distribute equally among active members
-                let shareAmount = effectiveAmount / Decimal(activeMembers.count)
-                for member in activeMembers {
+                let shareAmount = effectiveAmount / Decimal(activeMembersList.count)
+                for member in activeMembersList {
                     memberExpensesByDate[member.id, default: [:]][dateKey, default: 0] += shareAmount
                 }
             }
         }
         
         // Get all unique dates and sort them
-        let allDates = totalByDate.keys.sorted()
+        var allDates = totalByDate.keys.sorted()
+        
+        // Downsample if too many data points
+        if allDates.count > maxChartPoints {
+            allDates = downsampleDates(allDates, to: maxChartPoints)
+            // Aggregate data for downsampled dates
+            totalByDate = aggregateByDownsampledDates(totalByDate, sampledDates: allDates)
+            for memberId in memberExpensesByDate.keys {
+                memberExpensesByDate[memberId] = aggregateByDownsampledDates(memberExpensesByDate[memberId] ?? [:], sampledDates: allDates)
+            }
+        }
         
         // Build total line with cumulative values
         var totalLine: [ExpenseChartPoint] = []
@@ -2770,7 +2845,7 @@ struct TotalExpensesDetailSheet: View {
         
         // Build member lines with cumulative values
         var memberLines: [MemberExpenseLine] = []
-        for member in activeMembers {
+        for member in activeMembersList {
             var points: [ExpenseChartPoint] = []
             var cumulative: Decimal = 0
             let memberDates = memberExpensesByDate[member.id] ?? [:]
@@ -2804,9 +2879,32 @@ struct TotalExpensesDetailSheet: View {
         return MultiLineExpenseData(totalLine: totalLine, memberLines: memberLines)
     }
     
-    /// Expenses sorted by date descending for the list
-    private var sortedExpenses: [TransactionView] {
-        expenseTransactions.sorted { $0.date > $1.date }
+    /// Downsample dates to target count using even distribution
+    private func downsampleDates(_ dates: [Date], to targetCount: Int) -> [Date] {
+        guard dates.count > targetCount else { return dates }
+        let step = Double(dates.count) / Double(targetCount)
+        var result: [Date] = []
+        var index: Double = 0
+        while Int(index) < dates.count && result.count < targetCount {
+            result.append(dates[Int(index)])
+            index += step
+        }
+        // Always include the last date
+        if let lastDate = dates.last, result.last != lastDate {
+            result[result.count - 1] = lastDate
+        }
+        return result
+    }
+    
+    /// Aggregate data by downsampled dates (assign each original date's data to nearest sampled date)
+    private func aggregateByDownsampledDates(_ data: [Date: Decimal], sampledDates: [Date]) -> [Date: Decimal] {
+        var result: [Date: Decimal] = [:]
+        for (date, amount) in data {
+            // Find the nearest sampled date
+            let nearestDate = sampledDates.min { abs($0.timeIntervalSince(date)) < abs($1.timeIntervalSince(date)) } ?? date
+            result[nearestDate, default: 0] += amount
+        }
+        return result
     }
     
     var body: some View {
@@ -2816,7 +2914,7 @@ struct TotalExpensesDetailSheet: View {
                     .ignoresSafeArea()
                 
                 ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
+                    LazyVStack(spacing: Theme.Spacing.lg) {
                         // Total header
                         VStack(spacing: Theme.Spacing.sm) {
                             Image(systemName: "arrow.down.circle.fill")
@@ -2838,24 +2936,38 @@ struct TotalExpensesDetailSheet: View {
                         .padding(.top, Theme.Spacing.md)
                         
                         // Chart section
-                        if multiLineChartData.totalLine.count >= 2 {
-                            MultiLineExpenseChart(data: multiLineChartData)
-                                .padding(.horizontal, Theme.Spacing.md)
-                        } else if multiLineChartData.totalLine.count == 1 {
-                            // Single data point - show as simple stat
+                        if isLoadingChart {
                             VStack(spacing: Theme.Spacing.sm) {
-                                Text("Expense on \(multiLineChartData.totalLine[0].date.formatted(date: .abbreviated, time: .omitted))")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.Colors.textSecondary)
-                                
-                                Text(multiLineChartData.totalLine[0].dailyAmount.doubleValue.formattedAsMoney())
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(Theme.Colors.expense)
+                                ProgressView()
+                                    .tint(Theme.Colors.expense)
+                                Text("Loading chart...")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textMuted)
                             }
+                            .frame(height: 180)
                             .frame(maxWidth: .infinity)
                             .cardStyle()
                             .padding(.horizontal, Theme.Spacing.md)
+                        } else if let data = chartData {
+                            if data.totalLine.count >= 2 {
+                                MultiLineExpenseChart(data: data)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                            } else if data.totalLine.count == 1 {
+                                // Single data point - show as simple stat
+                                VStack(spacing: Theme.Spacing.sm) {
+                                    Text("Expense on \(data.totalLine[0].date.formatted(date: .abbreviated, time: .omitted))")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                    
+                                    Text(data.totalLine[0].dailyAmount.doubleValue.formattedAsMoney())
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(Theme.Colors.expense)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .cardStyle()
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
                         }
                         
                         // Expenses list
@@ -2892,7 +3004,8 @@ struct TotalExpensesDetailSheet: View {
                                 .padding(.vertical, Theme.Spacing.xl)
                             } else {
                                 VStack(spacing: 0) {
-                                    ForEach(sortedExpenses) { expense in
+                                    let displayedExpenses = Array(sortedExpenses.prefix(displayLimit))
+                                    ForEach(displayedExpenses) { expense in
                                         Button {
                                             selectedTransaction = expense
                                         } label: {
@@ -2903,11 +3016,31 @@ struct TotalExpensesDetailSheet: View {
                                         }
                                         .buttonStyle(.plain)
                                         
-                                        if expense.id != sortedExpenses.last?.id {
+                                        if expense.id != displayedExpenses.last?.id {
                                             Divider()
                                                 .background(Theme.Colors.borderLight)
                                                 .padding(.leading, 56)
                                         }
+                                    }
+                                    
+                                    // Load more button
+                                    if sortedExpenses.count > displayLimit {
+                                        Button {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                displayLimit += 50
+                                            }
+                                        } label: {
+                                            HStack(spacing: Theme.Spacing.xs) {
+                                                Image(systemName: "arrow.down.circle")
+                                                Text("Load \(min(50, sortedExpenses.count - displayLimit)) more (\(sortedExpenses.count - displayLimit) remaining)")
+                                            }
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(Theme.Colors.accent)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, Theme.Spacing.md)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                                 .background(Theme.Colors.backgroundCard)
@@ -2933,6 +3066,14 @@ struct TotalExpensesDetailSheet: View {
             .sheet(item: $selectedTransaction) { transaction in
                 TransactionDetailView(transaction: transaction)
             }
+            .task {
+                // Compute chart data asynchronously
+                let data = await computeChartData()
+                await MainActor.run {
+                    chartData = data
+                    isLoadingChart = false
+                }
+            }
         }
     }
 }
@@ -2940,7 +3081,8 @@ struct TotalExpensesDetailSheet: View {
 // MARK: - Expense Chart Data Structures
 
 struct ExpenseChartPoint: Identifiable {
-    let id = UUID()
+    // Use date as ID to avoid UUID allocation overhead
+    var id: Date { date }
     let date: Date
     let dailyAmount: Decimal
     let cumulativeAmount: Decimal
@@ -3389,6 +3531,12 @@ struct TotalIncomeDetailSheet: View {
     
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTransaction: TransactionView?
+    @State private var chartData: MultiLineIncomeData?
+    @State private var isLoadingChart = true
+    @State private var displayLimit: Int = 50
+    
+    /// Maximum number of chart data points before downsampling
+    private let maxChartPoints = 100
     
     /// Income transactions only (income + unlinked reimbursements), sorted by date
     private var incomeTransactions: [TransactionView] {
@@ -3405,9 +3553,17 @@ struct TotalIncomeDetailSheet: View {
         members.filter { $0.isActive }
     }
     
-    /// Combined chart data including total and per-member lines
-    private var multiLineChartData: MultiLineIncomeData {
-        guard !incomeTransactions.isEmpty else {
+    /// Income sorted by date descending for the list
+    private var sortedIncome: [TransactionView] {
+        incomeTransactions.sorted { $0.date > $1.date }
+    }
+    
+    /// Compute chart data asynchronously
+    private func computeChartData() async -> MultiLineIncomeData {
+        let incomeList = incomeTransactions
+        let activeMembersList = activeMembers
+        
+        guard !incomeList.isEmpty else {
             return MultiLineIncomeData(totalLine: [], memberLines: [])
         }
         
@@ -3416,11 +3572,11 @@ struct TotalIncomeDetailSheet: View {
         var memberIncomeByDate: [UUID: [Date: Decimal]] = [:]
         
         // Initialize member tracking
-        for member in activeMembers {
+        for member in activeMembersList {
             memberIncomeByDate[member.id] = [:]
         }
         
-        for income in incomeTransactions {
+        for income in incomeList {
             let dateKey = Calendar.current.startOfDay(for: income.date)
             
             // Add to total
@@ -3429,17 +3585,27 @@ struct TotalIncomeDetailSheet: View {
             // Add to member amounts based on paidByMemberId (who received the income)
             if let receivedById = income.paidByMemberId {
                 memberIncomeByDate[receivedById, default: [:]][dateKey, default: 0] += income.amount
-            } else if !activeMembers.isEmpty {
+            } else if !activeMembersList.isEmpty {
                 // Fallback: distribute equally among active members so member totals add up
-                let shareAmount = income.amount / Decimal(activeMembers.count)
-                for member in activeMembers {
+                let shareAmount = income.amount / Decimal(activeMembersList.count)
+                for member in activeMembersList {
                     memberIncomeByDate[member.id, default: [:]][dateKey, default: 0] += shareAmount
                 }
             }
         }
         
         // Get all unique dates and sort them
-        let allDates = totalByDate.keys.sorted()
+        var allDates = totalByDate.keys.sorted()
+        
+        // Downsample if too many data points
+        if allDates.count > maxChartPoints {
+            allDates = downsampleDates(allDates, to: maxChartPoints)
+            // Aggregate data for downsampled dates
+            totalByDate = aggregateByDownsampledDates(totalByDate, sampledDates: allDates)
+            for memberId in memberIncomeByDate.keys {
+                memberIncomeByDate[memberId] = aggregateByDownsampledDates(memberIncomeByDate[memberId] ?? [:], sampledDates: allDates)
+            }
+        }
         
         // Build total line with cumulative values
         var totalLine: [IncomeChartPoint] = []
@@ -3456,7 +3622,7 @@ struct TotalIncomeDetailSheet: View {
         
         // Build member lines with cumulative values
         var memberLines: [MemberIncomeLine] = []
-        for member in activeMembers {
+        for member in activeMembersList {
             var points: [IncomeChartPoint] = []
             var cumulative: Decimal = 0
             let memberDates = memberIncomeByDate[member.id] ?? [:]
@@ -3490,9 +3656,32 @@ struct TotalIncomeDetailSheet: View {
         return MultiLineIncomeData(totalLine: totalLine, memberLines: memberLines)
     }
     
-    /// Income sorted by date descending for the list
-    private var sortedIncome: [TransactionView] {
-        incomeTransactions.sorted { $0.date > $1.date }
+    /// Downsample dates to target count using even distribution
+    private func downsampleDates(_ dates: [Date], to targetCount: Int) -> [Date] {
+        guard dates.count > targetCount else { return dates }
+        let step = Double(dates.count) / Double(targetCount)
+        var result: [Date] = []
+        var index: Double = 0
+        while Int(index) < dates.count && result.count < targetCount {
+            result.append(dates[Int(index)])
+            index += step
+        }
+        // Always include the last date
+        if let lastDate = dates.last, result.last != lastDate {
+            result[result.count - 1] = lastDate
+        }
+        return result
+    }
+    
+    /// Aggregate data by downsampled dates (assign each original date's data to nearest sampled date)
+    private func aggregateByDownsampledDates(_ data: [Date: Decimal], sampledDates: [Date]) -> [Date: Decimal] {
+        var result: [Date: Decimal] = [:]
+        for (date, amount) in data {
+            // Find the nearest sampled date
+            let nearestDate = sampledDates.min { abs($0.timeIntervalSince(date)) < abs($1.timeIntervalSince(date)) } ?? date
+            result[nearestDate, default: 0] += amount
+        }
+        return result
     }
     
     var body: some View {
@@ -3502,7 +3691,7 @@ struct TotalIncomeDetailSheet: View {
                     .ignoresSafeArea()
                 
                 ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
+                    LazyVStack(spacing: Theme.Spacing.lg) {
                         // Total header
                         VStack(spacing: Theme.Spacing.sm) {
                             Image(systemName: "arrow.up.circle.fill")
@@ -3524,24 +3713,38 @@ struct TotalIncomeDetailSheet: View {
                         .padding(.top, Theme.Spacing.md)
                         
                         // Chart section
-                        if multiLineChartData.totalLine.count >= 2 {
-                            MultiLineIncomeChart(data: multiLineChartData)
-                                .padding(.horizontal, Theme.Spacing.md)
-                        } else if multiLineChartData.totalLine.count == 1 {
-                            // Single data point - show as simple stat
+                        if isLoadingChart {
                             VStack(spacing: Theme.Spacing.sm) {
-                                Text("Income on \(multiLineChartData.totalLine[0].date.formatted(date: .abbreviated, time: .omitted))")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.Colors.textSecondary)
-                                
-                                Text(multiLineChartData.totalLine[0].dailyAmount.doubleValue.formattedAsMoney())
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(Theme.Colors.income)
+                                ProgressView()
+                                    .tint(Theme.Colors.income)
+                                Text("Loading chart...")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textMuted)
                             }
+                            .frame(height: 180)
                             .frame(maxWidth: .infinity)
                             .cardStyle()
                             .padding(.horizontal, Theme.Spacing.md)
+                        } else if let data = chartData {
+                            if data.totalLine.count >= 2 {
+                                MultiLineIncomeChart(data: data)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                            } else if data.totalLine.count == 1 {
+                                // Single data point - show as simple stat
+                                VStack(spacing: Theme.Spacing.sm) {
+                                    Text("Income on \(data.totalLine[0].date.formatted(date: .abbreviated, time: .omitted))")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                    
+                                    Text(data.totalLine[0].dailyAmount.doubleValue.formattedAsMoney())
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(Theme.Colors.income)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .cardStyle()
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
                         }
                         
                         // Income list
@@ -3578,7 +3781,8 @@ struct TotalIncomeDetailSheet: View {
                                 .padding(.vertical, Theme.Spacing.xl)
                             } else {
                                 VStack(spacing: 0) {
-                                    ForEach(sortedIncome) { income in
+                                    let displayedIncome = Array(sortedIncome.prefix(displayLimit))
+                                    ForEach(displayedIncome) { income in
                                         Button {
                                             selectedTransaction = income
                                         } label: {
@@ -3586,11 +3790,31 @@ struct TotalIncomeDetailSheet: View {
                                         }
                                         .buttonStyle(.plain)
                                         
-                                        if income.id != sortedIncome.last?.id {
+                                        if income.id != displayedIncome.last?.id {
                                             Divider()
                                                 .background(Theme.Colors.borderLight)
                                                 .padding(.leading, 56)
                                         }
+                                    }
+                                    
+                                    // Load more button
+                                    if sortedIncome.count > displayLimit {
+                                        Button {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                displayLimit += 50
+                                            }
+                                        } label: {
+                                            HStack(spacing: Theme.Spacing.xs) {
+                                                Image(systemName: "arrow.down.circle")
+                                                Text("Load \(min(50, sortedIncome.count - displayLimit)) more (\(sortedIncome.count - displayLimit) remaining)")
+                                            }
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(Theme.Colors.accent)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, Theme.Spacing.md)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                                 .background(Theme.Colors.backgroundCard)
@@ -3616,6 +3840,14 @@ struct TotalIncomeDetailSheet: View {
             .sheet(item: $selectedTransaction) { transaction in
                 TransactionDetailView(transaction: transaction)
             }
+            .task {
+                // Compute chart data asynchronously
+                let data = await computeChartData()
+                await MainActor.run {
+                    chartData = data
+                    isLoadingChart = false
+                }
+            }
         }
     }
 }
@@ -3623,7 +3855,7 @@ struct TotalIncomeDetailSheet: View {
 // MARK: - Income Chart Data Structures
 
 struct IncomeChartPoint: Identifiable {
-    let id = UUID()
+    var id: Date { date }
     let date: Date
     let dailyAmount: Decimal
     let cumulativeAmount: Decimal
@@ -4064,6 +4296,12 @@ struct NetBalanceDetailSheet: View {
     
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTransaction: TransactionView?
+    @State private var chartData: MultiLineNetBalanceData?
+    @State private var isLoadingChart = true
+    @State private var displayLimit: Int = 50
+    
+    /// Maximum number of chart data points before downsampling
+    private let maxChartPoints = 100
     
     private var netBalance: Decimal {
         totalIncome - totalExpenses
@@ -4112,9 +4350,20 @@ struct NetBalanceDetailSheet: View {
         return transactions.sorted { $0.date < $1.date }
     }
     
-    /// Combined chart data
-    private var multiLineChartData: MultiLineNetBalanceData {
-        guard !allNetTransactions.isEmpty else {
+    /// Transactions sorted by date descending for the list
+    private var sortedTransactions: [TransactionView] {
+        allNetTransactions.sorted { $0.date > $1.date }
+    }
+    
+    /// Compute chart data asynchronously
+    private func computeChartData() async -> MultiLineNetBalanceData {
+        let expenses = expenseTransactions
+        let income = incomeTransactions
+        let activeMembersList = activeMembers
+        let reimbursements = reimbursementsByExpense
+        let splits = allSplits
+        
+        guard !expenses.isEmpty || !income.isEmpty else {
             return MultiLineNetBalanceData(totalLine: [], memberLines: [])
         }
         
@@ -4125,32 +4374,32 @@ struct NetBalanceDetailSheet: View {
         var memberExpenseByDate: [UUID: [Date: Decimal]] = [:]
         
         // Initialize member tracking
-        for member in activeMembers {
+        for member in activeMembersList {
             memberIncomeByDate[member.id] = [:]
             memberExpenseByDate[member.id] = [:]
         }
         
         // Process income transactions
-        for income in incomeTransactions {
-            let dateKey = Calendar.current.startOfDay(for: income.date)
-            totalIncomeByDate[dateKey, default: 0] += income.amount
+        for incomeItem in income {
+            let dateKey = Calendar.current.startOfDay(for: incomeItem.date)
+            totalIncomeByDate[dateKey, default: 0] += incomeItem.amount
             
             // Member income based on who received it
-            if let receivedById = income.paidByMemberId {
-                memberIncomeByDate[receivedById, default: [:]][dateKey, default: 0] += income.amount
-            } else if !activeMembers.isEmpty {
+            if let receivedById = incomeItem.paidByMemberId {
+                memberIncomeByDate[receivedById, default: [:]][dateKey, default: 0] += incomeItem.amount
+            } else if !activeMembersList.isEmpty {
                 // Fallback: distribute equally among active members so member totals add up
-                let shareAmount = income.amount / Decimal(activeMembers.count)
-                for member in activeMembers {
+                let shareAmount = incomeItem.amount / Decimal(activeMembersList.count)
+                for member in activeMembersList {
                     memberIncomeByDate[member.id, default: [:]][dateKey, default: 0] += shareAmount
                 }
             }
         }
         
         // Process expense transactions
-        for expense in expenseTransactions {
+        for expense in expenses {
             let dateKey = Calendar.current.startOfDay(for: expense.date)
-            let reimbursedAmount = reimbursementsByExpense[expense.id] ?? 0
+            let reimbursedAmount = reimbursements[expense.id] ?? 0
             let effectiveAmount = max(expense.amount - reimbursedAmount, 0)
             
             guard effectiveAmount > 0 else { continue }
@@ -4159,25 +4408,39 @@ struct NetBalanceDetailSheet: View {
             
             // Member expenses based on owed amounts from splits
             let reimbursementRatio = expense.amount > 0 ? effectiveAmount / expense.amount : 1
-            if let splits = allSplits[expense.id], !splits.isEmpty {
-                for split in splits where split.owedAmount > 0 {
+            if let expenseSplits = splits[expense.id], !expenseSplits.isEmpty {
+                for split in expenseSplits where split.owedAmount > 0 {
                     let adjustedOwed = split.owedAmount * reimbursementRatio
                     memberExpenseByDate[split.memberId, default: [:]][dateKey, default: 0] += adjustedOwed
                 }
             } else if let payerId = expense.paidByMemberId {
                 // Fallback: attribute full expense to payer when splits are missing
                 memberExpenseByDate[payerId, default: [:]][dateKey, default: 0] += effectiveAmount
-            } else if !activeMembers.isEmpty {
+            } else if !activeMembersList.isEmpty {
                 // Last resort: distribute equally among active members
-                let shareAmount = effectiveAmount / Decimal(activeMembers.count)
-                for member in activeMembers {
+                let shareAmount = effectiveAmount / Decimal(activeMembersList.count)
+                for member in activeMembersList {
                     memberExpenseByDate[member.id, default: [:]][dateKey, default: 0] += shareAmount
                 }
             }
         }
         
         // Get all unique dates and sort them
-        let allDates = Set(totalIncomeByDate.keys).union(Set(totalExpenseByDate.keys)).sorted()
+        var allDates = Set(totalIncomeByDate.keys).union(Set(totalExpenseByDate.keys)).sorted()
+        
+        // Downsample if too many data points
+        if allDates.count > maxChartPoints {
+            allDates = downsampleDates(Array(allDates), to: maxChartPoints)
+            // Aggregate data for downsampled dates
+            totalIncomeByDate = aggregateByDownsampledDates(totalIncomeByDate, sampledDates: allDates)
+            totalExpenseByDate = aggregateByDownsampledDates(totalExpenseByDate, sampledDates: allDates)
+            for memberId in memberIncomeByDate.keys {
+                memberIncomeByDate[memberId] = aggregateByDownsampledDates(memberIncomeByDate[memberId] ?? [:], sampledDates: allDates)
+            }
+            for memberId in memberExpenseByDate.keys {
+                memberExpenseByDate[memberId] = aggregateByDownsampledDates(memberExpenseByDate[memberId] ?? [:], sampledDates: allDates)
+            }
+        }
         
         // Build total line with cumulative net values
         var totalLine: [NetBalanceChartPoint] = []
@@ -4203,7 +4466,7 @@ struct NetBalanceDetailSheet: View {
         
         // Build member lines with cumulative net values
         var memberLines: [MemberNetBalanceLine] = []
-        for member in activeMembers {
+        for member in activeMembersList {
             var points: [NetBalanceChartPoint] = []
             var cumIncome: Decimal = 0
             var cumExpense: Decimal = 0
@@ -4250,9 +4513,32 @@ struct NetBalanceDetailSheet: View {
         return MultiLineNetBalanceData(totalLine: totalLine, memberLines: memberLines)
     }
     
-    /// Transactions sorted by date descending for the list
-    private var sortedTransactions: [TransactionView] {
-        allNetTransactions.sorted { $0.date > $1.date }
+    /// Downsample dates to target count using even distribution
+    private func downsampleDates(_ dates: [Date], to targetCount: Int) -> [Date] {
+        guard dates.count > targetCount else { return dates }
+        let step = Double(dates.count) / Double(targetCount)
+        var result: [Date] = []
+        var index: Double = 0
+        while Int(index) < dates.count && result.count < targetCount {
+            result.append(dates[Int(index)])
+            index += step
+        }
+        // Always include the last date
+        if let lastDate = dates.last, result.last != lastDate {
+            result[result.count - 1] = lastDate
+        }
+        return result
+    }
+    
+    /// Aggregate data by downsampled dates (assign each original date's data to nearest sampled date)
+    private func aggregateByDownsampledDates(_ data: [Date: Decimal], sampledDates: [Date]) -> [Date: Decimal] {
+        var result: [Date: Decimal] = [:]
+        for (date, amount) in data {
+            // Find the nearest sampled date
+            let nearestDate = sampledDates.min { abs($0.timeIntervalSince(date)) < abs($1.timeIntervalSince(date)) } ?? date
+            result[nearestDate, default: 0] += amount
+        }
+        return result
     }
     
     var body: some View {
@@ -4262,7 +4548,7 @@ struct NetBalanceDetailSheet: View {
                     .ignoresSafeArea()
                 
                 ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
+                    LazyVStack(spacing: Theme.Spacing.lg) {
                         // Total header
                         VStack(spacing: Theme.Spacing.sm) {
                             Image(systemName: isPositive ? "arrow.up.arrow.down.circle.fill" : "arrow.down.arrow.up.circle.fill")
@@ -4311,24 +4597,38 @@ struct NetBalanceDetailSheet: View {
                         .padding(.top, Theme.Spacing.md)
                         
                         // Chart section
-                        if multiLineChartData.totalLine.count >= 2 {
-                            MultiLineNetBalanceChart(data: multiLineChartData)
-                                .padding(.horizontal, Theme.Spacing.md)
-                        } else if multiLineChartData.totalLine.count == 1 {
-                            // Single data point
+                        if isLoadingChart {
                             VStack(spacing: Theme.Spacing.sm) {
-                                Text("Activity on \(multiLineChartData.totalLine[0].date.formatted(date: .abbreviated, time: .omitted))")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Theme.Colors.textSecondary)
-                                
-                                Text(multiLineChartData.totalLine[0].dailyNet.doubleValue.formattedAsMoney(showSign: true))
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(multiLineChartData.totalLine[0].dailyNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                ProgressView()
+                                    .tint(isPositive ? Theme.Colors.success : Theme.Colors.error)
+                                Text("Loading chart...")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textMuted)
                             }
+                            .frame(height: 180)
                             .frame(maxWidth: .infinity)
                             .cardStyle()
                             .padding(.horizontal, Theme.Spacing.md)
+                        } else if let data = chartData {
+                            if data.totalLine.count >= 2 {
+                                MultiLineNetBalanceChart(data: data)
+                                    .padding(.horizontal, Theme.Spacing.md)
+                            } else if data.totalLine.count == 1 {
+                                // Single data point
+                                VStack(spacing: Theme.Spacing.sm) {
+                                    Text("Activity on \(data.totalLine[0].date.formatted(date: .abbreviated, time: .omitted))")
+                                        .font(.subheadline)
+                                        .foregroundStyle(Theme.Colors.textSecondary)
+                                    
+                                    Text(data.totalLine[0].dailyNet.doubleValue.formattedAsMoney(showSign: true))
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(data.totalLine[0].dailyNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .cardStyle()
+                                .padding(.horizontal, Theme.Spacing.md)
+                            }
                         }
                         
                         // Transactions list
@@ -4365,7 +4665,8 @@ struct NetBalanceDetailSheet: View {
                                 .padding(.vertical, Theme.Spacing.xl)
                             } else {
                                 VStack(spacing: 0) {
-                                    ForEach(sortedTransactions) { transaction in
+                                    let displayedTransactions = Array(sortedTransactions.prefix(displayLimit))
+                                    ForEach(displayedTransactions) { transaction in
                                         Button {
                                             selectedTransaction = transaction
                                         } label: {
@@ -4376,11 +4677,31 @@ struct NetBalanceDetailSheet: View {
                                         }
                                         .buttonStyle(.plain)
                                         
-                                        if transaction.id != sortedTransactions.last?.id {
+                                        if transaction.id != displayedTransactions.last?.id {
                                             Divider()
                                                 .background(Theme.Colors.borderLight)
                                                 .padding(.leading, 56)
                                         }
+                                    }
+                                    
+                                    // Load more button
+                                    if sortedTransactions.count > displayLimit {
+                                        Button {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                displayLimit += 50
+                                            }
+                                        } label: {
+                                            HStack(spacing: Theme.Spacing.xs) {
+                                                Image(systemName: "arrow.down.circle")
+                                                Text("Load \(min(50, sortedTransactions.count - displayLimit)) more (\(sortedTransactions.count - displayLimit) remaining)")
+                                            }
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(Theme.Colors.accent)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, Theme.Spacing.md)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                                 .background(Theme.Colors.backgroundCard)
@@ -4406,6 +4727,14 @@ struct NetBalanceDetailSheet: View {
             .sheet(item: $selectedTransaction) { transaction in
                 TransactionDetailView(transaction: transaction)
             }
+            .task {
+                // Compute chart data asynchronously
+                let data = await computeChartData()
+                await MainActor.run {
+                    chartData = data
+                    isLoadingChart = false
+                }
+            }
         }
     }
 }
@@ -4413,7 +4742,7 @@ struct NetBalanceDetailSheet: View {
 // MARK: - Net Balance Chart Data Structures
 
 struct NetBalanceChartPoint: Identifiable {
-    let id = UUID()
+    var id: Date { date }
     let date: Date
     let dailyIncome: Decimal
     let dailyExpense: Decimal
