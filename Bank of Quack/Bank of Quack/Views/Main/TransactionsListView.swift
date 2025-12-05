@@ -6,28 +6,180 @@ struct TransactionsListView: View {
     @ObservedObject private var themeProvider = ThemeProvider.shared
     @State private var privacyManager = PrivacyManager.shared
     
-    @State private var searchText = ""
+    // Shared filter state (passed from MainTabView)
+    @Bindable var filterManager: DashboardFilterManager
+    
     @State private var selectedTransaction: TransactionView?
     @State private var isSelectionMode = false
     @State private var selectedTransactionIds: Set<UUID> = []
     @State private var showBulkDeleteConfirm = false
+    @State private var showFilterSheet = false
+    @State private var allSplits: [UUID: [TransactionSplit]] = [:] // For member filtering
     
-    private var filteredTransactions: [TransactionView] {
-        var transactions = transactionViewModel.transactions
-        
-        // Filter out income transactions when privacy mode is enabled
-        if privacyManager.hideIncomeData {
-            transactions = transactions.filter { $0.transactionType != .income }
-        }
-        
-        if !searchText.isEmpty {
-            transactions = transactions.filter {
-                $0.description.localizedCaseInsensitiveContains(searchText) ||
-                $0.categoryName?.localizedCaseInsensitiveContains(searchText) == true
+    private let dataService = DataService()
+    
+    // Use authViewModel's data for sectors/categories (same source as Dashboard)
+    private var sectors: [Sector] { authViewModel.sectors }
+    private var categories: [Category] { authViewModel.categories }
+    private var sectorCategories: [UUID: [UUID]] { authViewModel.sectorCategories }
+    
+    /// Get all category IDs within selected sectors
+    private var categoriesInSelectedSectors: Set<UUID> {
+        guard !filterManager.filter.selectedSectorIds.isEmpty else { return [] }
+        var categoryIds = Set<UUID>()
+        for sectorId in filterManager.filter.selectedSectorIds {
+            if let cats = sectorCategories[sectorId] {
+                categoryIds.formUnion(cats)
             }
         }
+        return categoryIds
+    }
+    
+    /// First transaction date (earliest) for "All Time" filter display
+    private var firstTransactionDate: Date? {
+        transactionViewModel.transactions.map { $0.date }.min()
+    }
+    
+    /// Last transaction date (latest) for "All Time" filter display
+    private var lastTransactionDate: Date? {
+        transactionViewModel.transactions.map { $0.date }.max()
+    }
+    
+    private var filteredTransactions: [TransactionView] {
+        let filter = filterManager.filter
         
-        return transactions
+        return transactionViewModel.transactions.filter { transaction in
+            // Privacy filter: hide income when privacy mode is enabled
+            if privacyManager.hideIncomeData && transaction.transactionType == .income {
+                return false
+            }
+            
+            // 1. Date filter
+            if let dateRange = filter.dateRange {
+                guard transaction.date >= dateRange.start && transaction.date <= dateRange.end else {
+                    return false
+                }
+            }
+            
+            // 2. Transaction type filter
+            guard filter.selectedTransactionTypes.contains(transaction.transactionType.rawValue) else {
+                return false
+            }
+            
+            // 3. Category/Sector filter (only applies to transactions with categories)
+            if !filter.selectedCategoryIds.isEmpty || !filter.selectedSectorIds.isEmpty {
+                // Get all valid category IDs (directly selected + those in selected sectors)
+                var validCategoryIds = filter.selectedCategoryIds
+                validCategoryIds.formUnion(categoriesInSelectedSectors)
+                
+                // If we have category filters, check the transaction's category
+                if !validCategoryIds.isEmpty {
+                    // Transactions without categories don't match category filters
+                    guard let categoryId = transaction.categoryId,
+                          validCategoryIds.contains(categoryId) else {
+                        return false
+                    }
+                }
+            }
+            
+            // 4. Member filter
+            if filter.sharedOnly && filter.selectedMemberIds.isEmpty {
+                // Shared only mode: show only expenses that are shared between multiple people
+                guard transactionIsShared(transaction) else { return false }
+            } else if !filter.selectedMemberIds.isEmpty {
+                let matchesMember = transactionMatchesMemberFilter(transaction, filter: filter)
+                guard matchesMember else { return false }
+            }
+            
+            // 5. Text search
+            if !filter.searchText.isEmpty {
+                let searchLower = filter.searchText.lowercased()
+                let descriptionMatch = transaction.description.lowercased().contains(searchLower)
+                let notesMatch = transaction.notes?.lowercased().contains(searchLower) ?? false
+                let categoryMatch = transaction.categoryName?.lowercased().contains(searchLower) ?? false
+                guard descriptionMatch || notesMatch || categoryMatch else { return false }
+            }
+            
+            return true
+        }
+    }
+    
+    /// Check if a transaction is shared between multiple people
+    private func transactionIsShared(_ transaction: TransactionView) -> Bool {
+        // Only expenses can be shared
+        guard transaction.transactionType == .expense else { return false }
+        
+        // Check if the expense has splits with more than one person owing money
+        if let splits = allSplits[transaction.id] {
+            let membersWithOwedAmount = splits.filter { $0.owedAmount > 0 }.count
+            return membersWithOwedAmount > 1
+        }
+        
+        // Fallback based on split type
+        switch transaction.splitType {
+        case .equal:
+            // Equal split among all members is shared if there are multiple active members
+            return authViewModel.members.filter { $0.isActive }.count > 1
+        case .custom:
+            // Custom splits are assumed shared (would need splits data to confirm)
+            return true
+        case .memberOnly, .payerOnly:
+            // Single person expenses are not shared
+            return false
+        }
+    }
+    
+    /// Check if a transaction matches the member filter
+    private func transactionMatchesMemberFilter(_ transaction: TransactionView, filter: DashboardFilter) -> Bool {
+        let selectedMembers = filter.selectedMemberIds
+        
+        switch transaction.transactionType {
+        case .expense:
+            if filter.includeShared {
+                // Include if any selected member has an owed amount in splits
+                if let splits = allSplits[transaction.id] {
+                    return splits.contains { split in
+                        split.owedAmount > 0 && selectedMembers.contains(split.memberId)
+                    }
+                }
+                // Fallback: check if expense is for a selected member
+                if let splitMemberId = transaction.splitMemberId {
+                    return selectedMembers.contains(splitMemberId)
+                }
+                // For equal splits, all members are involved
+                if transaction.splitType == .equal {
+                    return true
+                }
+                return selectedMembers.contains(transaction.paidByMemberId ?? UUID())
+            } else {
+                // Only show if expense is for a single selected member (not shared)
+                guard transaction.splitType == .memberOnly,
+                      let splitMemberId = transaction.splitMemberId else {
+                    return false
+                }
+                return selectedMembers.contains(splitMemberId)
+            }
+            
+        case .income:
+            // Income: check received by (paidByMemberId stores the recipient)
+            if let receivedBy = transaction.paidByMemberId {
+                return selectedMembers.contains(receivedBy)
+            }
+            return false
+            
+        case .settlement:
+            // Settlement: show if paid by OR paid to is selected
+            let paidByMatch = transaction.paidByMemberId.map { selectedMembers.contains($0) } ?? false
+            let paidToMatch = transaction.paidToMemberId.map { selectedMembers.contains($0) } ?? false
+            return paidByMatch || paidToMatch
+            
+        case .reimbursement:
+            // Reimbursement: check received by
+            if let receivedBy = transaction.paidByMemberId {
+                return selectedMembers.contains(receivedBy)
+            }
+            return false
+        }
     }
     
     /// Computed reimbursements by expense ID
@@ -78,73 +230,81 @@ struct TransactionsListView: View {
                 Theme.Colors.backgroundPrimary
                     .ignoresSafeArea()
                 
-                if transactionViewModel.transactions.isEmpty && !transactionViewModel.isLoading {
-                    EmptyTransactionsView()
-                } else {
-                    ScrollView {
-                        LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                            ForEach(groupedTransactions, id: \.0) { month, transactions in
-                                Section {
-                                    ForEach(transactions) { transaction in
-                                        TransactionRowSelectable(
-                                            transaction: transaction,
-                                            reimbursedAmount: reimbursementsByExpense[transaction.id] ?? 0,
-                                            isSelectionMode: isSelectionMode,
-                                            isSelected: selectedTransactionIds.contains(transaction.id),
-                                            onTap: {
-                                                if isSelectionMode {
-                                                    toggleSelection(transaction.id)
-                                                } else {
-                                                    selectedTransaction = transaction
-                                                }
-                                            }
-                                        )
-                                        
-                                        if transaction.id != transactions.last?.id {
-                                            Divider()
-                                                .background(Theme.Colors.borderLight)
-                                                .padding(.leading, isSelectionMode ? 100 : 60)
-                                        }
-                                    }
-                                } header: {
-                                    HStack {
-                                        if isSelectionMode {
-                                            // Select all in month button
-                                            Button {
-                                                let monthIds = Set(transactions.map { $0.id })
-                                                let allSelected = monthIds.isSubset(of: selectedTransactionIds)
-                                                if allSelected {
-                                                    selectedTransactionIds.subtract(monthIds)
-                                                } else {
-                                                    selectedTransactionIds.formUnion(monthIds)
-                                                }
-                                            } label: {
-                                                Image(systemName: Set(transactions.map { $0.id }).isSubset(of: selectedTransactionIds) ? "checkmark.circle.fill" : "circle")
-                                                    .font(.system(size: 22))
-                                                    .foregroundStyle(Set(transactions.map { $0.id }).isSubset(of: selectedTransactionIds) ? Theme.Colors.accent : Theme.Colors.textMuted)
-                                            }
-                                            .padding(.trailing, Theme.Spacing.sm)
-                                        }
-                                        
-                                        Text(month)
-                                            .font(.subheadline)
-                                            .fontWeight(.semibold)
-                                            .foregroundStyle(Theme.Colors.textSecondary)
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, Theme.Spacing.md)
-                                    .padding(.vertical, Theme.Spacing.sm)
-                                    .background(Theme.Colors.backgroundPrimary)
-                                }
-                            }
-                            
-                            // Add space at bottom for the delete button when in selection mode
-                            Spacer(minLength: isSelectionMode && !selectedTransactionIds.isEmpty ? 150 : 100)
+                VStack(spacing: 0) {
+                    // Filter summary header (matches Dashboard filter button style)
+                    filterHeader
+                    
+                    if filteredTransactions.isEmpty && !transactionViewModel.isLoading {
+                        if transactionViewModel.transactions.isEmpty {
+                            EmptyTransactionsView()
+                        } else {
+                            // Transactions exist but filters exclude all
+                            NoMatchingTransactionsView()
                         }
-                    }
-                    .refreshable {
-                        if let householdId = authViewModel.currentHousehold?.id {
-                            await transactionViewModel.fetchTransactions(householdId: householdId)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                                ForEach(groupedTransactions, id: \.0) { month, transactions in
+                                    Section {
+                                        ForEach(transactions) { transaction in
+                                            TransactionRowSelectable(
+                                                transaction: transaction,
+                                                reimbursedAmount: reimbursementsByExpense[transaction.id] ?? 0,
+                                                isSelectionMode: isSelectionMode,
+                                                isSelected: selectedTransactionIds.contains(transaction.id),
+                                                onTap: {
+                                                    if isSelectionMode {
+                                                        toggleSelection(transaction.id)
+                                                    } else {
+                                                        selectedTransaction = transaction
+                                                    }
+                                                }
+                                            )
+                                            
+                                            if transaction.id != transactions.last?.id {
+                                                Divider()
+                                                    .background(Theme.Colors.borderLight)
+                                                    .padding(.leading, isSelectionMode ? 100 : 60)
+                                            }
+                                        }
+                                    } header: {
+                                        HStack {
+                                            if isSelectionMode {
+                                                // Select all in month button
+                                                Button {
+                                                    let monthIds = Set(transactions.map { $0.id })
+                                                    let allSelected = monthIds.isSubset(of: selectedTransactionIds)
+                                                    if allSelected {
+                                                        selectedTransactionIds.subtract(monthIds)
+                                                    } else {
+                                                        selectedTransactionIds.formUnion(monthIds)
+                                                    }
+                                                } label: {
+                                                    Image(systemName: Set(transactions.map { $0.id }).isSubset(of: selectedTransactionIds) ? "checkmark.circle.fill" : "circle")
+                                                        .font(.system(size: 22))
+                                                        .foregroundStyle(Set(transactions.map { $0.id }).isSubset(of: selectedTransactionIds) ? Theme.Colors.accent : Theme.Colors.textMuted)
+                                                }
+                                                .padding(.trailing, Theme.Spacing.sm)
+                                            }
+                                            
+                                            Text(month)
+                                                .font(.subheadline)
+                                                .fontWeight(.semibold)
+                                                .foregroundStyle(Theme.Colors.textSecondary)
+                                            Spacer()
+                                        }
+                                        .padding(.horizontal, Theme.Spacing.md)
+                                        .padding(.vertical, Theme.Spacing.sm)
+                                        .background(Theme.Colors.backgroundPrimary)
+                                    }
+                                }
+                                
+                                // Add space at bottom for the delete button when in selection mode
+                                Spacer(minLength: isSelectionMode && !selectedTransactionIds.isEmpty ? 150 : 100)
+                            }
+                        }
+                        .refreshable {
+                            await refreshData()
                         }
                     }
                 }
@@ -177,7 +337,6 @@ struct TransactionsListView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
             .toolbarColorScheme(Theme.Colors.isLightMode ? .light : .dark, for: .navigationBar)
-            .searchable(text: $searchText, prompt: "Search transactions")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -192,6 +351,15 @@ struct TransactionsListView: View {
                             .foregroundStyle(Theme.Colors.accent)
                     }
                 }
+            }
+            .sheet(isPresented: $showFilterSheet) {
+                DashboardFilterSheet(
+                    filter: $filterManager.filter,
+                    members: authViewModel.members,
+                    sectors: sectors,
+                    categories: categories,
+                    sectorCategories: sectorCategories
+                )
             }
             .sheet(item: $selectedTransaction) { transaction in
                 TransactionDetailView(transaction: transaction)
@@ -219,6 +387,96 @@ struct TransactionsListView: View {
                     Text("This action cannot be undone.")
                 }
             }
+            .task {
+                await refreshData()
+            }
+        }
+    }
+    
+    // MARK: - Filter Header
+    
+    private var filterHeader: some View {
+        Button {
+            showFilterSheet = true
+        } label: {
+            HStack(spacing: Theme.Spacing.sm) {
+                // Filter summary text
+                VStack(alignment: .leading, spacing: 2) {
+                    if filterManager.filter.isFiltered {
+                        Text(filterManager.filter.summary(firstTransactionDate: firstTransactionDate, lastTransactionDate: lastTransactionDate))
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                            .lineLimit(1)
+                    } else {
+                        Text(filterManager.filter.dateDescription(firstTransactionDate: firstTransactionDate, lastTransactionDate: lastTransactionDate))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                    }
+                    
+                    Text("\(filteredTransactions.count) transaction\(filteredTransactions.count == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+                
+                Spacer()
+                
+                // Filter button with badge
+                ZStack(alignment: .topTrailing) {
+                    ZStack {
+                        Circle()
+                            .fill(filterManager.filter.isFiltered ? Theme.Colors.accent : Theme.Colors.backgroundCard)
+                            .frame(width: 36, height: 36)
+                            .overlay(
+                                Circle()
+                                    .stroke(filterManager.filter.isFiltered ? Theme.Colors.accent : Theme.Colors.borderDefault, lineWidth: 2)
+                            )
+                        
+                        Image(systemName: filterManager.filter.isFiltered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                            .font(.system(size: 16))
+                            .foregroundStyle(filterManager.filter.isFiltered ? Theme.Colors.textInverse : Theme.Colors.textPrimary)
+                    }
+                    
+                    if filterManager.filter.activeFilterCount > 0 {
+                        Text("\(filterManager.filter.activeFilterCount)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 16, height: 16)
+                            .background(Theme.Colors.error)
+                            .clipShape(Circle())
+                            .offset(x: 4, y: -4)
+                    }
+                }
+            }
+            .padding(.horizontal, Theme.Spacing.md)
+            .padding(.vertical, Theme.Spacing.sm)
+            .background(Theme.Colors.backgroundCard)
+        }
+        .buttonStyle(.plain)
+    }
+    
+    private func refreshData() async {
+        guard let householdId = authViewModel.currentHousehold?.id else { return }
+        
+        // Ensure filter is for the current household
+        filterManager.setHousehold(householdId)
+        
+        // Fetch transactions
+        await transactionViewModel.fetchTransactions(householdId: householdId)
+        
+        // Fetch splits for member filtering
+        do {
+            let splits = try await dataService.fetchAllSplitsForHousehold(householdId: householdId)
+            allSplits = Dictionary(grouping: splits, by: { $0.transactionId })
+            
+            // Validate filter against current data
+            filterManager.validateFilter(
+                validSectorIds: Set(sectors.map { $0.id }),
+                validCategoryIds: Set(categories.map { $0.id }),
+                validMemberIds: Set(authViewModel.members.map { $0.id })
+            )
+        } catch {
+            print("Failed to fetch splits: \(error)")
         }
     }
     
@@ -279,6 +537,29 @@ struct EmptyTransactionsView: View {
                 .multilineTextAlignment(.center)
         }
         .padding()
+        .frame(maxHeight: .infinity)
+    }
+}
+
+struct NoMatchingTransactionsView: View {
+    var body: some View {
+        VStack(spacing: Theme.Spacing.md) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 50))
+                .foregroundStyle(Theme.Colors.textMuted)
+            
+            Text("No Matching Transactions")
+                .font(.title3)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.Colors.textPrimary)
+            
+            Text("Try adjusting your filters to see more results")
+                .font(.subheadline)
+                .foregroundStyle(Theme.Colors.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+        .frame(maxHeight: .infinity)
     }
 }
 
@@ -813,7 +1094,7 @@ struct ReimbursementsDetailRow: View {
 }
 
 #Preview {
-    TransactionsListView()
+    TransactionsListView(filterManager: DashboardFilterManager())
         .environment(AuthViewModel())
         .environment(TransactionViewModel())
 }

@@ -8,6 +8,9 @@ struct MainTabView: View {
     @State private var privacyManager = PrivacyManager.shared
     @State private var dashboardRefreshTrigger = UUID()
     
+    // Shared filter state between Dashboard and Transactions tabs
+    @State private var filterManager = DashboardFilterManager()
+    
     /// Icon for Home tab - shows lock when privacy is active
     private var homeIcon: String {
         privacyManager.isPrivacyActive ? "lock.fill" : "house.fill"
@@ -20,7 +23,7 @@ struct MainTabView: View {
     
     var body: some View {
         TabView(selection: $selectedTab) {
-            DashboardView()
+            DashboardView(filterManager: filterManager)
                 .environment(transactionViewModel)
                 .id(dashboardRefreshTrigger) // Force view recreation and data refresh when switching back to this tab
                 .tabItem {
@@ -28,7 +31,7 @@ struct MainTabView: View {
                 }
                 .tag(0)
             
-            TransactionsListView()
+            TransactionsListView(filterManager: filterManager)
                 .environment(transactionViewModel)
                 .tabItem {
                     Label("Transactions", systemImage: transactionsIcon)

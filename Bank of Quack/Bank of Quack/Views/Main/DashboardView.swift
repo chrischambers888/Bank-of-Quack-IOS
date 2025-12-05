@@ -16,8 +16,8 @@ struct DashboardView: View {
     @State private var showIncomeDetail = false
     @State private var showNetBalanceDetail = false
     
-    // Filter state
-    @State private var filterManager = DashboardFilterManager()
+    // Shared filter state (passed from MainTabView)
+    @Bindable var filterManager: DashboardFilterManager
     
     // Use authViewModel's data for sectors/categories (same source as Settings)
     // This ensures consistency and avoids potential fetch issues
@@ -1592,10 +1592,19 @@ struct TotalExpensesDetailSheet: View {
             let reimbursementRatio = expense.amount > 0 ? effectiveAmount / expense.amount : 1
             
             // Add to member amounts based on owed (expense for)
-            if let splits = allSplits[expense.id] {
+            if let splits = allSplits[expense.id], !splits.isEmpty {
                 for split in splits where split.owedAmount > 0 {
                     let adjustedOwed = split.owedAmount * reimbursementRatio
                     memberExpensesByDate[split.memberId, default: [:]][dateKey, default: 0] += adjustedOwed
+                }
+            } else if let payerId = expense.paidByMemberId {
+                // Fallback: attribute full expense to payer when splits are missing
+                memberExpensesByDate[payerId, default: [:]][dateKey, default: 0] += effectiveAmount
+            } else if !activeMembers.isEmpty {
+                // Last resort: distribute equally among active members
+                let shareAmount = effectiveAmount / Decimal(activeMembers.count)
+                for member in activeMembers {
+                    memberExpensesByDate[member.id, default: [:]][dateKey, default: 0] += shareAmount
                 }
             }
         }
@@ -2277,6 +2286,12 @@ struct TotalIncomeDetailSheet: View {
             // Add to member amounts based on paidByMemberId (who received the income)
             if let receivedById = income.paidByMemberId {
                 memberIncomeByDate[receivedById, default: [:]][dateKey, default: 0] += income.amount
+            } else if !activeMembers.isEmpty {
+                // Fallback: distribute equally among active members so member totals add up
+                let shareAmount = income.amount / Decimal(activeMembers.count)
+                for member in activeMembers {
+                    memberIncomeByDate[member.id, default: [:]][dateKey, default: 0] += shareAmount
+                }
             }
         }
         
@@ -2980,6 +2995,12 @@ struct NetBalanceDetailSheet: View {
             // Member income based on who received it
             if let receivedById = income.paidByMemberId {
                 memberIncomeByDate[receivedById, default: [:]][dateKey, default: 0] += income.amount
+            } else if !activeMembers.isEmpty {
+                // Fallback: distribute equally among active members so member totals add up
+                let shareAmount = income.amount / Decimal(activeMembers.count)
+                for member in activeMembers {
+                    memberIncomeByDate[member.id, default: [:]][dateKey, default: 0] += shareAmount
+                }
             }
         }
         
@@ -2995,10 +3016,19 @@ struct NetBalanceDetailSheet: View {
             
             // Member expenses based on owed amounts from splits
             let reimbursementRatio = expense.amount > 0 ? effectiveAmount / expense.amount : 1
-            if let splits = allSplits[expense.id] {
+            if let splits = allSplits[expense.id], !splits.isEmpty {
                 for split in splits where split.owedAmount > 0 {
                     let adjustedOwed = split.owedAmount * reimbursementRatio
                     memberExpenseByDate[split.memberId, default: [:]][dateKey, default: 0] += adjustedOwed
+                }
+            } else if let payerId = expense.paidByMemberId {
+                // Fallback: attribute full expense to payer when splits are missing
+                memberExpenseByDate[payerId, default: [:]][dateKey, default: 0] += effectiveAmount
+            } else if !activeMembers.isEmpty {
+                // Last resort: distribute equally among active members
+                let shareAmount = effectiveAmount / Decimal(activeMembers.count)
+                for member in activeMembers {
+                    memberExpenseByDate[member.id, default: [:]][dateKey, default: 0] += shareAmount
                 }
             }
         }
@@ -3716,7 +3746,7 @@ struct NetBalanceTransactionRow: View {
 }
 
 #Preview {
-    DashboardView()
+    DashboardView(filterManager: DashboardFilterManager())
         .environment(AuthViewModel())
         .environment(TransactionViewModel())
 }
