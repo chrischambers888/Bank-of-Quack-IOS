@@ -939,6 +939,61 @@ struct AddTransactionView: View {
     
     // MARK: - Settlement Balances Card
     
+    /// Projected balance changes based on current form state
+    private var projectedBalanceChanges: [(member: HouseholdMember, currentBalance: Decimal, change: Decimal, newBalance: Decimal)] {
+        guard parsedAmount > 0 else { return [] }
+        
+        var changes: [(HouseholdMember, Decimal, Decimal, Decimal)] = []
+        
+        switch transactionType {
+        case .expense:
+            // For expenses, calculate from splits
+            for split in memberSplits {
+                guard let member = authViewModel.members.first(where: { $0.id == split.memberId }) else { continue }
+                let currentBalance = memberBalances.first { $0.memberId == member.id }?.balance ?? 0
+                let change = split.paidAmount - split.owedAmount
+                
+                // Only include if there's a meaningful change
+                if abs(change) > 0.001 {
+                    changes.append((member, currentBalance, change, currentBalance + change))
+                }
+            }
+            
+        case .settlement:
+            // Settlement: payer pays to settle up (balance increases), recipient receives (balance decreases)
+            if let payerId = paidByMemberId,
+               let payer = authViewModel.members.first(where: { $0.id == payerId }) {
+                let currentBalance = memberBalances.first { $0.memberId == payer.id }?.balance ?? 0
+                changes.append((payer, currentBalance, parsedAmount, currentBalance + parsedAmount))
+            }
+            if let recipientId = paidToMemberId,
+               let recipient = authViewModel.members.first(where: { $0.id == recipientId }) {
+                let currentBalance = memberBalances.first { $0.memberId == recipient.id }?.balance ?? 0
+                changes.append((recipient, currentBalance, -parsedAmount, currentBalance - parsedAmount))
+            }
+            
+        case .reimbursement:
+            // Reimbursements are more complex - simplified view for preview
+            if let recipientId = paidByMemberId,
+               let recipient = authViewModel.members.first(where: { $0.id == recipientId }) {
+                let currentBalance = memberBalances.first { $0.memberId == recipient.id }?.balance ?? 0
+                // Simplified: recipient's balance typically decreases (they received money)
+                changes.append((recipient, currentBalance, -parsedAmount, currentBalance - parsedAmount))
+            }
+            
+        case .income:
+            // Income doesn't affect balances
+            break
+        }
+        
+        return changes.sorted { abs($0.2) > abs($1.2) }
+    }
+    
+    /// Whether to show the balance preview (valid form state with meaningful changes)
+    private var shouldShowBalancePreview: Bool {
+        !projectedBalanceChanges.isEmpty && parsedAmount > 0
+    }
+    
     /// Suggested settlements for the inline expandable section
     private var inlineSuggestedSettlements: [(from: MemberBalance, to: MemberBalance, amount: Double)] {
         let filteredBalances = memberBalances.filter { balance in
@@ -1151,6 +1206,73 @@ struct AddTransactionView: View {
                     }
                     .padding(.top, Theme.Spacing.xs)
                 }
+                
+                // Balance Preview (when form has valid data)
+                if shouldShowBalancePreview {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Image(systemName: "eye")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.accent)
+                            
+                            Text("Preview: After this transaction")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                        }
+                        
+                        VStack(spacing: Theme.Spacing.xs) {
+                            ForEach(projectedBalanceChanges, id: \.member.id) { item in
+                                HStack(spacing: Theme.Spacing.sm) {
+                                    // Member avatar
+                                    Text(item.member.avatarUrl ?? String(item.member.displayName.prefix(1)).uppercased())
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(Theme.Colors.textInverse)
+                                        .frame(width: 24, height: 24)
+                                        .background(item.member.swiftUIColor)
+                                        .clipShape(Circle())
+                                    
+                                    Text(item.member.displayName)
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Colors.textPrimary)
+                                        .lineLimit(1)
+                                    
+                                    Spacer()
+                                    
+                                    // Current → New balance
+                                    HStack(spacing: 4) {
+                                        Text(formatBalanceCompact(item.currentBalance))
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.textMuted)
+                                        
+                                        Image(systemName: "arrow.right")
+                                            .font(.caption2)
+                                            .foregroundStyle(Theme.Colors.textMuted)
+                                        
+                                        Text(formatBalanceCompact(item.newBalance))
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(item.newBalance >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                    }
+                                    
+                                    // Change indicator
+                                    Text("(\(item.change >= 0 ? "+" : "")\(formatBalanceCompact(item.change)))")
+                                        .font(.caption2)
+                                        .foregroundStyle(item.change >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                }
+                            }
+                        }
+                        .padding(Theme.Spacing.sm)
+                        .background(Theme.Colors.accent.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Theme.CornerRadius.sm)
+                                .strokeBorder(Theme.Colors.accent.opacity(0.2), lineWidth: 1)
+                        )
+                    }
+                    .padding(.top, Theme.Spacing.sm)
+                }
             }
             
             // Helper text (legend)
@@ -1174,6 +1296,12 @@ struct AddTransactionView: View {
                 }
             }
         }
+    }
+    
+    private func formatBalanceCompact(_ balance: Decimal) -> String {
+        let value = abs(balance.doubleValue)
+        let sign = balance >= 0 ? "" : "-"
+        return "\(sign)\(value.formattedAsMoney(showSign: false))"
     }
     
     private func balanceStatusText(for balance: Decimal) -> String {

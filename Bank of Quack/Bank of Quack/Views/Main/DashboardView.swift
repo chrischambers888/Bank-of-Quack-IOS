@@ -1128,6 +1128,14 @@ struct MemberBalanceCardWithInfo: View {
     }
 }
 
+// MARK: - Settlement Pair (for sheet binding)
+
+struct SettlementPair: Identifiable {
+    let id = UUID()
+    let from: MemberBalance
+    let to: MemberBalance
+}
+
 // MARK: - Balance Details Sheet
 
 struct BalanceDetailsSheet: View {
@@ -1138,6 +1146,55 @@ struct BalanceDetailsSheet: View {
     let currentMemberId: UUID?
     
     @Environment(\.dismiss) private var dismiss
+    @State private var expandedMemberId: UUID? = nil
+    @State private var selectedTab: BalanceTab = .balances
+    @State private var selectedSettlementPair: SettlementPair? = nil
+    
+    enum BalanceTab: String, CaseIterable {
+        case balances = "Balances"
+        case ledger = "Ledger"
+    }
+    
+    /// Calculate suggested settlements to balance everyone out
+    private var suggestedSettlements: [(from: MemberBalance, to: MemberBalance, amount: Double)] {
+        let filteredBalances = memberBalances.filter { balance in
+            // Hide inactive members with zero balance
+            if let member = members.first(where: { $0.id == balance.memberId }),
+               member.isInactive,
+               abs(balance.balance.doubleValue) < 0.01 {
+                return false
+            }
+            return true
+        }
+        
+        let creditors = filteredBalances.filter { $0.balance.doubleValue > 0.01 }
+            .sorted { $0.balance.doubleValue > $1.balance.doubleValue }
+        let debtors = filteredBalances.filter { $0.balance.doubleValue < -0.01 }
+            .sorted { $0.balance.doubleValue < $1.balance.doubleValue }
+        
+        var settlements: [(from: MemberBalance, to: MemberBalance, amount: Double)] = []
+        var debtorsCopy = debtors.map { ($0, abs($0.balance.doubleValue)) }
+        var creditorsCopy = creditors.map { ($0, $0.balance.doubleValue) }
+        
+        var i = 0, j = 0
+        while i < debtorsCopy.count && j < creditorsCopy.count {
+            let (debtor, debtAmount) = debtorsCopy[i]
+            let (creditor, creditAmount) = creditorsCopy[j]
+            
+            let settlementAmount = min(debtAmount, creditAmount)
+            if settlementAmount >= 0.01 {
+                settlements.append((from: debtor, to: creditor, amount: settlementAmount))
+            }
+            
+            debtorsCopy[i].1 -= settlementAmount
+            creditorsCopy[j].1 -= settlementAmount
+            
+            if debtorsCopy[i].1 < 0.01 { i += 1 }
+            if creditorsCopy[j].1 < 0.01 { j += 1 }
+        }
+        
+        return settlements
+    }
     
     private func memberName(for memberId: UUID) -> String {
         members.first { $0.id == memberId }?.displayName ?? "Unknown"
@@ -1145,6 +1202,66 @@ struct BalanceDetailsSheet: View {
     
     private func member(for memberId: UUID) -> HouseholdMember? {
         members.first { $0.id == memberId }
+    }
+    
+    /// Calculate detailed breakdown for a member
+    private func breakdown(for memberId: UUID) -> MemberBalanceBreakdown {
+        var expensesPaid: Decimal = 0
+        var expensesOwed: Decimal = 0
+        var settlementsPaid: Decimal = 0
+        var settlementsReceived: Decimal = 0
+        var reimbursementsReceived: Decimal = 0
+        var reimbursementsOwedReduction: Decimal = 0
+        
+        for transaction in transactions {
+            switch transaction.transactionType {
+            case .expense:
+                if let splits = transactionSplits[transaction.id] {
+                    for split in splits where split.memberId == memberId {
+                        expensesPaid += split.paidAmount
+                        expensesOwed += split.owedAmount
+                    }
+                }
+                
+            case .settlement:
+                if transaction.paidByMemberId == memberId {
+                    settlementsPaid += transaction.amount
+                }
+                if transaction.paidToMemberId == memberId {
+                    settlementsReceived += transaction.amount
+                }
+                
+            case .reimbursement:
+                // Reimbursements reduce the original payer's "paid" and everyone's "owed" proportionally
+                if let linkedExpenseId = transaction.reimbursesTransactionId,
+                   let linkedSplits = transactionSplits[linkedExpenseId] {
+                    let totalOwed = linkedSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
+                    
+                    // Member's owed reduction
+                    if let memberSplit = linkedSplits.first(where: { $0.memberId == memberId }) {
+                        let owedPercentage = totalOwed > 0 ? memberSplit.owedAmount / totalOwed : 0
+                        reimbursementsOwedReduction += transaction.amount * owedPercentage
+                    }
+                    
+                    // If this member received the reimbursement
+                    if transaction.paidByMemberId == memberId {
+                        reimbursementsReceived += transaction.amount
+                    }
+                }
+                
+            case .income:
+                break
+            }
+        }
+        
+        return MemberBalanceBreakdown(
+            expensesPaid: expensesPaid,
+            expensesOwed: expensesOwed,
+            settlementsPaid: settlementsPaid,
+            settlementsReceived: settlementsReceived,
+            reimbursementsReceived: reimbursementsReceived,
+            reimbursementsOwedReduction: reimbursementsOwedReduction
+        )
     }
     
     /// Sorted and filtered member balances:
@@ -1180,19 +1297,155 @@ struct BalanceDetailsSheet: View {
             }
     }
     
+    /// Ledger entries for the current member, showing running balance
+    private var ledgerEntries: [LedgerEntry] {
+        guard let currentMemberId = currentMemberId else { return [] }
+        
+        // Sort transactions by date (oldest first for running total)
+        let sortedTransactions = transactions.sorted { $0.date < $1.date }
+        
+        var entries: [LedgerEntry] = []
+        var runningBalance: Decimal = 0
+        
+        for transaction in sortedTransactions {
+            var balanceChange: Decimal = 0
+            let description = transaction.description
+            var detail: String? = nil
+            
+            switch transaction.transactionType {
+            case .expense:
+                if let splits = transactionSplits[transaction.id] {
+                    for split in splits where split.memberId == currentMemberId {
+                        balanceChange = split.paidAmount - split.owedAmount
+                    }
+                }
+                if balanceChange > 0 {
+                    detail = "You paid more than your share"
+                } else if balanceChange < 0 {
+                    detail = "You owe for this expense"
+                }
+                
+            case .settlement:
+                if transaction.paidByMemberId == currentMemberId {
+                    balanceChange = transaction.amount
+                    detail = "You paid \(transaction.paidToName ?? "someone")"
+                } else if transaction.paidToMemberId == currentMemberId {
+                    balanceChange = -transaction.amount
+                    detail = "\(transaction.paidByName ?? "Someone") paid you"
+                }
+                
+            case .reimbursement:
+                if let linkedExpenseId = transaction.reimbursesTransactionId,
+                   let linkedSplits = transactionSplits[linkedExpenseId] {
+                    let totalOwed = linkedSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
+                    
+                    if let memberSplit = linkedSplits.first(where: { $0.memberId == currentMemberId }) {
+                        let owedPercentage = totalOwed > 0 ? memberSplit.owedAmount / totalOwed : 0
+                        let owedReduction = transaction.amount * owedPercentage
+                        
+                        if transaction.paidByMemberId == currentMemberId {
+                            // We received the reimbursement
+                            let effectivePaidReduction = min(transaction.amount, memberSplit.paidAmount)
+                            let remaining = transaction.amount - effectivePaidReduction
+                            balanceChange = owedReduction - effectivePaidReduction - remaining
+                            detail = "Reimbursement received"
+                        } else {
+                            // Someone else received - our owed decreased
+                            balanceChange = owedReduction
+                            detail = "Expense reimbursed"
+                        }
+                    }
+                }
+                
+            case .income:
+                continue
+            }
+            
+            // Only include if this transaction affected the current member's balance
+            if abs(balanceChange) > 0.001 {
+                runningBalance += balanceChange
+                entries.append(LedgerEntry(
+                    id: transaction.id,
+                    date: transaction.date,
+                    description: description,
+                    detail: detail,
+                    transactionType: transaction.transactionType,
+                    balanceChange: balanceChange,
+                    runningBalance: runningBalance
+                ))
+            }
+        }
+        
+        // Reverse to show newest first
+        return entries.reversed()
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
                 Theme.Colors.backgroundPrimary
                     .ignoresSafeArea()
                 
+                VStack(spacing: 0) {
+                    // Tab selector
+                    Picker("View", selection: $selectedTab) {
+                        ForEach(BalanceTab.allCases, id: \.self) { tab in
+                            Text(tab.rawValue).tag(tab)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, Theme.Spacing.md)
+                    .padding(.top, Theme.Spacing.sm)
+                
                 ScrollView {
+                        VStack(spacing: Theme.Spacing.lg) {
+                            if selectedTab == .balances {
+                                balancesView
+                            } else {
+                                ledgerView
+                            }
+                            
+                            Spacer(minLength: 40)
+                        }
+                        .padding(Theme.Spacing.md)
+                    }
+                }
+            }
+            .navigationTitle("Balance Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+            .sheet(item: $selectedSettlementPair) { pair in
+                PairwiseBalanceSheet(
+                    fromMember: pair.from,
+                    toMember: pair.to,
+                    transactions: transactions,
+                    transactionSplits: transactionSplits,
+                    members: members
+                )
+            }
+        }
+    }
+    
+    // MARK: - Balances Tab View
+    
+    private var balancesView: some View {
                     VStack(spacing: Theme.Spacing.lg) {
                         // Bank Balances Section
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                             Label("Bank Balances", systemImage: "person.2.fill")
                                 .font(.headline)
                                 .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                Text("Tap a member to see their breakdown")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textMuted)
                             
                             if sortedMemberBalances.isEmpty {
                                 Text("No balance data available")
@@ -1202,10 +1455,21 @@ struct BalanceDetailsSheet: View {
                             } else {
                                 VStack(spacing: 0) {
                                     ForEach(sortedMemberBalances, id: \.memberId) { balance in
-                                        MemberBalanceRow(
+                            ExpandableMemberBalanceRow(
                                             balance: balance,
+                                breakdown: breakdown(for: balance.memberId),
                                             isCurrentMember: balance.memberId == currentMemberId,
-                                            isInactive: member(for: balance.memberId)?.isInactive ?? false
+                                isInactive: member(for: balance.memberId)?.isInactive ?? false,
+                                isExpanded: expandedMemberId == balance.memberId,
+                                onTap: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        if expandedMemberId == balance.memberId {
+                                            expandedMemberId = nil
+                                        } else {
+                                            expandedMemberId = balance.memberId
+                                        }
+                                    }
+                                }
                                         )
                                         
                                         if balance.memberId != sortedMemberBalances.last?.memberId {
@@ -1230,6 +1494,94 @@ struct BalanceDetailsSheet: View {
                         .padding(Theme.Spacing.md)
                         .background(Theme.Colors.warning.opacity(0.1))
                         .cornerRadius(Theme.CornerRadius.md)
+            
+            // Suggested Settlements with Pairwise Drill-down
+            if !suggestedSettlements.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                    Label("Suggested Settlements", systemImage: "arrow.left.arrow.right.circle")
+                        .font(.headline)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                    
+                    Text("Tap to see why this debt exists")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                    
+                    VStack(spacing: Theme.Spacing.sm) {
+                        ForEach(suggestedSettlements.indices, id: \.self) { index in
+                            let settlement = suggestedSettlements[index]
+                            let fromMember = members.first { $0.id == settlement.from.memberId }
+                            let toMember = members.first { $0.id == settlement.to.memberId }
+                            
+                            Button {
+                                selectedSettlementPair = SettlementPair(from: settlement.from, to: settlement.to)
+                            } label: {
+                                HStack(spacing: Theme.Spacing.sm) {
+                                    // From member
+                                    VStack(spacing: 2) {
+                                        if let member = fromMember {
+                                            Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
+                                                .font(.caption)
+                                                .fontWeight(.semibold)
+                                                .foregroundStyle(Theme.Colors.textInverse)
+                                                .frame(width: 32, height: 32)
+                                                .background(member.swiftUIColor)
+                                                .clipShape(Circle())
+                                        }
+                                        Text(settlement.from.displayName)
+                                            .font(.caption2)
+                                            .foregroundStyle(Theme.Colors.textSecondary)
+                                            .lineLimit(1)
+                                    }
+                                    .frame(width: 70)
+                                    
+                                    // Arrow with amount
+                                    VStack(spacing: 2) {
+                                        Image(systemName: "arrow.right")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.accent)
+                                        Text(settlement.amount.formattedAsMoney(showSign: false))
+                                            .font(.subheadline)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(Theme.Colors.textPrimary)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    
+                                    // To member
+                                    VStack(spacing: 2) {
+                                        if let member = toMember {
+                                            Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
+                                                .font(.caption)
+                                                .fontWeight(.semibold)
+                                                .foregroundStyle(Theme.Colors.textInverse)
+                                                .frame(width: 32, height: 32)
+                                                .background(member.swiftUIColor)
+                                                .clipShape(Circle())
+                                        }
+                                        Text(settlement.to.displayName)
+                                            .font(.caption2)
+                                            .foregroundStyle(Theme.Colors.textSecondary)
+                                            .lineLimit(1)
+                                    }
+                                    .frame(width: 70)
+                                    
+                                    // Info icon
+                                    Image(systemName: "info.circle")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Colors.accent)
+                                }
+                                .padding(Theme.Spacing.sm)
+                                .background(Theme.Colors.backgroundCard)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                                        .strokeBorder(Theme.Colors.settlement.opacity(0.3), lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
                         
                         // Transactions that affected balances
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
@@ -1266,34 +1618,173 @@ struct BalanceDetailsSheet: View {
                                     }
                                 }
                                 .cardStyle()
-                            }
-                        }
-                        
-                        Spacer(minLength: 40)
-                    }
-                    .padding(Theme.Spacing.md)
                 }
             }
-            .navigationTitle("Balance Details")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
+        }
+    }
+    
+    // MARK: - Ledger Tab View
+    
+    private var ledgerView: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Label("Your Balance History", systemImage: "list.bullet.rectangle")
+                .font(.headline)
+                .foregroundStyle(Theme.Colors.textPrimary)
+            
+            Text("How your balance changed over time")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textMuted)
+            
+            if ledgerEntries.isEmpty {
+                VStack(spacing: Theme.Spacing.md) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 40))
+                        .foregroundStyle(Theme.Colors.textMuted)
+                    
+                    Text("No balance history yet")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textMuted)
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Theme.Spacing.xl)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(ledgerEntries) { entry in
+                        LedgerEntryRow(entry: entry)
+                        
+                        if entry.id != ledgerEntries.last?.id {
+                            Divider()
+                                .background(Theme.Colors.textMuted.opacity(0.3))
+                                .padding(.leading, 60)
+                        }
+                    }
+                }
+                .cardStyle()
             }
         }
     }
 }
 
-// MARK: - Member Balance Row
+// MARK: - Member Balance Breakdown Data
 
-struct MemberBalanceRow: View {
+struct MemberBalanceBreakdown {
+    let expensesPaid: Decimal
+    let expensesOwed: Decimal
+    let settlementsPaid: Decimal
+    let settlementsReceived: Decimal
+    let reimbursementsReceived: Decimal
+    let reimbursementsOwedReduction: Decimal
+    
+    var netBalance: Decimal {
+        // Balance = (paid + settlements paid - reimbursements received) - (owed + settlements received - owed reduction)
+        let totalPaid = expensesPaid + settlementsPaid - reimbursementsReceived
+        let totalOwed = expensesOwed + settlementsReceived - reimbursementsOwedReduction
+        return totalPaid - totalOwed
+    }
+    
+    var hasSettlements: Bool {
+        settlementsPaid > 0 || settlementsReceived > 0
+    }
+    
+    var hasReimbursements: Bool {
+        reimbursementsReceived > 0 || reimbursementsOwedReduction > 0
+    }
+}
+
+// MARK: - Ledger Entry
+
+struct LedgerEntry: Identifiable {
+    let id: UUID
+    let date: Date
+    let description: String
+    let detail: String?
+    let transactionType: TransactionType
+    let balanceChange: Decimal
+    let runningBalance: Decimal
+}
+
+// MARK: - Ledger Entry Row
+
+struct LedgerEntryRow: View {
+    let entry: LedgerEntry
+    
+    private var changeColor: Color {
+        if abs(entry.balanceChange.doubleValue) < 0.01 {
+            return Theme.Colors.textMuted
+        }
+        return entry.balanceChange > 0 ? Theme.Colors.success : Theme.Colors.error
+    }
+    
+    private var balanceColor: Color {
+        if abs(entry.runningBalance.doubleValue) < 0.01 {
+            return Theme.Colors.textPrimary
+        }
+        return entry.runningBalance > 0 ? Theme.Colors.success : Theme.Colors.error
+    }
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+            // Date column
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.date.formatted(.dateTime.month(.abbreviated).day()))
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Text(entry.date.formatted(.dateTime.year()))
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+            .frame(width: 45, alignment: .leading)
+            
+            // Transaction info
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: Theme.Spacing.xs) {
+                    Image(systemName: entry.transactionType.icon)
+                        .font(.caption2)
+                        .foregroundStyle(entry.transactionType.color)
+                    
+                    Text(entry.description)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .lineLimit(1)
+                }
+                
+                if let detail = entry.detail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+            }
+            
+            Spacer()
+            
+            // Balance change and running total
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(entry.balanceChange >= 0 ? "+\(abs(entry.balanceChange.doubleValue).formattedAsMoney())" : "-\(abs(entry.balanceChange.doubleValue).formattedAsMoney())")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(changeColor)
+                
+                Text("Balance: \(entry.runningBalance >= 0 ? "" : "-")\(abs(entry.runningBalance.doubleValue).formattedAsMoney())")
+                    .font(.caption2)
+                    .foregroundStyle(balanceColor)
+            }
+        }
+        .padding(.vertical, Theme.Spacing.sm)
+    }
+}
+
+// MARK: - Expandable Member Balance Row
+
+struct ExpandableMemberBalanceRow: View {
     let balance: MemberBalance
+    let breakdown: MemberBalanceBreakdown
     var isCurrentMember: Bool = false
     var isInactive: Bool = false
+    let isExpanded: Bool
+    let onTap: () -> Void
     
     private var isZero: Bool {
         abs(balance.balance.doubleValue) < 0.01
@@ -1309,6 +1800,9 @@ struct MemberBalanceRow: View {
     }
     
     var body: some View {
+        VStack(spacing: 0) {
+            // Main row (tappable)
+            Button(action: onTap) {
         HStack {
             HStack(spacing: Theme.Spacing.xs) {
                 Text(balance.displayName)
@@ -1356,10 +1850,565 @@ struct MemberBalanceRow: View {
                         .font(.caption)
                         .foregroundStyle(Theme.Colors.textMuted)
                 }
+                        
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
             }
         }
         .padding(.vertical, Theme.Spacing.sm)
         .background(isCurrentMember ? Theme.Colors.accent.opacity(0.05) : Color.clear)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            // Expanded breakdown
+            if isExpanded {
+                VStack(spacing: 0) {
+                    Divider()
+                        .background(Theme.Colors.borderLight)
+                    
+                    VStack(spacing: Theme.Spacing.xs) {
+                        // Expenses paid
+                        BreakdownRow(
+                            icon: "creditcard",
+                            label: "Paid for expenses",
+                            amount: breakdown.expensesPaid,
+                            isPositive: true
+                        )
+                        
+                        // Expenses owed
+                        BreakdownRow(
+                            icon: "cart",
+                            label: "Share of expenses",
+                            amount: breakdown.expensesOwed,
+                            isPositive: false
+                        )
+                        
+                        // Settlements paid (if any)
+                        if breakdown.settlementsPaid > 0 {
+                            BreakdownRow(
+                                icon: "arrow.right.circle",
+                                label: "Settlements paid",
+                                amount: breakdown.settlementsPaid,
+                                isPositive: true
+                            )
+                        }
+                        
+                        // Settlements received (if any)
+                        if breakdown.settlementsReceived > 0 {
+                            BreakdownRow(
+                                icon: "arrow.left.circle",
+                                label: "Settlements received",
+                                amount: breakdown.settlementsReceived,
+                                isPositive: false
+                            )
+                        }
+                        
+                        // Reimbursements received (if any)
+                        if breakdown.reimbursementsReceived > 0 {
+                            BreakdownRow(
+                                icon: "arrow.uturn.backward.circle",
+                                label: "Reimbursements received",
+                                amount: breakdown.reimbursementsReceived,
+                                isPositive: false,
+                                note: "(reduces what you paid)"
+                            )
+                        }
+                        
+                        // Reimbursement owed reduction (if any)
+                        if breakdown.reimbursementsOwedReduction > 0 {
+                            BreakdownRow(
+                                icon: "arrow.uturn.backward.circle",
+                                label: "Expense reimbursements",
+                                amount: breakdown.reimbursementsOwedReduction,
+                                isPositive: true,
+                                note: "(reduces what you owe)"
+                            )
+                        }
+                        
+                        Divider()
+                            .background(Theme.Colors.borderLight)
+                            .padding(.vertical, Theme.Spacing.xs)
+                        
+                        // Net balance
+                        HStack {
+                            Text("Net Balance")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Spacer()
+                            
+                            Text(balance.balance >= 0 ? "+\(abs(balance.balance.doubleValue).formattedAsMoney())" : "-\(abs(balance.balance.doubleValue).formattedAsMoney())")
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundStyle(balanceColor)
+                        }
+                    }
+                    .padding(Theme.Spacing.sm)
+                    .background(Theme.Colors.backgroundSecondary.opacity(0.5))
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+}
+
+// MARK: - Breakdown Row
+
+struct BreakdownRow: View {
+    let icon: String
+    let label: String
+    let amount: Decimal
+    let isPositive: Bool
+    var note: String? = nil
+    
+    var body: some View {
+        HStack {
+            HStack(spacing: Theme.Spacing.xs) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textMuted)
+                    .frame(width: 16)
+                
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(label)
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    
+                    if let note = note {
+                        Text(note)
+                            .font(.caption2)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                }
+            }
+            
+            Spacer()
+            
+            Text("\(isPositive ? "+" : "-")\(abs(amount.doubleValue).formattedAsMoney())")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+        }
+    }
+}
+
+// MARK: - Pairwise Balance Sheet
+
+struct PairwiseBalanceSheet: View {
+    let fromMember: MemberBalance
+    let toMember: MemberBalance
+    let transactions: [TransactionView]
+    let transactionSplits: [UUID: [TransactionSplit]]
+    let members: [HouseholdMember]
+    
+    @Environment(\.dismiss) private var dismiss
+    
+    private func member(for memberId: UUID) -> HouseholdMember? {
+        members.first { $0.id == memberId }
+    }
+    
+    /// Transactions where both members are involved
+    private var relevantTransactions: [(transaction: TransactionView, fromPaid: Decimal, fromOwed: Decimal, toPaid: Decimal, toOwed: Decimal)] {
+        transactions.compactMap { transaction in
+            switch transaction.transactionType {
+            case .expense:
+                guard let splits = transactionSplits[transaction.id] else { return nil }
+                
+                let fromSplit = splits.first { $0.memberId == fromMember.memberId }
+                let toSplit = splits.first { $0.memberId == toMember.memberId }
+                
+                // Only include if both members are involved
+                guard (fromSplit?.paidAmount ?? 0) > 0 || (fromSplit?.owedAmount ?? 0) > 0 ||
+                      (toSplit?.paidAmount ?? 0) > 0 || (toSplit?.owedAmount ?? 0) > 0 else {
+                    return nil
+                }
+                
+                return (transaction,
+                        fromSplit?.paidAmount ?? 0,
+                        fromSplit?.owedAmount ?? 0,
+                        toSplit?.paidAmount ?? 0,
+                        toSplit?.owedAmount ?? 0)
+                
+            case .settlement:
+                // Only include settlements between these two members
+                guard (transaction.paidByMemberId == fromMember.memberId && transaction.paidToMemberId == toMember.memberId) ||
+                      (transaction.paidByMemberId == toMember.memberId && transaction.paidToMemberId == fromMember.memberId) else {
+                    return nil
+                }
+                
+                let fromPaid = transaction.paidByMemberId == fromMember.memberId ? transaction.amount : 0
+                let fromOwed = transaction.paidToMemberId == fromMember.memberId ? transaction.amount : 0
+                let toPaid = transaction.paidByMemberId == toMember.memberId ? transaction.amount : 0
+                let toOwed = transaction.paidToMemberId == toMember.memberId ? transaction.amount : 0
+                
+                return (transaction, fromPaid, fromOwed, toPaid, toOwed)
+                
+            default:
+                return nil
+            }
+        }.sorted { $0.transaction.date > $1.transaction.date }
+    }
+    
+    /// Calculate the net between the two members (bidirectional)
+    private var netCalculation: (toPaidForFrom: Decimal, fromPaidForTo: Decimal, settlementsFromToTo: Decimal, settlementsToToFrom: Decimal, netOwed: Decimal) {
+        var toPaidForFrom: Decimal = 0    // Amount "to" covered for "from"'s share
+        var fromPaidForTo: Decimal = 0    // Amount "from" covered for "to"'s share
+        var settlementsFromToTo: Decimal = 0  // Settlements from "from" to "to"
+        var settlementsToToFrom: Decimal = 0  // Settlements from "to" to "from"
+        
+        for item in relevantTransactions {
+            switch item.transaction.transactionType {
+            case .expense:
+                // Calculate each member's balance impact (paid - owed)
+                let fromImpact = item.fromPaid - item.fromOwed
+                let toImpact = item.toPaid - item.toOwed
+                
+                // If "to" has positive impact and "from" has negative, "to" covered some of "from"'s share
+                if toImpact > 0 && fromImpact < 0 {
+                    toPaidForFrom += min(toImpact, abs(fromImpact))
+                }
+                
+                // If "from" has positive impact and "to" has negative, "from" covered some of "to"'s share
+                if fromImpact > 0 && toImpact < 0 {
+                    fromPaidForTo += min(fromImpact, abs(toImpact))
+                }
+                
+            case .settlement:
+                // Track settlements in both directions
+                if item.transaction.paidByMemberId == fromMember.memberId &&
+                   item.transaction.paidToMemberId == toMember.memberId {
+                    settlementsFromToTo += item.transaction.amount
+                }
+                if item.transaction.paidByMemberId == toMember.memberId &&
+                   item.transaction.paidToMemberId == fromMember.memberId {
+                    settlementsToToFrom += item.transaction.amount
+                }
+                
+            default:
+                break
+            }
+        }
+        
+        // Net = what "from" owes "to" - what "to" owes "from" - settlements already made
+        let netOwed = toPaidForFrom - fromPaidForTo - settlementsFromToTo + settlementsToToFrom
+        return (toPaidForFrom, fromPaidForTo, settlementsFromToTo, settlementsToToFrom, netOwed)
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.Colors.backgroundPrimary
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: Theme.Spacing.lg) {
+                        // Header showing the relationship
+                        VStack(spacing: Theme.Spacing.md) {
+                            HStack(spacing: Theme.Spacing.lg) {
+                                // From member
+                                VStack(spacing: Theme.Spacing.xs) {
+                                    if let member = member(for: fromMember.memberId) {
+                                        Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
+                                            .font(.title2)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(Theme.Colors.textInverse)
+                                            .frame(width: 60, height: 60)
+                                            .background(member.swiftUIColor)
+                                            .clipShape(Circle())
+                                    }
+                                    Text(fromMember.displayName)
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(Theme.Colors.textPrimary)
+                                }
+                                
+                                // Arrow
+                                VStack(spacing: Theme.Spacing.xs) {
+                                    Image(systemName: "arrow.right")
+                                        .font(.title2)
+                                        .foregroundStyle(Theme.Colors.accent)
+                                    
+                                    Text(netCalculation.netOwed > 0.01 ? "owes" : "settled")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                }
+                                
+                                // To member
+                                VStack(spacing: Theme.Spacing.xs) {
+                                    if let member = member(for: toMember.memberId) {
+                                        Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
+                                            .font(.title2)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(Theme.Colors.textInverse)
+                                            .frame(width: 60, height: 60)
+                                            .background(member.swiftUIColor)
+                                            .clipShape(Circle())
+                                    }
+                                    Text(toMember.displayName)
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(Theme.Colors.textPrimary)
+                                }
+                            }
+                            
+                            // Net amount
+                            if netCalculation.netOwed > 0.01 {
+                                Text(netCalculation.netOwed.doubleValue.formattedAsMoney())
+                                    .font(.system(size: 36, weight: .bold))
+                                    .foregroundStyle(Theme.Colors.error)
+                            } else {
+                                Text("All settled!")
+                                    .font(.headline)
+                                    .foregroundStyle(Theme.Colors.success)
+                            }
+                        }
+                        .padding(.top, Theme.Spacing.lg)
+                        
+                        // Summary breakdown
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Text("Summary")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            VStack(spacing: 0) {
+                                // What "to" paid for "from" (creates debt)
+                                if netCalculation.toPaidForFrom > 0 {
+                                    SummaryRow(
+                                        label: "\(toMember.displayName) covered for \(fromMember.displayName)",
+                                        amount: netCalculation.toPaidForFrom,
+                                        color: Theme.Colors.error
+                                    )
+                                    Divider().background(Theme.Colors.borderLight)
+                                }
+                                
+                                // What "from" paid for "to" (reduces debt)
+                                if netCalculation.fromPaidForTo > 0 {
+                                    SummaryRow(
+                                        label: "\(fromMember.displayName) covered for \(toMember.displayName)",
+                                        amount: -netCalculation.fromPaidForTo,
+                                        color: Theme.Colors.success
+                                    )
+                                    Divider().background(Theme.Colors.borderLight)
+                                }
+                                
+                                // Settlements from "from" to "to" (reduces debt)
+                                if netCalculation.settlementsFromToTo > 0 {
+                                    SummaryRow(
+                                        label: "Settlements \(fromMember.displayName) → \(toMember.displayName)",
+                                        amount: -netCalculation.settlementsFromToTo,
+                                        color: Theme.Colors.success
+                                    )
+                                    Divider().background(Theme.Colors.borderLight)
+                                }
+                                
+                                // Settlements from "to" to "from" (increases debt)
+                                if netCalculation.settlementsToToFrom > 0 {
+                                    SummaryRow(
+                                        label: "Settlements \(toMember.displayName) → \(fromMember.displayName)",
+                                        amount: netCalculation.settlementsToToFrom,
+                                        color: Theme.Colors.error
+                                    )
+                                    Divider().background(Theme.Colors.borderLight)
+                                }
+                                
+                                HStack {
+                                    Text("Net owed")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(Theme.Colors.textPrimary)
+                                    
+                                    Spacer()
+                                    
+                                    Text(netCalculation.netOwed > 0.01 ? netCalculation.netOwed.doubleValue.formattedAsMoney() : "$0.00")
+                                        .font(.subheadline)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(netCalculation.netOwed > 0.01 ? Theme.Colors.error : Theme.Colors.success)
+                                }
+                                .padding(Theme.Spacing.md)
+                            }
+                            .background(Theme.Colors.backgroundCard)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                        }
+                        
+                        // Transaction list
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Text("Transactions Between Them")
+                                .font(.headline)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            if relevantTransactions.isEmpty {
+                                Text("No transactions found between these members")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                    .padding(.vertical, Theme.Spacing.md)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(relevantTransactions.prefix(20), id: \.transaction.id) { item in
+                                        PairwiseTransactionRow(
+                                            transaction: item.transaction,
+                                            fromName: fromMember.displayName,
+                                            toName: toMember.displayName,
+                                            fromPaid: item.fromPaid,
+                                            fromOwed: item.fromOwed,
+                                            toPaid: item.toPaid,
+                                            toOwed: item.toOwed
+                                        )
+                                        
+                                        if item.transaction.id != relevantTransactions.prefix(20).last?.transaction.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                        }
+                                    }
+                                    
+                                    if relevantTransactions.count > 20 {
+                                        Text("And \(relevantTransactions.count - 20) more...")
+                                            .font(.caption)
+                                            .foregroundStyle(Theme.Colors.textMuted)
+                                            .padding(.top, Theme.Spacing.sm)
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            }
+                        }
+                        
+                        Spacer(minLength: 40)
+                    }
+                    .padding(Theme.Spacing.md)
+                }
+            }
+            .navigationTitle("Why This Debt?")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Summary Row
+
+struct SummaryRow: View {
+    let label: String
+    let amount: Decimal
+    let color: Color
+    
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(Theme.Colors.textSecondary)
+            
+            Spacer()
+            
+            Text(amount >= 0 ? amount.doubleValue.formattedAsMoney() : "-\(abs(amount.doubleValue).formattedAsMoney())")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundStyle(color)
+        }
+        .padding(Theme.Spacing.md)
+    }
+}
+
+// MARK: - Pairwise Transaction Row
+
+struct PairwiseTransactionRow: View {
+    let transaction: TransactionView
+    let fromName: String
+    let toName: String
+    let fromPaid: Decimal
+    let fromOwed: Decimal
+    let toPaid: Decimal
+    let toOwed: Decimal
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            HStack {
+                HStack(spacing: Theme.Spacing.xs) {
+                    if transaction.transactionType == .settlement {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.settlement)
+                    }
+                    Text(transaction.description)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                Text(transaction.amount.doubleValue.formattedAsMoney())
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(transaction.transactionType == .settlement ? Theme.Colors.settlement : Theme.Colors.expense)
+            }
+            
+            Text(transaction.date.formatted(date: .abbreviated, time: .omitted))
+                .font(.caption2)
+                .foregroundStyle(Theme.Colors.textMuted)
+            
+            // Show who paid/owed what
+            if transaction.transactionType == .expense {
+                HStack(spacing: Theme.Spacing.lg) {
+                    if fromPaid > 0 || fromOwed > 0 {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(fromName)
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            HStack(spacing: Theme.Spacing.xs) {
+                                if fromPaid > 0 {
+                                    Text("paid \(fromPaid.doubleValue.formattedAsMoney())")
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.Colors.success)
+                                }
+                                if fromOwed > 0 {
+                                    Text("owes \(fromOwed.doubleValue.formattedAsMoney())")
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.Colors.error)
+                                }
+                            }
+                        }
+                    }
+                    
+                    if toPaid > 0 || toOwed > 0 {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(toName)
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            HStack(spacing: Theme.Spacing.xs) {
+                                if toPaid > 0 {
+                                    Text("paid \(toPaid.doubleValue.formattedAsMoney())")
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.Colors.success)
+                                }
+                                if toOwed > 0 {
+                                    Text("owes \(toOwed.doubleValue.formattedAsMoney())")
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.Colors.error)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if transaction.transactionType == .settlement {
+                Text("\(transaction.paidByName ?? "Someone") paid \(transaction.paidToName ?? "someone")")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+        }
+        .padding(Theme.Spacing.sm)
     }
 }
 

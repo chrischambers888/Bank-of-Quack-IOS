@@ -750,6 +750,82 @@ struct TransactionDetailView: View {
         !linkedReimbursements.isEmpty
     }
     
+    /// Balance impact for each member involved in this transaction
+    private var balanceImpacts: [(member: HouseholdMember, paid: Decimal, owed: Decimal, net: Decimal)] {
+        switch currentTransaction.transactionType {
+        case .expense:
+            return transactionSplits.compactMap { split -> (HouseholdMember, Decimal, Decimal, Decimal)? in
+                guard let member = authViewModel.members.first(where: { $0.id == split.memberId }) else { return nil }
+                let net = split.paidAmount - split.owedAmount
+                // Only include if there's a meaningful impact
+                if abs(net) > 0.001 || split.paidAmount > 0 || split.owedAmount > 0 {
+                    return (member, split.paidAmount, split.owedAmount, net)
+                }
+                return nil
+            }.sorted { abs($0.net) > abs($1.net) }
+            
+        case .settlement:
+            var impacts: [(HouseholdMember, Decimal, Decimal, Decimal)] = []
+            // Payer's balance increases (they paid to settle up)
+            if let payerId = currentTransaction.paidByMemberId,
+               let payer = authViewModel.members.first(where: { $0.id == payerId }) {
+                impacts.append((payer, currentTransaction.amount, 0, currentTransaction.amount))
+            }
+            // Recipient's balance decreases (they received payment)
+            if let recipientId = currentTransaction.paidToMemberId,
+               let recipient = authViewModel.members.first(where: { $0.id == recipientId }) {
+                impacts.append((recipient, 0, currentTransaction.amount, -currentTransaction.amount))
+            }
+            return impacts
+            
+        case .reimbursement:
+            guard let linkedExpenseId = currentTransaction.reimbursesTransactionId,
+                  let linkedSplits = transactionViewModel.transactionSplits[linkedExpenseId] else {
+                // No linked expense - just show recipient
+                if let recipientId = currentTransaction.paidByMemberId,
+                   let recipient = authViewModel.members.first(where: { $0.id == recipientId }) {
+                    return [(recipient, 0, 0, -currentTransaction.amount)]
+                }
+                return []
+            }
+            
+            let reimbursementAmount = currentTransaction.amount
+            let totalOwed = linkedSplits.reduce(Decimal(0)) { $0 + $1.owedAmount }
+            let recipientId = currentTransaction.paidByMemberId
+            
+            // Calculate how much of the reimbursement the recipient "absorbed" via their paid amount
+            let recipientSplit = linkedSplits.first { $0.memberId == recipientId }
+            let recipientPaidAmount = recipientSplit?.paidAmount ?? 0
+            let effectivePaidReduction = min(reimbursementAmount, recipientPaidAmount)
+            let remainingReimbursement = reimbursementAmount - effectivePaidReduction
+            
+            return linkedSplits.compactMap { split -> (HouseholdMember, Decimal, Decimal, Decimal)? in
+                guard let member = authViewModel.members.first(where: { $0.id == split.memberId }) else { return nil }
+                
+                // Everyone's owed decreases proportionally
+                let owedPercentage = totalOwed > 0 ? split.owedAmount / totalOwed : 0
+                let owedReduction = reimbursementAmount * owedPercentage
+                
+                var balanceChange: Decimal = owedReduction
+                
+                if split.memberId == recipientId {
+                    // Recipient: paid decreases (if they paid), and may owe remaining to payers
+                    balanceChange = owedReduction - effectivePaidReduction - remainingReimbursement
+                }
+                
+                // Only include if there's a meaningful impact
+                if abs(balanceChange) > 0.001 {
+                    return (member, 0, 0, balanceChange)
+                }
+                return nil
+            }.sorted { abs($0.net) > abs($1.net) }
+            
+        case .income:
+            // Income doesn't affect balances
+            return []
+        }
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -876,6 +952,41 @@ struct TransactionDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
                         .padding(.horizontal, Theme.Spacing.md)
                         
+                        // Balance Impact Card
+                        if !balanceImpacts.isEmpty {
+                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                                Label("Balance Impact", systemImage: "chart.line.uptrend.xyaxis")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(Theme.Colors.textPrimary)
+                                
+                                Text("How this transaction affected member balances")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                
+                                VStack(spacing: 0) {
+                                    ForEach(balanceImpacts, id: \.member.id) { impact in
+                                        BalanceImpactRow(
+                                            member: impact.member,
+                                            paid: impact.paid,
+                                            owed: impact.owed,
+                                            net: impact.net,
+                                            transactionType: currentTransaction.transactionType
+                                        )
+                                        
+                                        if impact.member.id != balanceImpacts.last?.member.id {
+                                            Divider()
+                                                .background(Theme.Colors.borderLight)
+                                                .padding(.leading, 48)
+                                        }
+                                    }
+                                }
+                                .background(Theme.Colors.backgroundCard)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+                            }
+                            .padding(.horizontal, Theme.Spacing.md)
+                        }
+                        
                         // Action Buttons
                         VStack(spacing: Theme.Spacing.sm) {
                             // Edit Button
@@ -930,6 +1041,11 @@ struct TransactionDetailView: View {
             // Fetch splits for expense transactions
             if currentTransaction.transactionType == .expense {
                 await transactionViewModel.fetchTransactionSplits(transactionId: currentTransaction.id)
+            }
+            // Fetch linked expense splits for reimbursements (to calculate balance impact)
+            if currentTransaction.transactionType == .reimbursement,
+               let linkedExpenseId = currentTransaction.reimbursesTransactionId {
+                await transactionViewModel.fetchTransactionSplits(transactionId: linkedExpenseId)
             }
         }
         .fullScreenCover(isPresented: $showEditSheet, onDismiss: {
@@ -1150,6 +1266,90 @@ struct ReimbursementsDetailRow: View {
             }
         }
         .padding(Theme.Spacing.md)
+    }
+}
+
+// MARK: - Balance Impact Row
+
+struct BalanceImpactRow: View {
+    let member: HouseholdMember
+    let paid: Decimal
+    let owed: Decimal
+    let net: Decimal
+    let transactionType: TransactionType
+    
+    private var netColor: Color {
+        if abs(net.doubleValue) < 0.01 {
+            return Theme.Colors.textMuted
+        }
+        return net > 0 ? Theme.Colors.success : Theme.Colors.error
+    }
+    
+    private var detailText: String {
+        switch transactionType {
+        case .expense:
+            return ""
+            
+        case .settlement:
+            if net > 0 {
+                return "paid to settle up"
+            } else {
+                return "received settlement"
+            }
+            
+        case .reimbursement:
+            if net > 0 {
+                return "owed share reduced"
+            } else {
+                return "received reimbursement"
+            }
+            
+        case .income:
+            return ""
+        }
+    }
+    
+    var body: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            // Member avatar
+            Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(Theme.Colors.textInverse)
+                .frame(width: 32, height: 32)
+                .background(member.swiftUIColor)
+                .clipShape(Circle())
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(member.displayName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                    .lineLimit(1)
+                
+                if !detailText.isEmpty {
+                    Text(detailText)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+            }
+            
+            Spacer()
+            
+            // Balance change
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(net >= 0 ? "+\(abs(net.doubleValue).formattedAsMoney())" : "-\(abs(net.doubleValue).formattedAsMoney())")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(netColor)
+                
+                Text("balance")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.Colors.textMuted)
+            }
+        }
+        .padding(.vertical, Theme.Spacing.sm)
+        .padding(.horizontal, Theme.Spacing.sm)
     }
 }
 
