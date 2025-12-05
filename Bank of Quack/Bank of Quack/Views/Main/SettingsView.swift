@@ -849,7 +849,7 @@ struct DataSettingsSection: View {
                         HStack {
                             SettingsRow(
                                 icon: "square.and.arrow.up",
-                                title: "Export Household Data",
+                                title: "Export Bank Data",
                                 subtitle: "Download all data as Excel file",
                                 showChevron: false
                             )
@@ -872,7 +872,7 @@ struct DataSettingsSection: View {
                         SettingsRow(
                             icon: "square.and.arrow.down",
                             title: "Import Data",
-                            subtitle: "Import transactions, sectors & members from Excel",
+                            subtitle: "Import from Excel file",
                             showChevron: true
                         )
                     }

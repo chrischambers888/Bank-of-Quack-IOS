@@ -13,10 +13,9 @@ struct ImportRow: Identifiable, Sendable {
     var amount: String
     var type: String
     var category: String
-    var paidBy: String
+    var paidBy: String      // Member name, "Shared", "Equal", "Custom", or empty
     var paidTo: String
-    var splitType: String
-    var splitMember: String
+    var expenseFor: String  // Member name (member_only), "Equal", "Custom", or empty (defaults to equal)
     var reimbursesRow: String  // Row number of the expense this reimburses
     var excludedFromBudget: String
     var notes: String
@@ -28,8 +27,9 @@ struct ImportRow: Identifiable, Sendable {
     var matchedCategoryId: UUID?
     var matchedPaidByMemberId: UUID?
     var matchedPaidToMemberId: UUID?
-    var matchedSplitMemberId: UUID?
+    var matchedExpenseForMemberId: UUID?  // For member_only split type
     var parsedSplitType: SplitType?
+    var parsedPaidByType: PaidByType?  // For handling "Shared"/"Custom" in Paid By
     var parsedCsvRow: Int?  // Parsed row number from CSV
     var parsedReimbursesRow: Int?  // Parsed reimburses row number
     var parsedExcludedFromBudget: Bool = false
@@ -74,7 +74,8 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
     case invalidAmountFormat(value: String)
     case invalidTransactionType(value: String)
     case unknownMember(name: String)
-    case invalidSplitType(value: String)
+    case invalidExpenseFor(value: String)
+    case customWithoutSplits(field: String)  // "Paid By" or "Expense For" is "Custom" but no splits data
     
     var id: String {
         switch self {
@@ -83,7 +84,8 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
         case .invalidAmountFormat(let value): return "amount_\(value)"
         case .invalidTransactionType(let value): return "type_\(value)"
         case .unknownMember(let name): return "member_\(name)"
-        case .invalidSplitType(let value): return "split_\(value)"
+        case .invalidExpenseFor(let value): return "expense_for_\(value)"
+        case .customWithoutSplits(let field): return "custom_no_splits_\(field)"
         }
     }
     
@@ -99,8 +101,10 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
             return "Unknown transaction type: \"\(value)\". Use expense, income, settlement, or reimbursement."
         case .unknownMember(let name):
             return "Unknown member: \"\(name)\". Member must exist in household."
-        case .invalidSplitType(let value):
-            return "Invalid split type: \"\(value)\". Use equal, member_only, or custom."
+        case .invalidExpenseFor(let value):
+            return "Invalid 'Expense For' value: \"\(value)\". Use a member name, 'Equal', or 'Custom'."
+        case .customWithoutSplits(let field):
+            return "'\(field)' is set to 'Custom' but no matching splits found in Splits sheet."
         }
     }
 }
@@ -112,7 +116,7 @@ enum ImportValidationWarning: Identifiable, Equatable, Sendable {
     case categoryWillBeIgnored(transactionType: String)
     case emptyCategory
     case emptyPaidBy
-    case defaultSplitType
+    case emptyExpenseFor
     case memberWillBeCreated(name: String)
     
     var id: String {
@@ -121,7 +125,7 @@ enum ImportValidationWarning: Identifiable, Equatable, Sendable {
         case .categoryWillBeIgnored(let type): return "ignore_cat_\(type)"
         case .emptyCategory: return "empty_category"
         case .emptyPaidBy: return "empty_paid_by"
-        case .defaultSplitType: return "default_split"
+        case .emptyExpenseFor: return "empty_expense_for"
         case .memberWillBeCreated(let name): return "create_member_\(name)"
         }
     }
@@ -136,8 +140,8 @@ enum ImportValidationWarning: Identifiable, Equatable, Sendable {
             return "No category specified - transaction will be uncategorized"
         case .emptyPaidBy:
             return "No 'Paid By' specified - will be assigned to you"
-        case .defaultSplitType:
-            return "No split type specified - will use 'Split Equally'"
+        case .emptyExpenseFor:
+            return "No 'Expense For' specified - will split equally among all members"
         case .memberWillBeCreated(let name):
             return "Member \"\(name)\" will be created as managed member"
         }
@@ -204,10 +208,9 @@ struct ExportTransaction: Sendable {
     let amount: String
     let type: String
     let category: String
-    let paidBy: String
+    let paidBy: String      // Member name, "Shared", or "Custom"
     let paidTo: String
-    let splitType: String
-    let splitMember: String
+    let expenseFor: String  // "Equal", member name (for member_only), or "Custom"
     let reimbursesRow: String  // Row number of the expense this reimburses (empty if not a reimbursement)
     let excludedFromBudget: String
     let notes: String
@@ -221,15 +224,14 @@ struct ExportTransaction: Sendable {
         "Category",
         "Paid By",
         "Paid To",
-        "Split Type",
-        "Split Member",
+        "Expense For",
         "Reimburses Row",
         "Excluded From Budget",
         "Notes"
     ]
     
     var csvRow: [String] {
-        [String(row), date, description, amount, type, category, paidBy, paidTo, splitType, splitMember, reimbursesRow, excludedFromBudget, notes]
+        [String(row), date, description, amount, type, category, paidBy, paidTo, expenseFor, reimbursesRow, excludedFromBudget, notes]
     }
 }
 
@@ -257,25 +259,25 @@ struct ExportTransactionSplit: Sendable {
 
 struct ExportCategory: Sendable {
     let name: String
-    let sortOrder: String
     
     // Note: Icon and color removed - emojis don't export well to CSV, colors managed by theme
-    static let headers = ["Name", "Sort Order"]
+    // Sort order removed - app auto-sorts alphabetically
+    static let headers = ["Name"]
     
     var csvRow: [String] {
-        [name, sortOrder]
+        [name]
     }
 }
 
 struct ExportSector: Sendable {
     let name: String
-    let sortOrder: String
     
     // Note: Color removed - colors are managed by the theme
-    static let headers = ["Name", "Sort Order"]
+    // Sort order removed - app auto-sorts alphabetically
+    static let headers = ["Name"]
     
     var csvRow: [String] {
-        [name, sortOrder]
+        [name]
     }
 }
 
@@ -314,8 +316,7 @@ enum ImportColumn: String, CaseIterable, Sendable {
     case category = "category"
     case paidBy = "paid by"
     case paidTo = "paid to"
-    case splitType = "split type"
-    case splitMember = "split member"
+    case expenseFor = "expense for"
     case reimbursesRow = "reimburses row"
     case excludedFromBudget = "excluded from budget"
     case notes = "notes"
@@ -328,10 +329,9 @@ enum ImportColumn: String, CaseIterable, Sendable {
         case .amount: return ["amount", "value", "sum", "total"]
         case .type: return ["type", "transaction type", "trans type"]
         case .category: return ["category", "cat", "category name"]
-        case .paidBy: return ["paid by", "paidby", "paid_by", "member", "who paid"]
+        case .paidBy: return ["paid by", "paidby", "paid_by", "who paid"]
         case .paidTo: return ["paid to", "paidto", "paid_to", "recipient"]
-        case .splitType: return ["split type", "split_type", "splittype", "split"]
-        case .splitMember: return ["split member", "split_member", "splitmember"]
+        case .expenseFor: return ["expense for", "expense_for", "expensefor", "split type", "split_type", "splittype", "split"]  // Include legacy names for backwards compatibility
         case .reimbursesRow: return ["reimburses row", "reimburses_row", "reimbursesrow", "reimburses"]
         case .excludedFromBudget: return ["excluded from budget", "excluded_from_budget", "excludedfrombudget", "excluded"]
         case .notes: return ["notes", "note", "comments", "comment"]
@@ -420,21 +420,17 @@ struct ImportSectorRow: Identifiable, Sendable {
     
     // Raw string values from XLSX
     var name: String
-    var sortOrder: String
     
     // Parsed values
-    var parsedSortOrder: Int?
     var matchedSectorId: UUID?  // If sector already exists
 }
 
 enum ImportSectorColumn: String, CaseIterable, Sendable {
     case name = "name"
-    case sortOrder = "sort order"
     
     var alternateNames: [String] {
         switch self {
         case .name: return ["name", "sector name", "sector_name", "sectorname"]
-        case .sortOrder: return ["sort order", "sort_order", "sortorder", "order"]
         }
     }
     
@@ -462,21 +458,17 @@ struct ImportCategoryRow: Identifiable, Sendable {
     
     // Raw string values from XLSX
     var name: String
-    var sortOrder: String
     
     // Parsed values
-    var parsedSortOrder: Int?
     var matchedCategoryId: UUID?  // If category already exists
 }
 
 enum ImportCategoryColumn: String, CaseIterable, Sendable {
     case name = "name"
-    case sortOrder = "sort order"
     
     var alternateNames: [String] {
         switch self {
         case .name: return ["name", "category name", "category_name", "categoryname"]
-        case .sortOrder: return ["sort order", "sort_order", "sortorder", "order"]
         }
     }
     

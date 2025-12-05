@@ -296,34 +296,86 @@ struct TransactionDetailView: View {
     
     @State private var showDeleteConfirm = false
     @State private var showEditSheet = false
+    @State private var showExpenseForDetails = false
+    @State private var showPaidByDetails = false
+    
+    /// Transaction splits for this expense
+    private var transactionSplits: [TransactionSplit] {
+        transactionViewModel.transactionSplits[currentTransaction.id] ?? []
+    }
+    
+    /// Members who owe money (non-zero owed amount)
+    private var membersWhoOwe: [(name: String, amount: Decimal)] {
+        transactionSplits
+            .filter { $0.owedAmount > 0 }
+            .compactMap { split -> (String, Decimal)? in
+                if let member = authViewModel.members.first(where: { $0.id == split.memberId }) {
+                    return (member.displayName, split.owedAmount)
+                }
+                return nil
+            }
+            .sorted { $0.1 > $1.1 }
+    }
+    
+    /// Members who paid (non-zero paid amount)
+    private var membersWhoPaid: [(name: String, amount: Decimal)] {
+        transactionSplits
+            .filter { $0.paidAmount > 0 }
+            .compactMap { split -> (String, Decimal)? in
+                if let member = authViewModel.members.first(where: { $0.id == split.memberId }) {
+                    return (member.displayName, split.paidAmount)
+                }
+                return nil
+            }
+            .sorted { $0.1 > $1.1 }
+    }
     
     private var splitDisplayText: String {
-        switch currentTransaction.splitType {
-        case .equal:
-            return "Split Equally"
-        case .memberOnly:
+        // First check for member_only split type
+        if currentTransaction.splitType == .memberOnly {
             if let memberName = currentTransaction.splitMemberName {
                 return "\(memberName) Only"
             }
             return "Member Only"
-        case .custom:
-            return "Custom Split"
-        case .payerOnly:
+        }
+        
+        // For payerOnly (legacy)
+        if currentTransaction.splitType == .payerOnly {
             if let paidByName = currentTransaction.paidByName {
                 return "\(paidByName) Only"
             }
             return "Payer Only"
         }
+        
+        // For custom/equal splits, show member names from splits
+        let owingMembers = membersWhoOwe
+        if owingMembers.isEmpty {
+            return "No splits"
+        } else if owingMembers.count == 1 {
+            return "\(owingMembers[0].name) Only"
+        } else if owingMembers.count == 2 {
+            return "Split between \(owingMembers[0].name) & \(owingMembers[1].name)"
+        } else {
+            return "Split between \(owingMembers.count) members"
+        }
     }
     
     private var paidByDisplayText: String {
-        switch currentTransaction.paidByType {
-        case .single:
+        // For single payer
+        if currentTransaction.paidByType == .single {
             return currentTransaction.paidByName ?? "Single Member"
-        case .shared:
-            return "Shared Equally"
-        case .custom:
-            return "Custom Split"
+        }
+        
+        // For custom/shared, show member names from splits
+        let payingMembers = membersWhoPaid
+        if payingMembers.isEmpty {
+            return currentTransaction.paidByName ?? "Unknown"
+        } else if payingMembers.count == 1 {
+            return payingMembers[0].name
+        } else if payingMembers.count == 2 {
+            return "Shared by \(payingMembers[0].name) & \(payingMembers[1].name)"
+        } else {
+            return "Shared by \(payingMembers.count) members"
         }
     }
     
@@ -411,10 +463,32 @@ struct TransactionDetailView: View {
                             
                             if currentTransaction.transactionType == .expense {
                                 Divider().background(Theme.Colors.borderLight)
-                                DetailRow(label: "Paid By", value: paidByDisplayText)
+                                
+                                // Paid By with expandable details for multiple payers
+                                if membersWhoPaid.count > 1 {
+                                    ExpandableSplitDetailRow(
+                                        label: "Paid By",
+                                        summaryText: paidByDisplayText,
+                                        memberAmounts: membersWhoPaid,
+                                        isExpanded: $showPaidByDetails
+                                    )
+                                } else {
+                                    DetailRow(label: "Paid By", value: paidByDisplayText)
+                                }
                                 
                                 Divider().background(Theme.Colors.borderLight)
-                                DetailRow(label: "Expense For", value: splitDisplayText)
+                                
+                                // Expense For with expandable details for multiple members
+                                if membersWhoOwe.count > 1 && currentTransaction.splitType != .memberOnly {
+                                    ExpandableSplitDetailRow(
+                                        label: "Expense For",
+                                        summaryText: splitDisplayText,
+                                        memberAmounts: membersWhoOwe,
+                                        isExpanded: $showExpenseForDetails
+                                    )
+                                } else {
+                                    DetailRow(label: "Expense For", value: splitDisplayText)
+                                }
                                 
                                 // Show reimbursements linked to this expense
                                 if !linkedReimbursements.isEmpty {
@@ -511,6 +585,12 @@ struct TransactionDetailView: View {
                 }
             }
         }
+        .task {
+            // Fetch splits for expense transactions
+            if currentTransaction.transactionType == .expense {
+                await transactionViewModel.fetchTransactionSplits(transactionId: currentTransaction.id)
+            }
+        }
         .fullScreenCover(isPresented: $showEditSheet) {
             EditTransactionView(transaction: currentTransaction)
         }
@@ -562,6 +642,69 @@ struct DetailRow: View {
                 .multilineTextAlignment(.trailing)
         }
         .padding(Theme.Spacing.md)
+    }
+}
+
+struct ExpandableSplitDetailRow: View {
+    let label: String
+    let summaryText: String
+    let memberAmounts: [(name: String, amount: Decimal)]
+    @Binding var isExpanded: Bool
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header row (always visible)
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack {
+                    Text(label)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                    
+                    Spacer()
+                    
+                    Text(summaryText)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .multilineTextAlignment(.trailing)
+                    
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .padding(.leading, Theme.Spacing.xs)
+                }
+                .padding(Theme.Spacing.md)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            // Expanded details
+            if isExpanded {
+                VStack(spacing: 0) {
+                    ForEach(memberAmounts, id: \.name) { item in
+                        HStack {
+                            Text(item.name)
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textSecondary)
+                            
+                            Spacer()
+                            
+                            Text(item.amount.doubleValue.formattedAsMoney())
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(Theme.Colors.textPrimary)
+                        }
+                        .padding(.horizontal, Theme.Spacing.md)
+                        .padding(.vertical, Theme.Spacing.xs)
+                    }
+                }
+                .padding(.bottom, Theme.Spacing.sm)
+                .background(Theme.Colors.backgroundSecondary.opacity(0.5))
+            }
+        }
     }
 }
 

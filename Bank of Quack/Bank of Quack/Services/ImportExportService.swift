@@ -42,6 +42,14 @@ final class ImportExportService: Sendable {
         let categoryMap = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0.name) })
         let memberMap = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0.displayName) })
         
+        // Get active member IDs for equal split comparison
+        let activeMembers = members.filter { $0.status == .approved }
+        let activeMemberIds = Set(activeMembers.map { $0.id })
+        let activeMemberCount = activeMembers.count
+        
+        // Build splits map by transaction ID
+        let splitsByTransaction = Dictionary(grouping: transactionSplits) { $0.transactionId }
+        
         // Build transaction row mapping
         var transactionRowMap: [UUID: Int] = [:]
         for (index, transaction) in transactions.enumerated() {
@@ -61,6 +69,47 @@ final class ImportExportService: Sendable {
                 reimbursesRow = String(reimbursedRowNumber)
             }
             
+            // Get splits for this transaction
+            let splits = splitsByTransaction[transaction.id] ?? []
+            
+            // For income/reimbursement: recipient goes in "Paid To", leave "Paid By" and "Expense For" empty
+            // For expense/settlement: use normal logic
+            let paidByValue: String
+            let paidToValue: String
+            let expenseForValue: String
+            
+            switch transaction.transactionType {
+            case .income, .reimbursement:
+                // Income/Reimbursement: money flows TO the member (stored in paidByMemberId)
+                paidByValue = ""
+                paidToValue = transaction.paidByMemberId.flatMap { memberMap[$0] } ?? ""
+                expenseForValue = ""
+                
+            case .settlement:
+                // Settlement: paidBy pays TO paidTo
+                paidByValue = transaction.paidByMemberId.flatMap { memberMap[$0] } ?? ""
+                paidToValue = transaction.paidToMemberId.flatMap { memberMap[$0] } ?? ""
+                expenseForValue = ""
+                
+            case .expense:
+                // Expense: use full split analysis
+                paidByValue = determinePaidByValue(
+                    transaction: transaction,
+                    splits: splits,
+                    activeMemberIds: activeMemberIds,
+                    activeMemberCount: activeMemberCount,
+                    memberMap: memberMap
+                )
+                paidToValue = ""
+                expenseForValue = determineExpenseForValue(
+                    transaction: transaction,
+                    splits: splits,
+                    activeMemberIds: activeMemberIds,
+                    activeMemberCount: activeMemberCount,
+                    memberMap: memberMap
+                )
+            }
+            
             let export = ExportTransaction(
                 row: rowNumber,
                 date: Self.dateFormatter.string(from: transaction.date),
@@ -68,10 +117,9 @@ final class ImportExportService: Sendable {
                 amount: "\(transaction.amount)",
                 type: transaction.transactionType.rawValue,
                 category: transaction.categoryId.flatMap { categoryMap[$0] } ?? "",
-                paidBy: transaction.paidByMemberId.flatMap { memberMap[$0] } ?? "",
-                paidTo: transaction.paidToMemberId.flatMap { memberMap[$0] } ?? "",
-                splitType: transaction.splitType.rawValue,
-                splitMember: transaction.splitMemberId.flatMap { memberMap[$0] } ?? "",
+                paidBy: paidByValue,
+                paidTo: paidToValue,
+                expenseFor: expenseForValue,
                 reimbursesRow: reimbursesRow,
                 excludedFromBudget: transaction.excludedFromBudget ? "Yes" : "No",
                 notes: transaction.notes ?? ""
@@ -112,8 +160,7 @@ final class ImportExportService: Sendable {
         
         for category in categories {
             let export = ExportCategory(
-                name: category.name,
-                sortOrder: String(category.sortOrder)
+                name: category.name
             )
             categoryRows.append(export.csvRow)
         }
@@ -126,8 +173,7 @@ final class ImportExportService: Sendable {
         
         for sector in sectors {
             let export = ExportSector(
-                name: sector.name,
-                sortOrder: String(sector.sortOrder)
+                name: sector.name
             )
             sectorRows.append(export.csvRow)
         }
@@ -172,21 +218,136 @@ final class ImportExportService: Sendable {
         return try xlsxWriter.write(to: filename)
     }
     
+    /// Determines the "Paid By" export value by examining actual splits
+    /// - Returns member name if single payer, "Shared" if equal among active members, "Custom" otherwise
+    private func determinePaidByValue(
+        transaction: TransactionView,
+        splits: [TransactionSplit],
+        activeMemberIds: Set<UUID>,
+        activeMemberCount: Int,
+        memberMap: [UUID: String]
+    ) -> String {
+        // If explicitly marked as custom, use Custom
+        if transaction.paidByType == .custom {
+            return "Custom"
+        }
+        
+        // If no splits data, fall back to transaction's recorded type
+        if splits.isEmpty {
+            switch transaction.paidByType {
+            case .single:
+                return transaction.paidByMemberId.flatMap { memberMap[$0] } ?? ""
+            case .shared:
+                return "Equal"
+            case .custom:
+                return "Custom"
+            }
+        }
+        
+        // Analyze actual paid amounts from splits
+        let paidSplits = splits.filter { $0.paidAmount > 0 }
+        
+        // If only one person paid, it's a single payer
+        if paidSplits.count == 1 {
+            if let payerName = memberMap[paidSplits[0].memberId] {
+                return payerName
+            }
+        }
+        
+        // Check if it's an equal split among current active members
+        if paidSplits.count == activeMemberCount && activeMemberCount > 0 {
+            let paidMemberIds = Set(paidSplits.map { $0.memberId })
+            
+            // All active members must have paid
+            if paidMemberIds == activeMemberIds {
+                // Check if all paid amounts are equal
+                let paidAmounts = paidSplits.map { $0.paidAmount }
+                let firstAmount = paidAmounts.first ?? 0
+                let allEqual = paidAmounts.allSatisfy { abs($0 - firstAmount) < 0.01 }
+                
+                if allEqual {
+                    return "Equal"
+                }
+            }
+        }
+        
+        // Otherwise it's a custom split
+        return "Custom"
+    }
+    
+    /// Determines the "Expense For" export value by examining actual splits
+    /// - Returns "Equal" if equal among active members, member name if member_only, "Custom" otherwise
+    private func determineExpenseForValue(
+        transaction: TransactionView,
+        splits: [TransactionSplit],
+        activeMemberIds: Set<UUID>,
+        activeMemberCount: Int,
+        memberMap: [UUID: String]
+    ) -> String {
+        // If explicitly marked as custom, use Custom
+        if transaction.splitType == .custom {
+            return "Custom"
+        }
+        
+        // If no splits data, fall back to transaction's recorded type
+        if splits.isEmpty {
+            switch transaction.splitType {
+            case .equal:
+                return "Equal"
+            case .memberOnly, .payerOnly:
+                return transaction.splitMemberId.flatMap { memberMap[$0] } ?? ""
+            case .custom:
+                return "Custom"
+            }
+        }
+        
+        // Analyze actual owed amounts from splits
+        let owedSplits = splits.filter { $0.owedAmount > 0 }
+        
+        // If only one person owes, it's member_only
+        if owedSplits.count == 1 {
+            if let memberName = memberMap[owedSplits[0].memberId] {
+                return memberName
+            }
+        }
+        
+        // Check if it's an equal split among current active members
+        if owedSplits.count == activeMemberCount && activeMemberCount > 0 {
+            let owedMemberIds = Set(owedSplits.map { $0.memberId })
+            
+            // All active members must owe
+            if owedMemberIds == activeMemberIds {
+                // Check if all owed amounts are equal
+                let owedAmounts = owedSplits.map { $0.owedAmount }
+                let firstAmount = owedAmounts.first ?? 0
+                let allEqual = owedAmounts.allSatisfy { abs($0 - firstAmount) < 0.01 }
+                
+                if allEqual {
+                    return "Equal"
+                }
+            }
+        }
+        
+        // Otherwise it's a custom split
+        return "Custom"
+    }
+    
     /// Generates a template XLSX file for importing transactions
     func generateImportTemplate() throws -> URL {
         let xlsxWriter = XlsxWriter()
         
-        // Transactions sheet with examples - matches the full export format
+        // Transactions sheet with examples - using new simplified format
         let transactionHeaders = ExportTransaction.headers
         let transactionRows: [[String]] = [
-            // Row, Date, Description, Amount, Type, Category, Paid By, Paid To, Split Type, Split Member, Reimburses Row, Excluded From Budget, Notes
-            ["1", "2024-01-15", "Grocery shopping at Costco", "125.50", "expense", "Groceries", "John", "", "equal", "", "", "No", "Weekly grocery run"],
-            ["2", "2024-01-16", "Monthly salary deposit", "5000.00", "income", "", "Jane", "", "equal", "", "", "No", "January paycheck"],
-            ["3", "2024-01-17", "Coffee with friends", "15.75", "expense", "Dining Out", "John", "", "member_only", "John", "", "No", "Just for John - not split"],
-            ["4", "2024-01-18", "Electric bill", "200.00", "expense", "Utilities", "Jane", "", "equal", "", "", "No", "January utilities"],
-            ["5", "2024-01-19", "Work expense (reimbursable)", "45.00", "expense", "Work", "John", "", "member_only", "John", "", "Yes", "Will be reimbursed by employer"],
-            ["6", "2024-01-20", "John settles up with Jane", "50.00", "settlement", "", "John", "Jane", "equal", "", "", "No", "Paying Jane back for groceries"],
-            ["7", "2024-01-21", "Expense reimbursement from work", "45.00", "reimbursement", "", "John", "", "member_only", "John", "5", "No", "Employer reimbursed work expense"]
+            // Row, Date, Description, Amount, Type, Category, Paid By, Paid To, Expense For, Reimburses Row, Excluded From Budget, Notes
+            ["1", "2024-01-15", "Grocery shopping at Costco", "125.50", "expense", "Groceries", "John", "", "Equal", "", "No", "John paid, split equally among all"],
+            ["2", "2024-01-16", "Monthly salary deposit", "5000.00", "income", "", "", "Jane", "", "", "No", "Income: money received by Jane"],
+            ["3", "2024-01-17", "Coffee for John only", "5.75", "expense", "Dining Out", "John", "", "John", "", "No", "John paid, expense only for John"],
+            ["4", "2024-01-18", "Dinner - everyone chipped in", "80.00", "expense", "Dining Out", "Equal", "", "Equal", "", "No", "Everyone paid equally, split equally"],
+            ["5", "2024-01-19", "Work expense (reimbursable)", "45.00", "expense", "Work", "John", "", "John", "", "Yes", "Will be reimbursed by employer"],
+            ["6", "2024-01-20", "John settles up with Jane", "50.00", "settlement", "", "John", "Jane", "", "", "No", "John pays Jane (settling up)"],
+            ["7", "2024-01-21", "Expense reimbursement from work", "45.00", "reimbursement", "", "", "John", "", "5", "No", "Reimbursement: money received by John"],
+            ["8", "2024-01-22", "Complex dinner split", "150.00", "expense", "Dining Out", "Custom", "", "Custom", "", "No", "See Splits sheet for details"]
         ]
         
         xlsxWriter.addSheet(name: "Transactions", headers: transactionHeaders, rows: transactionRows)
@@ -195,17 +356,18 @@ final class ImportExportService: Sendable {
         let splitHeaders = ExportTransactionSplit.headers
         let splitRows: [[String]] = [
             // Transaction Row, Member Name, Owed Amount, Owed %, Paid Amount, Paid %
-            ["1", "John", "62.75", "50", "125.50", "100"],
-            ["1", "Jane", "62.75", "50", "0", "0"]
+            // Example for row 8: John paid $100, Jane paid $50, but John owes $90 (more food), Jane owes $60
+            ["8", "John", "90.00", "60", "100.00", "66.67"],
+            ["8", "Jane", "60.00", "40", "50.00", "33.33"]
         ]
         xlsxWriter.addSheet(name: "Splits", headers: splitHeaders, rows: splitRows)
         
         // Sectors sheet with examples
         let sectorHeaders = ExportSector.headers
         let sectorRows: [[String]] = [
-            ["Essential", "1"],
-            ["Lifestyle", "2"],
-            ["Savings", "3"]
+            ["Essential"],
+            ["Lifestyle"],
+            ["Savings"]
         ]
         xlsxWriter.addSheet(name: "Sectors", headers: sectorHeaders, rows: sectorRows)
         
@@ -236,50 +398,81 @@ final class ImportExportService: Sendable {
             ["Description", "Yes", "What the transaction was for"],
             ["Amount", "Yes", "Positive number only, no currency symbols (e.g., 125.50)"],
             ["Type", "No", "expense (default), income, settlement, or reimbursement"],
-            ["Category", "No", "Category name for expenses - will be created if doesn't exist, or left uncategorized if empty"],
-            ["Paid By", "No", "Member who paid - matches existing member (case-insensitive), or created as managed member"],
+            ["Category", "No", "Category name for expenses - auto-created if doesn't exist"],
+            ["Paid By", "No", "WHO PAID - see 'Paid By Values' section below"],
             ["Paid To", "For settlements", "Member receiving payment (for settlement/reimbursement types)"],
-            ["Split Type", "No", "equal (default), member_only, or custom"],
-            ["Split Member", "For member_only", "Which member this expense is solely for"],
+            ["Expense For", "No", "WHO OWES - see 'Expense For Values' section below"],
             ["Reimburses Row", "For reimbursements", "Row number of the expense being reimbursed"],
             ["Excluded From Budget", "No", "Yes or No - exclude from budget calculations"],
             ["Notes", "No", "Additional notes about the transaction"],
             ["", "", ""],
             
-            // Section: Transaction Types
-            ["💰 TRANSACTION TYPES", "", ""],
-            ["Type", "When to Use", "Example"],
-            ["expense", "Regular spending", "Groceries, bills, entertainment"],
-            ["income", "Money received", "Salary, gifts, refunds"],
-            ["settlement", "Paying someone back", "John pays Jane $50 he owes her"],
-            ["reimbursement", "Getting refunded for an expense", "Employer reimburses work purchase"],
+            // Section: Paid By Values
+            ["💳 PAID BY VALUES (Who paid for this?)", "", ""],
+            ["Value", "Meaning", "Example"],
+            ["(empty)", "Current user paid - warning shown", "You'll be assigned as payer"],
+            ["Member name", "That member paid 100%", "John paid the full $100"],
+            ["Equal", "All ACTIVE members paid equally", "Everyone chipped in $25 each"],
+            ["Custom", "Use Splits sheet for who paid", "Complex payment split"],
             ["", "", ""],
             
-            // Section: Split Types
-            ["⚖️ SPLIT TYPES", "", ""],
-            ["Type", "When to Use", "Example"],
-            ["equal", "Split evenly among all members", "Shared groceries, utilities"],
-            ["member_only", "Only one person is responsible", "Personal coffee, work expense"],
-            ["custom", "Custom split amounts", "Use the Splits sheet for details"],
+            // Section: Expense For Values
+            ["📊 EXPENSE FOR VALUES (Who owes for this?)", "", ""],
+            ["Value", "Meaning", "Example"],
+            ["(empty) or Equal", "Split equally among all ACTIVE members", "Groceries split 50/50"],
+            ["Member name", "Only that member owes", "John's personal coffee"],
+            ["Custom", "Use Splits sheet for who owes", "Complex expense split"],
+            ["", "", ""],
+            
+            // Section: Important Note about Equal splits
+            ["⚠️ IMPORTANT: EQUAL SPLITS", "", ""],
+            ["'Equal' splits among ACTIVE bank members at import time.", "", ""],
+            ["If your bank membership has changed, use 'Custom' with the Splits sheet.", "", ""],
+            ["When exporting, transactions with non-equal splits are marked 'Custom'.", "", ""],
+            ["", "", ""],
+            
+            // Section: Common Scenarios
+            ["🎯 COMMON SCENARIOS", "", ""],
+            ["Scenario", "Paid By", "Expense For"],
+            ["John paid for shared groceries", "John", "Equal"],
+            ["Everyone chipped in for dinner", "Equal", "Equal"],
+            ["John bought his own coffee", "John", "John"],
+            ["Jane paid for John's gift", "Jane", "John"],
+            ["Complex custom split", "Custom", "Custom"],
+            ["", "", ""],
+            
+            // Section: Transaction Types
+            ["💰 TRANSACTION TYPES", "", ""],
+            ["Type", "When to Use", "Fields Used"],
+            ["expense", "Regular spending (groceries, bills)", "Paid By, Expense For"],
+            ["income", "Money received (salary, gifts)", "Paid To only"],
+            ["settlement", "Paying someone back", "Paid By, Paid To"],
+            ["reimbursement", "Getting refunded for an expense", "Paid To only (+ Reimburses Row)"],
+            ["", "", ""],
+            
+            // Section: Income/Reimbursement Note
+            ["📥 INCOME & REIMBURSEMENT", "", ""],
+            ["For income and reimbursement, use 'Paid To' (who receives the money).", "", ""],
+            ["Leave 'Paid By' and 'Expense For' empty - they don't apply.", "", ""],
             ["", "", ""],
             
             // Section: Splits Sheet
-            ["📊 SPLITS SHEET (Optional)", "", ""],
-            ["Use this sheet for custom split percentages or amounts.", "", ""],
+            ["📊 SPLITS SHEET (For Custom splits only)", "", ""],
+            ["Use this sheet when Paid By or Expense For is 'Custom'.", "", ""],
             ["Column", "Required?", "Description"],
             ["Transaction Row", "Yes", "Must match a Row number from Transactions sheet"],
             ["Member Name", "Yes", "Must match member name (case-insensitive)"],
-            ["Owed Amount", "Yes", "How much of this expense was FOR this member (their share)"],
-            ["Owed %", "Optional", "Percentage of expense for this member"],
-            ["Paid Amount", "Yes", "How much this member actually paid toward the expense"],
+            ["Owed Amount", "Yes", "How much this member owes (their share)"],
+            ["Owed %", "Optional", "Percentage this member owes"],
+            ["Paid Amount", "Yes", "How much this member actually paid"],
             ["Paid %", "Optional", "Percentage this member paid"],
             ["", "", ""],
             
             // Splits Example
-            ["Example: $125.50 grocery trip paid by John, split 50/50:", "", ""],
-            ["• John: Owed Amount = 62.75 (his share), Paid Amount = 125.50 (he paid)", "", ""],
-            ["• Jane: Owed Amount = 62.75 (her share), Paid Amount = 0 (she didn't pay)", "", ""],
-            ["Result: Jane owes John $62.75 for her share of the groceries.", "", ""],
+            ["Example: $150 dinner - John paid $100, Jane paid $50, but John owes $90, Jane owes $60:", "", ""],
+            ["• John: Owed Amount = 90 (he ate more), Paid Amount = 100 (he paid more)", "", ""],
+            ["• Jane: Owed Amount = 60 (she ate less), Paid Amount = 50 (she paid less)", "", ""],
+            ["Result: Jane owes John $10 (she owes $60 but only paid $50).", "", ""],
             ["", "", ""],
             
             // Section: Sectors Sheet
@@ -287,7 +480,6 @@ final class ImportExportService: Sendable {
             ["Create budget sectors to group categories.", "", ""],
             ["Column", "Required?", "Description"],
             ["Name", "Yes", "Sector name (e.g., Essential, Lifestyle)"],
-            ["Sort Order", "Optional", "Number for display ordering"],
             ["", "", ""],
             
             // Section: Sector Categories Sheet
@@ -395,8 +587,7 @@ final class ImportExportService: Sendable {
                 category: getValue(from: values, column: .category, mapping: columnMapping),
                 paidBy: getValue(from: values, column: .paidBy, mapping: columnMapping),
                 paidTo: getValue(from: values, column: .paidTo, mapping: columnMapping),
-                splitType: getValue(from: values, column: .splitType, mapping: columnMapping),
-                splitMember: getValue(from: values, column: .splitMember, mapping: columnMapping),
+                expenseFor: getValue(from: values, column: .expenseFor, mapping: columnMapping),
                 reimbursesRow: getValue(from: values, column: .reimbursesRow, mapping: columnMapping),
                 excludedFromBudget: getValue(from: values, column: .excludedFromBudget, mapping: columnMapping),
                 notes: getValue(from: values, column: .notes, mapping: columnMapping)
@@ -474,8 +665,7 @@ final class ImportExportService: Sendable {
             let values = getRowValues(from: row, columnCount: maxColumn, sharedStrings: sharedStrings)
             
             let sectorRow = ImportSectorRow(
-                name: getSectorValue(from: values, column: .name, mapping: columnMapping),
-                sortOrder: getSectorValue(from: values, column: .sortOrder, mapping: columnMapping)
+                name: getSectorValue(from: values, column: .name, mapping: columnMapping)
             )
             
             // Skip empty rows
@@ -547,8 +737,7 @@ final class ImportExportService: Sendable {
             let values = getRowValues(from: row, columnCount: maxColumn, sharedStrings: sharedStrings)
             
             let categoryRow = ImportCategoryRow(
-                name: getCategoryValue(from: values, column: .name, mapping: columnMapping),
-                sortOrder: getCategoryValue(from: values, column: .sortOrder, mapping: columnMapping)
+                name: getCategoryValue(from: values, column: .name, mapping: columnMapping)
             )
             
             // Skip empty rows
@@ -685,11 +874,13 @@ final class ImportExportService: Sendable {
     }
     
     /// Validates import rows against existing household data
+    /// Note: splitRowsByTransaction should be pre-built from validated split rows, keyed by parsedTransactionRow (csvRow number)
     func validateRows(
         _ rows: [ImportRow],
         existingCategories: [Category],
         existingMembers: [HouseholdMember],
-        currentUserId: UUID?
+        currentUserId: UUID?,
+        splitRowsByTransaction: [Int: [ImportSplitRow]] = [:]
     ) -> ([ImportRow], ImportSummary) {
         var validatedRows: [ImportRow] = []
         var summary = ImportSummary()
@@ -702,6 +893,10 @@ final class ImportExportService: Sendable {
         let activeMembers = existingMembers.filter { $0.status == .approved }
         let memberNames = Set(activeMembers.map { $0.displayName.lowercased() })
         let memberMap = Dictionary(uniqueKeysWithValues: activeMembers.map { ($0.displayName.lowercased(), $0.id) })
+        
+        // Special values for Paid By and Expense For
+        let sharedValues = Set(["shared", "equal", "split", "split equally", "all"])
+        let customValues = Set(["custom"])
         
         for var row in rows {
             row.validationErrors = []
@@ -792,13 +987,96 @@ final class ImportExportService: Sendable {
                 // Don't set matchedCategoryId - it will remain nil
             }
             
-            // Validate paid by member
-            let paidByStr = row.paidBy.trimmingCharacters(in: .whitespaces)
-            if paidByStr.isEmpty {
-                row.validationWarnings.append(.emptyPaidBy)
-                // Will default to current user during import
-            } else {
+            // Get transaction type for field validation
+            let transactionType = row.parsedType ?? .expense
+            
+            // For income/reimbursement: recipient comes from "Paid To", ignore "Paid By" and "Expense For"
+            // For settlement: "Paid By" pays TO "Paid To"
+            // For expense: normal validation
+            
+            if transactionType == .income || transactionType == .reimbursement {
+                // Income/Reimbursement: Recipient in "Paid To" maps to paidByMemberId in DB
+                let paidToStr = row.paidTo.trimmingCharacters(in: .whitespaces)
+                
+                if paidToStr.isEmpty {
+                    row.validationWarnings.append(.emptyPaidBy) // Reuse warning - will be assigned to current user
+                    row.parsedPaidByType = .single
+                } else {
+                    let paidToLower = paidToStr.lowercased()
+                    if memberNames.contains(paidToLower) {
+                        row.matchedPaidByMemberId = memberMap[paidToLower]
+                        summary.membersUsed.insert(paidToStr)
+                    } else {
+                        row.validationWarnings.append(.memberWillBeCreated(name: paidToStr))
+                        summary.newManagedMembersToCreate.insert(paidToStr)
+                    }
+                    row.parsedPaidByType = .single
+                }
+                
+                // Set defaults for income/reimbursement
+                row.parsedSplitType = .memberOnly
+                // matchedExpenseForMemberId will be set to same as paidBy during import
+                
+            } else if transactionType == .settlement {
+                // Settlement: "Paid By" pays TO "Paid To"
+                let paidByStr = row.paidBy.trimmingCharacters(in: .whitespaces)
                 let paidByLower = paidByStr.lowercased()
+                
+                if paidByStr.isEmpty {
+                    row.validationWarnings.append(.emptyPaidBy)
+                    row.parsedPaidByType = .single
+                } else {
+                    if memberNames.contains(paidByLower) {
+                        row.matchedPaidByMemberId = memberMap[paidByLower]
+                        summary.membersUsed.insert(paidByStr)
+                    } else {
+                        row.validationWarnings.append(.memberWillBeCreated(name: paidByStr))
+                        summary.newManagedMembersToCreate.insert(paidByStr)
+                    }
+                    row.parsedPaidByType = .single
+                }
+                
+                // Validate paid to for settlement
+                let paidToStr = row.paidTo.trimmingCharacters(in: .whitespaces)
+                if !paidToStr.isEmpty {
+                    let paidToLower = paidToStr.lowercased()
+                    if memberNames.contains(paidToLower) {
+                        row.matchedPaidToMemberId = memberMap[paidToLower]
+                        summary.membersUsed.insert(paidToStr)
+                    } else {
+                        row.validationWarnings.append(.memberWillBeCreated(name: paidToStr))
+                        summary.newManagedMembersToCreate.insert(paidToStr)
+                    }
+                }
+                
+                row.parsedSplitType = .equal
+                
+            } else {
+                // Expense: Full validation of "Paid By" and "Expense For"
+                
+            // Validate "Paid By" - NEW SIMPLIFIED LOGIC
+            // Accepts: empty (current user), member name (single), "Equal" (shared), "Custom" (custom)
+            let paidByStr = row.paidBy.trimmingCharacters(in: .whitespaces)
+            let paidByLower = paidByStr.lowercased()
+            
+            if paidByStr.isEmpty {
+                // Empty = current user with warning
+                row.validationWarnings.append(.emptyPaidBy)
+                row.parsedPaidByType = .single
+                // matchedPaidByMemberId will be set to current user during actual import
+            } else if sharedValues.contains(paidByLower) {
+                // "Shared", "Equal", etc. = all members paid equally
+                row.parsedPaidByType = .shared
+            } else if customValues.contains(paidByLower) {
+                // "Custom" = use splits sheet
+                row.parsedPaidByType = .custom
+                // Check if splits exist for this row
+                if let csvRow = row.parsedCsvRow, splitRowsByTransaction[csvRow] == nil {
+                    row.validationErrors.append(.customWithoutSplits(field: "Paid By"))
+                }
+            } else {
+                // Assume it's a member name
+                row.parsedPaidByType = .single
                 if memberNames.contains(paidByLower) {
                     row.matchedPaidByMemberId = memberMap[paidByLower]
                     summary.membersUsed.insert(paidByStr)
@@ -823,34 +1101,39 @@ final class ImportExportService: Sendable {
                 }
             }
             
-            // Validate split type
-            let splitStr = row.splitType.lowercased().trimmingCharacters(in: .whitespaces)
-            if splitStr.isEmpty {
+            // Validate "Expense For" - NEW SIMPLIFIED LOGIC
+            // Accepts: empty or "Equal" (equal split), member name (member_only), "Custom" (custom)
+            let expenseForStr = row.expenseFor.trimmingCharacters(in: .whitespaces)
+            let expenseForLower = expenseForStr.lowercased()
+            
+            if expenseForStr.isEmpty {
+                // Empty = split equally among all members with warning
                 row.parsedSplitType = .equal
-                row.validationWarnings.append(.defaultSplitType)
+                row.validationWarnings.append(.emptyExpenseFor)
+            } else if sharedValues.contains(expenseForLower) {
+                // "Equal"/"Shared" = split equally among all members (no warning - explicit choice)
+                row.parsedSplitType = .equal
+            } else if customValues.contains(expenseForLower) {
+                // "Custom" = use splits sheet
+                row.parsedSplitType = .custom
+                // Check if splits exist for this row
+                if let csvRow = row.parsedCsvRow, splitRowsByTransaction[csvRow] == nil {
+                    row.validationErrors.append(.customWithoutSplits(field: "Expense For"))
+                }
             } else {
-                switch splitStr {
-                case "equal", "split", "split equally": row.parsedSplitType = .equal
-                case "member_only", "memberonly", "member only", "payer only", "payeronly": row.parsedSplitType = .memberOnly
-                case "custom": row.parsedSplitType = .custom
-                default:
-                    row.validationErrors.append(.invalidSplitType(value: row.splitType))
+                // Assume it's a member name = member_only
+                row.parsedSplitType = .memberOnly
+                if memberNames.contains(expenseForLower) {
+                    row.matchedExpenseForMemberId = memberMap[expenseForLower]
+                    summary.membersUsed.insert(expenseForStr)
+                } else {
+                    // Unknown member - will be created as managed member
+                    row.validationWarnings.append(.memberWillBeCreated(name: expenseForStr))
+                    summary.newManagedMembersToCreate.insert(expenseForStr)
                 }
             }
             
-            // Validate split member (for member_only splits)
-            let splitMemberStr = row.splitMember.trimmingCharacters(in: .whitespaces)
-            if !splitMemberStr.isEmpty {
-                let splitMemberLower = splitMemberStr.lowercased()
-                if memberNames.contains(splitMemberLower) {
-                    row.matchedSplitMemberId = memberMap[splitMemberLower]
-                    summary.membersUsed.insert(splitMemberStr)
-                } else {
-                    // Unknown member - will be created as managed member
-                    row.validationWarnings.append(.memberWillBeCreated(name: splitMemberStr))
-                    summary.newManagedMembersToCreate.insert(splitMemberStr)
-                }
-            }
+            } // End of expense transaction type validation
             
             // Parse reimburses row (for reimbursement transactions)
             if !row.reimbursesRow.isEmpty {
@@ -900,11 +1183,6 @@ final class ImportExportService: Sendable {
             let nameStr = row.name.trimmingCharacters(in: .whitespaces)
             let nameLower = nameStr.lowercased()
             
-            // Parse sort order
-            if let sortOrder = Int(row.sortOrder.trimmingCharacters(in: .whitespaces)) {
-                row.parsedSortOrder = sortOrder
-            }
-            
             // Check if sector exists
             if sectorNames.contains(nameLower) {
                 row.matchedSectorId = sectorMap[nameLower]
@@ -934,11 +1212,6 @@ final class ImportExportService: Sendable {
         for var row in rows {
             let nameStr = row.name.trimmingCharacters(in: .whitespaces)
             let nameLower = nameStr.lowercased()
-            
-            // Parse sort order
-            if let sortOrder = Int(row.sortOrder.trimmingCharacters(in: .whitespaces)) {
-                row.parsedSortOrder = sortOrder
-            }
             
             // Check if category exists
             if categoryNames.contains(nameLower) {
@@ -1009,7 +1282,7 @@ final class ImportExportService: Sendable {
     func generateFailedRowsXLSX(_ rows: [ImportRow]) throws -> URL {
         let xlsxWriter = XlsxWriter()
         
-        let headers = ["Row", "Date", "Description", "Amount", "Type", "Category", "Paid By", "Split Type", "Notes", "Errors"]
+        let headers = ["Row", "Date", "Description", "Amount", "Type", "Category", "Paid By", "Expense For", "Notes", "Errors"]
         var failedRows: [[String]] = []
         
         for row in rows where row.hasErrors {
@@ -1022,7 +1295,7 @@ final class ImportExportService: Sendable {
                 row.type,
                 row.category,
                 row.paidBy,
-                row.splitType,
+                row.expenseFor,
                 row.notes,
                 errorMessages
             ])

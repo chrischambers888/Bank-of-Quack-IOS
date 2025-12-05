@@ -84,24 +84,32 @@ final class ImportStagingViewModel {
                 return
             }
             
+            // Validate split rows first so we can pass them to transaction validation
+            var validatedSplitRows: [ImportSplitRow] = []
+            if !parsedData.splits.isEmpty {
+                validatedSplitRows = importExportService.validateSplitRows(
+                    parsedData.splits,
+                    existingMembers: existingMembers
+                )
+            }
+            
+            // Build splits map by transaction row for validation
+            let splitsMapForValidation = Dictionary(grouping: validatedSplitRows.filter { $0.parsedTransactionRow != nil }) { $0.parsedTransactionRow! }
+            
             // Validate transaction rows
             let (validatedRows, importSummary) = importExportService.validateRows(
                 parsedData.transactions,
                 existingCategories: existingCategories,
                 existingMembers: existingMembers,
-                currentUserId: currentUserId
+                currentUserId: currentUserId,
+                splitRowsByTransaction: splitsMapForValidation
             )
             
             importRows = validatedRows
             summary = importSummary
             
-            // Validate split rows if present
-            if !parsedData.splits.isEmpty {
-                let validatedSplitRows = importExportService.validateSplitRows(
-                    parsedData.splits,
-                    existingMembers: existingMembers
-                )
-                
+            // Store validated split rows
+            if !validatedSplitRows.isEmpty {
                 splitRows = validatedSplitRows
                 hasSplitData = true
                 
@@ -246,12 +254,12 @@ final class ImportStagingViewModel {
         
         for sectorName in summary.newSectorsToCreate {
             do {
-                let sortOrder = sectorRows.first { $0.name.lowercased() == sectorName.lowercased() }?.parsedSortOrder ?? (existingSectors.count + createdSectorNames.count)
+                // Sort order is auto-assigned; app sorts alphabetically
                 let newSector = try await dataService.createSector(CreateSectorDTO(
                     householdId: householdId,
                     name: sectorName,
                     color: generateRandomColor(),
-                    sortOrder: sortOrder
+                    sortOrder: existingSectors.count + createdSectorNames.count
                 ))
                 sectorMap[sectorName.lowercased()] = newSector.id
                 createdSectorNames.append(sectorName)
@@ -311,22 +319,36 @@ final class ImportStagingViewModel {
                 }
                 
                 // Resolve paid by member (might be newly created managed member, or default to current member)
+                // For income: "Paid To" maps to paidByMemberId (recipient of income)
                 var paidByMemberId = row.matchedPaidByMemberId
-                if paidByMemberId == nil && !row.paidBy.isEmpty {
-                    paidByMemberId = memberMap[row.paidBy.lowercased()]
+                let transactionType = row.parsedType ?? .expense
+                if transactionType == .income {
+                    // Income: use Paid To as the recipient
+                    if paidByMemberId == nil && !row.paidTo.isEmpty {
+                        paidByMemberId = memberMap[row.paidTo.lowercased()]
+                    }
+                } else {
+                    // Other types: use Paid By
+                    if paidByMemberId == nil && !row.paidBy.isEmpty {
+                        paidByMemberId = memberMap[row.paidBy.lowercased()]
+                    }
                 }
                 paidByMemberId = paidByMemberId ?? currentMemberId
                 
-                // Resolve paid to member
+                // Resolve paid to member (for settlements)
                 var paidToMemberId = row.matchedPaidToMemberId
-                if paidToMemberId == nil && !row.paidTo.isEmpty {
+                if paidToMemberId == nil && !row.paidTo.isEmpty && transactionType != .income {
                     paidToMemberId = memberMap[row.paidTo.lowercased()]
                 }
                 
-                // Resolve split member
-                var splitMemberId = row.matchedSplitMemberId
-                if splitMemberId == nil && !row.splitMember.isEmpty {
-                    splitMemberId = memberMap[row.splitMember.lowercased()]
+                // Resolve expense for member (for member_only split type)
+                var expenseForMemberId = row.matchedExpenseForMemberId
+                if expenseForMemberId == nil && !row.expenseFor.isEmpty {
+                    // Only treat as member name if it's not a special value
+                    let expenseForLower = row.expenseFor.lowercased()
+                    if !["equal", "shared", "split", "custom", "split equally", "all"].contains(expenseForLower) {
+                        expenseForMemberId = memberMap[expenseForLower]
+                    }
                 }
                 
                 // Get splits for this transaction if available
@@ -337,6 +359,26 @@ final class ImportStagingViewModel {
                     totalAmount: row.parsedAmount ?? 0
                 )
                 
+                // Convert 'equal' to 'custom' since DB no longer supports 'equal'
+                let effectiveSplitType: SplitType = {
+                    switch row.parsedSplitType ?? .custom {
+                    case .equal:
+                        return .custom  // Store as custom with explicit splits
+                    default:
+                        return row.parsedSplitType ?? .custom
+                    }
+                }()
+                
+                // Convert 'shared' to 'custom' since DB no longer supports 'shared'
+                let effectivePaidByType: PaidByType = {
+                    switch row.parsedPaidByType ?? .single {
+                    case .shared:
+                        return .custom  // Store as custom with explicit splits
+                    default:
+                        return row.parsedPaidByType ?? .single
+                    }
+                }()
+                
                 let transactionId = try await dataService.createTransactionWithSplits(
                     householdId: householdId,
                     date: row.parsedDate ?? Date(),
@@ -346,9 +388,9 @@ final class ImportStagingViewModel {
                     paidByMemberId: paidByMemberId,
                     paidToMemberId: paidToMemberId,
                     categoryId: categoryId,
-                    splitType: row.parsedSplitType ?? .equal,
-                    paidByType: .single,
-                    splitMemberId: splitMemberId,
+                    splitType: effectiveSplitType,
+                    paidByType: effectivePaidByType,
+                    splitMemberId: expenseForMemberId,
                     reimbursesTransactionId: nil,
                     excludedFromBudget: row.parsedExcludedFromBudget,
                     notes: row.notes.isEmpty ? nil : row.notes,
@@ -378,23 +420,19 @@ final class ImportStagingViewModel {
                 }
                 
                 // Resolve paid by member
+                // For reimbursement: "Paid To" maps to paidByMemberId (recipient of reimbursement)
                 var paidByMemberId = row.matchedPaidByMemberId
-                if paidByMemberId == nil && !row.paidBy.isEmpty {
-                    paidByMemberId = memberMap[row.paidBy.lowercased()]
+                if paidByMemberId == nil && !row.paidTo.isEmpty {
+                    // Reimbursement: use Paid To as the recipient
+                    paidByMemberId = memberMap[row.paidTo.lowercased()]
                 }
                 paidByMemberId = paidByMemberId ?? currentMemberId
                 
-                // Resolve paid to member
-                var paidToMemberId = row.matchedPaidToMemberId
-                if paidToMemberId == nil && !row.paidTo.isEmpty {
-                    paidToMemberId = memberMap[row.paidTo.lowercased()]
-                }
+                // paidToMemberId not used for reimbursements
+                let paidToMemberId: UUID? = nil
                 
-                // Resolve split member
-                var splitMemberId = row.matchedSplitMemberId
-                if splitMemberId == nil && !row.splitMember.isEmpty {
-                    splitMemberId = memberMap[row.splitMember.lowercased()]
-                }
+                // expenseForMemberId not used for reimbursements (same as paidBy)
+                let expenseForMemberId = paidByMemberId
                 
                 // Look up the reimbursed transaction ID
                 var reimbursesTransactionId: UUID? = nil
@@ -413,6 +451,26 @@ final class ImportStagingViewModel {
                     totalAmount: row.parsedAmount ?? 0
                 )
                 
+                // Convert 'equal' to 'custom' since DB no longer supports 'equal'
+                let effectiveSplitType: SplitType = {
+                    switch row.parsedSplitType ?? .custom {
+                    case .equal:
+                        return .custom
+                    default:
+                        return row.parsedSplitType ?? .custom
+                    }
+                }()
+                
+                // Convert 'shared' to 'custom' since DB no longer supports 'shared'
+                let effectivePaidByType: PaidByType = {
+                    switch row.parsedPaidByType ?? .single {
+                    case .shared:
+                        return .custom
+                    default:
+                        return row.parsedPaidByType ?? .single
+                    }
+                }()
+                
                 let transactionId = try await dataService.createTransactionWithSplits(
                     householdId: householdId,
                     date: row.parsedDate ?? Date(),
@@ -422,9 +480,9 @@ final class ImportStagingViewModel {
                     paidByMemberId: paidByMemberId,
                     paidToMemberId: paidToMemberId,
                     categoryId: categoryId,
-                    splitType: row.parsedSplitType ?? .equal,
-                    paidByType: .single,
-                    splitMemberId: splitMemberId,
+                    splitType: effectiveSplitType,
+                    paidByType: effectivePaidByType,
+                    splitMemberId: expenseForMemberId,
                     reimbursesTransactionId: reimbursesTransactionId,
                     excludedFromBudget: row.parsedExcludedFromBudget,
                     notes: row.notes.isEmpty ? nil : row.notes,

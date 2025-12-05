@@ -490,8 +490,11 @@ struct AddTransactionView: View {
             amount = "\(template.amount)"
             description = template.description
             categoryId = template.categoryId
-            splitType = template.splitType
-            paidByType = template.paidByType
+            // Map 'custom' back to 'equal' for UI display
+            // (templates that were 'equal' are now stored as 'custom' after migration)
+            splitType = template.splitType == .custom ? .equal : template.splitType
+            // Map 'custom' back to 'shared' for UI display
+            paidByType = template.paidByType == .custom ? .shared : template.paidByType
             splitMemberId = template.splitMemberId
             excludedFromBudget = template.excludedFromBudget
             notes = template.notes ?? ""
@@ -504,8 +507,8 @@ struct AddTransactionView: View {
                 paidByMemberId = authViewModel.currentMember?.id
             }
             
-            // Re-initialize member splits if needed
-            if splitType == .custom || paidByType == .custom {
+            // Re-initialize member splits for equal/shared types
+            if splitType == .equal || paidByType == .shared {
                 initializeMemberSplits()
             }
         }
@@ -550,7 +553,7 @@ struct AddTransactionView: View {
                         // Type selector row
                         HStack(spacing: Theme.Spacing.sm) {
                             PaidByOptionButton(
-                                title: "Shared",
+                                title: "Split Equally",
                                 isSelected: paidByType == .shared,
                                 action: {
                                     withAnimation {
@@ -593,7 +596,7 @@ struct AddTransactionView: View {
                         HStack(spacing: Theme.Spacing.sm) {
                             // Shared Equally option
                             PaidByOptionButton(
-                                title: "Shared",
+                                title: "Split Equally",
                                 isSelected: paidByType == .shared,
                                 action: {
                                     withAnimation {
@@ -687,7 +690,7 @@ struct AddTransactionView: View {
                     // Type selector row
                     HStack(spacing: Theme.Spacing.sm) {
                         SplitOptionButton(
-                            title: "Everyone",
+                            title: "Split Equally",
                             isSelected: splitType == .equal,
                             action: {
                                 withAnimation {
@@ -748,7 +751,7 @@ struct AddTransactionView: View {
                     HStack(spacing: Theme.Spacing.sm) {
                         // Split Equally option
                         SplitOptionButton(
-                            title: "Everyone",
+                            title: "Split Equally",
                             isSelected: splitType == .equal,
                             action: {
                                 withAnimation {
@@ -1226,16 +1229,35 @@ struct AddTransactionView: View {
         
         Task {
             do {
-                // Prepare splits for custom types
-                let splitsToSend: [MemberSplit]? = (splitType == .custom || paidByType == .custom || paidByType == .shared || splitType == .equal)
-                    ? memberSplits
-                    : nil
+                // Always send splits for expenses - convert 'equal' and 'shared' to 'custom' with explicit splits
+                let splitsToSend: [MemberSplit]? = transactionType == .expense ? memberSplits : nil
+                
+                // Convert 'equal' to 'custom' since we're storing explicit splits
+                // Keep 'member_only' as-is since it indicates single-member expense
+                let effectiveSplitType: SplitType = {
+                    switch splitType {
+                    case .equal:
+                        return .custom  // Store as custom with explicit equal splits
+                    default:
+                        return splitType
+                    }
+                }()
+                
+                // Convert 'shared' to 'custom' since we're storing explicit paid amounts
+                let effectivePaidByType: PaidByType = {
+                    switch paidByType {
+                    case .shared:
+                        return .custom  // Store as custom with explicit equal paid amounts
+                    default:
+                        return paidByType
+                    }
+                }()
                 
                 // Determine paid by member ID based on transaction type
                 let effectivePaidByMemberId: UUID? = {
                     switch transactionType {
                     case .expense:
-                        return paidByType == .single ? paidByMemberId : nil
+                        return effectivePaidByType == .single ? paidByMemberId : nil
                     case .income:
                         return paidByMemberId // Always include for income (received by)
                     case .settlement, .reimbursement:
@@ -1252,14 +1274,14 @@ struct AddTransactionView: View {
                     paidByMemberId: effectivePaidByMemberId,
                     paidToMemberId: paidToMemberId,
                     categoryId: transactionType == .expense ? categoryId : nil,
-                    splitType: transactionType == .expense ? splitType : .equal,
-                    paidByType: transactionType == .expense ? paidByType : .single,
+                    splitType: transactionType == .expense ? effectiveSplitType : .custom,
+                    paidByType: transactionType == .expense ? effectivePaidByType : .single,
                     splitMemberId: transactionType == .expense ? splitMemberId : nil,
                     reimbursesTransactionId: transactionType == .reimbursement ? reimbursesTransactionId : nil,
                     excludedFromBudget: excludedFromBudget,
                     notes: notes.isEmpty ? nil : notes,
                     createdByUserId: authViewModel.currentUser?.id,
-                    splits: transactionType == .expense ? splitsToSend : nil
+                    splits: splitsToSend
                 )
                 
                 await MainActor.run {

@@ -505,7 +505,7 @@ struct EditTransactionView: View {
                         // Type selector row
                         HStack(spacing: Theme.Spacing.sm) {
                             PaidByOptionButton(
-                                title: "Shared",
+                                title: "Split Equally",
                                 isSelected: paidByType == .shared,
                                 action: {
                                     withAnimation {
@@ -547,7 +547,7 @@ struct EditTransactionView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: Theme.Spacing.sm) {
                             PaidByOptionButton(
-                                title: "Shared",
+                                title: "Split Equally",
                                 isSelected: paidByType == .shared,
                                 action: {
                                     withAnimation {
@@ -637,7 +637,7 @@ struct EditTransactionView: View {
                     // Type selector row
                     HStack(spacing: Theme.Spacing.sm) {
                         SplitOptionButton(
-                            title: "Everyone",
+                            title: "Split Equally",
                             isSelected: splitType == .equal,
                             action: {
                                 withAnimation {
@@ -697,7 +697,7 @@ struct EditTransactionView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Theme.Spacing.sm) {
                         SplitOptionButton(
-                            title: "Everyone",
+                            title: "Split Equally",
                             isSelected: splitType == .equal,
                             action: {
                                 withAnimation {
@@ -1032,15 +1032,35 @@ struct EditTransactionView: View {
         
         Task {
             do {
-                let splitsToSend: [MemberSplit]? = (transactionType == .expense && (splitType == .custom || paidByType == .custom || paidByType == .shared || splitType == .equal))
-                    ? memberSplits
-                    : nil
+                // Always send splits for expenses - convert 'equal' and 'shared' to 'custom' with explicit splits
+                let splitsToSend: [MemberSplit]? = transactionType == .expense ? memberSplits : nil
+                
+                // Convert 'equal' to 'custom' since we're storing explicit splits
+                // Keep 'member_only' as-is since it indicates single-member expense
+                let effectiveSplitType: SplitType = {
+                    switch splitType {
+                    case .equal:
+                        return .custom  // Store as custom with explicit equal splits
+                    default:
+                        return splitType
+                    }
+                }()
+                
+                // Convert 'shared' to 'custom' since we're storing explicit paid amounts
+                let effectivePaidByType: PaidByType = {
+                    switch paidByType {
+                    case .shared:
+                        return .custom  // Store as custom with explicit equal paid amounts
+                    default:
+                        return paidByType
+                    }
+                }()
                 
                 // Determine paid by member ID based on transaction type
                 let effectivePaidByMemberId: UUID? = {
                     switch transactionType {
                     case .expense:
-                        return paidByType == .single ? paidByMemberId : nil
+                        return effectivePaidByType == .single ? paidByMemberId : nil
                     case .income:
                         return paidByMemberId // Always include for income (received by)
                     case .settlement, .reimbursement:
@@ -1058,8 +1078,8 @@ struct EditTransactionView: View {
                     paidByMemberId: effectivePaidByMemberId,
                     paidToMemberId: transactionType == .settlement ? paidToMemberId : nil,
                     categoryId: transactionType == .expense ? categoryId : nil,
-                    splitType: transactionType == .expense ? splitType : .equal,
-                    paidByType: transactionType == .expense ? paidByType : .single,
+                    splitType: transactionType == .expense ? effectiveSplitType : .custom,
+                    paidByType: transactionType == .expense ? effectivePaidByType : .single,
                     splitMemberId: transactionType == .expense ? splitMemberId : nil,
                     reimbursesTransactionId: transactionType == .reimbursement ? reimbursesTransactionId : nil,
                     excludedFromBudget: excludedFromBudget,
@@ -1114,7 +1134,7 @@ struct EditTransactionView: View {
             "description": "Groceries",
             "amount": 150.00,
             "transaction_type": "expense",
-            "split_type": "equal",
+            "split_type": "custom",
             "paid_by_type": "single",
             "excluded_from_budget": false,
             "created_at": "2025-12-01T12:00:00Z",

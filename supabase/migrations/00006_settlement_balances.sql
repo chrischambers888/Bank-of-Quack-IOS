@@ -96,3 +96,4 @@ LEFT JOIN settlement_received sr ON sr.member_id = hm.id AND sr.household_id = h
 WHERE hm.status = 'approved';
 
 
+

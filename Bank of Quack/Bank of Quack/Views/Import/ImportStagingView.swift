@@ -898,7 +898,7 @@ struct ImportRowCard: View {
                     ImportDetailRow(label: "Row #", value: "\(row.rowNumber)")
                     ImportDetailRow(label: "Type", value: row.type.isEmpty ? "(default: expense)" : row.type)
                     ImportDetailRow(label: "Paid By", value: row.paidBy.isEmpty ? "(will use current user)" : row.paidBy)
-                    ImportDetailRow(label: "Split Type", value: row.splitType.isEmpty ? "(default: equal)" : row.splitType)
+                    ImportDetailRow(label: "Expense For", value: row.expenseFor.isEmpty ? "(will split equally)" : row.expenseFor)
                     
                     if !row.notes.isEmpty {
                         ImportDetailRow(label: "Notes", value: row.notes)

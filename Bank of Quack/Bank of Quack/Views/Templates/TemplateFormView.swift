@@ -54,6 +54,7 @@ struct TemplateFormView: View {
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var nameManuallyEdited = false
     
     @FocusState private var focusedField: Field?
     
@@ -186,6 +187,12 @@ struct TemplateFormView: View {
             TextField("e.g., Weekly Groceries", text: $name)
                 .inputFieldStyle()
                 .focused($focusedField, equals: .name)
+                .onChange(of: name) { oldValue, newValue in
+                    // Mark as manually edited if user types while focused on name field
+                    if focusedField == .name && oldValue != newValue {
+                        nameManuallyEdited = true
+                    }
+                }
         }
     }
     
@@ -229,6 +236,12 @@ struct TemplateFormView: View {
             TextField("What is this for?", text: $description)
                 .inputFieldStyle()
                 .focused($focusedField, equals: .description)
+                .onChange(of: description) { _, newValue in
+                    // Auto-sync name from description if user hasn't manually edited the name
+                    if !nameManuallyEdited {
+                        name = newValue
+                    }
+                }
         }
     }
     
@@ -308,11 +321,12 @@ struct TemplateFormView: View {
     @ViewBuilder
     private var splitTypeSection: some View {
         if transactionType == .expense && activeMembers.count > 1 {
-            FormField(label: "Split Type") {
+            FormField(label: "Expense For") {
                 VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                     Picker("", selection: $splitType) {
                         Text("Split Equally").tag(SplitType.equal)
-                        Text("Member Only").tag(SplitType.memberOnly)
+                        Text("Single Member").tag(SplitType.memberOnly)
+                        Text("Custom Split").tag(SplitType.custom)
                     }
                     .pickerStyle(.segmented)
                     
@@ -424,11 +438,14 @@ struct TemplateFormView: View {
             categoryId = template.categoryId
             splitType = template.splitType
             paidByMemberId = template.paidByMemberId
-            paidByType = template.paidByType
+            // Map 'custom' back to 'shared' for UI display in templates
+            paidByType = template.paidByType == .custom ? .shared : template.paidByType
             splitMemberId = template.splitMemberId
             excludedFromBudget = template.excludedFromBudget
             notes = template.notes ?? ""
             showNotes = !notes.isEmpty
+            // Mark name as manually edited since we're loading existing data
+            nameManuallyEdited = true
         }
     }
     
@@ -444,6 +461,12 @@ struct TemplateFormView: View {
         
         isSubmitting = true
         
+        // Convert 'equal' to 'custom' since DB no longer supports 'equal'
+        let effectiveSplitType: SplitType = splitType == .equal ? .custom : splitType
+        
+        // Convert 'shared' to 'custom' since DB no longer supports 'shared'
+        let effectivePaidByType: PaidByType = paidByType == .shared ? .custom : paidByType
+        
         do {
             switch mode {
             case .create:
@@ -455,9 +478,9 @@ struct TemplateFormView: View {
                     amount: parsedAmount,
                     transactionType: transactionType,
                     categoryId: transactionType == .expense ? categoryId : nil,
-                    splitType: transactionType == .expense ? splitType : .equal,
+                    splitType: transactionType == .expense ? effectiveSplitType : .custom,
                     paidByMemberId: paidByMemberId,
-                    paidByType: transactionType == .expense ? paidByType : .single,
+                    paidByType: transactionType == .expense ? effectivePaidByType : .single,
                     splitMemberId: splitType == .memberOnly ? splitMemberId : nil,
                     excludedFromBudget: transactionType == .expense ? excludedFromBudget : false,
                     notes: notes.isEmpty ? nil : notes.trimmingCharacters(in: .whitespaces),
@@ -473,9 +496,9 @@ struct TemplateFormView: View {
                     amount: parsedAmount,
                     transactionType: transactionType,
                     categoryId: transactionType == .expense ? categoryId : nil,
-                    splitType: transactionType == .expense ? splitType : .equal,
+                    splitType: transactionType == .expense ? effectiveSplitType : .custom,
                     paidByMemberId: paidByMemberId,
-                    paidByType: transactionType == .expense ? paidByType : .single,
+                    paidByType: transactionType == .expense ? effectivePaidByType : .single,
                     splitMemberId: splitType == .memberOnly ? splitMemberId : nil,
                     excludedFromBudget: transactionType == .expense ? excludedFromBudget : false,
                     notes: notes.isEmpty ? nil : notes.trimmingCharacters(in: .whitespaces)

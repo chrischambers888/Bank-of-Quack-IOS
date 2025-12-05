@@ -200,7 +200,14 @@ struct ExpenseDonutChart: View {
                 selectedId: $selectedSectorId,
                 onCategoryTapped: { category, sectorColor in
                     // Create the popup data immediately with all required info
-                    let categoryTransactions = filteredTransactions.filter { $0.categoryId == category.id && $0.transactionType == .expense }
+                    // For "Uncategorized" category, filter for transactions with nil categoryId
+                    let categoryTransactions = filteredTransactions.filter { transaction in
+                        guard transaction.transactionType == .expense else { return false }
+                        if category.name == "Uncategorized" {
+                            return transaction.categoryId == nil
+                        }
+                        return transaction.categoryId == category.id
+                    }
                     categoryPopupData = CategoryPopupData(
                         id: category.id,
                         category: category,

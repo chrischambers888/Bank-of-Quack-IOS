@@ -1,38 +1,138 @@
--- Security Fixes Migration
--- Addresses Supabase Security Advisor errors and warnings:
--- 1. SECURITY DEFINER views → use security_invoker = on
--- 2. Mutable search_path in functions → SET search_path = ''
+-- Remove Dynamic Equal Split Type Migration
+-- Converts all 'equal' and 'shared' splits to explicit 'custom' splits
+-- This ensures balance calculations remain accurate as household membership changes
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
--- FIX: transactions_view SECURITY DEFINER
--- Recreate with security_invoker = on to respect RLS of querying user
+-- STEP 1: Generate explicit splits for transactions with 'equal' split_type
+-- that don't already have transaction_splits rows
 --------------------------------------------------------------------------------
 
-DROP VIEW IF EXISTS public.transactions_view;
-
-CREATE VIEW public.transactions_view
-WITH (security_invoker = on)
-AS
+-- Insert splits for transactions with split_type = 'equal' and no existing splits
+INSERT INTO public.transaction_splits (
+  transaction_id, member_id, amount, percentage,
+  owed_amount, owed_percentage, paid_amount, paid_percentage
+)
 SELECT 
-  t.*,
-  c.name AS category_name,
-  c.icon AS category_icon,
-  c.color AS category_color,
-  pm.display_name AS paid_by_name,
-  pm.avatar_url AS paid_by_avatar,
-  ptm.display_name AS paid_to_name,
-  ptm.avatar_url AS paid_to_avatar,
-  sm.display_name AS split_member_name
+  t.id AS transaction_id,
+  hm.id AS member_id,
+  t.amount / member_counts.cnt AS amount,
+  100.0 / member_counts.cnt AS percentage,
+  t.amount / member_counts.cnt AS owed_amount,
+  100.0 / member_counts.cnt AS owed_percentage,
+  CASE 
+    WHEN t.paid_by_type = 'single' AND hm.id = t.paid_by_member_id THEN t.amount
+    WHEN t.paid_by_type = 'shared' THEN t.amount / member_counts.cnt
+    ELSE 0
+  END AS paid_amount,
+  CASE 
+    WHEN t.paid_by_type = 'single' AND hm.id = t.paid_by_member_id THEN 100
+    WHEN t.paid_by_type = 'shared' THEN 100.0 / member_counts.cnt
+    ELSE 0
+  END AS paid_percentage
 FROM public.transactions t
-LEFT JOIN public.categories c ON t.category_id = c.id
-LEFT JOIN public.household_members pm ON t.paid_by_member_id = pm.id
-LEFT JOIN public.household_members ptm ON t.paid_to_member_id = ptm.id
-LEFT JOIN public.household_members sm ON t.split_member_id = sm.id;
+CROSS JOIN public.household_members hm
+CROSS JOIN LATERAL (
+  SELECT COUNT(*) AS cnt 
+  FROM public.household_members 
+  WHERE household_id = t.household_id 
+    AND status IN ('approved', 'inactive')
+) member_counts
+WHERE t.transaction_type = 'expense'
+  AND t.split_type = 'equal'
+  AND t.household_id = hm.household_id
+  AND hm.status IN ('approved', 'inactive')
+  AND NOT EXISTS (
+    SELECT 1 FROM public.transaction_splits ts WHERE ts.transaction_id = t.id
+  )
+ON CONFLICT (transaction_id, member_id) DO NOTHING;
 
 --------------------------------------------------------------------------------
--- FIX: member_balances SECURITY DEFINER
--- Recreate with security_invoker = on to respect RLS of querying user
+-- STEP 2: Update paid_amount for transactions with 'shared' paid_by_type
+-- that already have splits but may not have correct paid_amount values
+--------------------------------------------------------------------------------
+
+UPDATE public.transaction_splits ts
+SET 
+  paid_amount = t.amount / member_counts.cnt,
+  paid_percentage = 100.0 / member_counts.cnt
+FROM public.transactions t
+CROSS JOIN LATERAL (
+  SELECT COUNT(*) AS cnt 
+  FROM public.transaction_splits 
+  WHERE transaction_id = t.id
+) member_counts
+WHERE ts.transaction_id = t.id
+  AND t.paid_by_type = 'shared'
+  AND t.transaction_type = 'expense'
+  AND member_counts.cnt > 0;
+
+--------------------------------------------------------------------------------
+-- STEP 3: Update all 'equal' split_type to 'custom'
+--------------------------------------------------------------------------------
+
+UPDATE public.transactions
+SET split_type = 'custom'
+WHERE split_type = 'equal';
+
+--------------------------------------------------------------------------------
+-- STEP 4: Update all 'shared' paid_by_type to 'custom'
+--------------------------------------------------------------------------------
+
+UPDATE public.transactions
+SET paid_by_type = 'custom'
+WHERE paid_by_type = 'shared';
+
+--------------------------------------------------------------------------------
+-- STEP 5: Update transaction_templates to convert 'equal' and 'shared'
+--------------------------------------------------------------------------------
+
+UPDATE public.transaction_templates
+SET split_type = 'custom'
+WHERE split_type = 'equal';
+
+UPDATE public.transaction_templates
+SET paid_by_type = 'custom'
+WHERE paid_by_type = 'shared';
+
+--------------------------------------------------------------------------------
+-- STEP 6: Update constraints on transactions table
+-- Remove 'equal' from split_type and 'shared' from paid_by_type
+--------------------------------------------------------------------------------
+
+-- Drop existing constraints
+ALTER TABLE public.transactions DROP CONSTRAINT IF EXISTS transactions_split_type_check;
+ALTER TABLE public.transactions DROP CONSTRAINT IF EXISTS transactions_paid_by_type_check;
+
+-- Add new constraints without 'equal' and 'shared'
+ALTER TABLE public.transactions
+  ADD CONSTRAINT transactions_split_type_check 
+  CHECK (split_type IN ('custom', 'payer_only', 'member_only'));
+
+ALTER TABLE public.transactions
+  ADD CONSTRAINT transactions_paid_by_type_check 
+  CHECK (paid_by_type IN ('single', 'custom'));
+
+--------------------------------------------------------------------------------
+-- STEP 7: Update constraints on transaction_templates table
+--------------------------------------------------------------------------------
+
+-- Drop existing constraints  
+ALTER TABLE public.transaction_templates DROP CONSTRAINT IF EXISTS transaction_templates_split_type_check;
+ALTER TABLE public.transaction_templates DROP CONSTRAINT IF EXISTS transaction_templates_paid_by_type_check;
+
+-- Add new constraints without 'equal' and 'shared'
+ALTER TABLE public.transaction_templates
+  ADD CONSTRAINT transaction_templates_split_type_check 
+  CHECK (split_type IN ('custom', 'payer_only', 'member_only'));
+
+ALTER TABLE public.transaction_templates
+  ADD CONSTRAINT transaction_templates_paid_by_type_check 
+  CHECK (paid_by_type IN ('single', 'custom'));
+
+--------------------------------------------------------------------------------
+-- STEP 8: Simplify member_balances view
+-- Remove the legacy_expenses CTE since all transactions now have explicit splits
 --------------------------------------------------------------------------------
 
 DROP VIEW IF EXISTS public.member_balances;
@@ -51,43 +151,6 @@ WITH split_totals AS (
   JOIN public.transactions t ON t.id = ts.transaction_id
   WHERE t.transaction_type = 'expense'
   GROUP BY t.household_id, ts.member_id
-),
-legacy_expenses AS (
-  -- Handle transactions without splits (legacy data)
-  -- Now includes both approved and inactive members for historical accuracy
-  SELECT
-    t.household_id,
-    hm.id AS member_id,
-    SUM(
-      CASE 
-        WHEN t.split_type = 'equal' AND NOT EXISTS (
-          SELECT 1 FROM public.transaction_splits ts WHERE ts.transaction_id = t.id
-        ) THEN t.amount / GREATEST(
-          (SELECT COUNT(*) FROM public.household_members WHERE household_id = t.household_id AND status IN ('approved', 'inactive')), 1
-        )
-        WHEN t.split_type = 'payer_only' AND t.paid_by_member_id = hm.id AND NOT EXISTS (
-          SELECT 1 FROM public.transaction_splits ts WHERE ts.transaction_id = t.id
-        ) THEN t.amount
-        WHEN t.split_type = 'member_only' AND t.split_member_id = hm.id AND NOT EXISTS (
-          SELECT 1 FROM public.transaction_splits ts WHERE ts.transaction_id = t.id
-        ) THEN t.amount
-        ELSE 0
-      END
-    ) AS legacy_owed,
-    SUM(
-      CASE 
-        WHEN t.paid_by_member_id = hm.id AND NOT EXISTS (
-          SELECT 1 FROM public.transaction_splits ts WHERE ts.transaction_id = t.id
-        ) THEN t.amount
-        ELSE 0
-      END
-    ) AS legacy_paid
-  FROM public.transactions t
-  CROSS JOIN public.household_members hm
-  WHERE t.household_id = hm.household_id
-    AND t.transaction_type = 'expense'
-    AND hm.status IN ('approved', 'inactive')
-  GROUP BY t.household_id, hm.id
 ),
 settlement_paid AS (
   -- Amount paid by each member in settlements
@@ -146,16 +209,15 @@ SELECT
   hm.household_id,
   hm.id AS member_id,
   hm.display_name,
-  -- Total paid = expense payments + settlement payments - reimbursements received (reimbursement reduces out-of-pocket)
-  COALESCE(st.total_paid, 0) + COALESCE(le.legacy_paid, 0) + COALESCE(sp.amount_paid, 0) - COALESCE(lrp.reimbursement_received, 0) AS total_paid,
+  -- Total paid = expense payments + settlement payments - reimbursements received
+  COALESCE(st.total_paid, 0) + COALESCE(sp.amount_paid, 0) - COALESCE(lrp.reimbursement_received, 0) AS total_paid,
   -- Total share/owed = expense share + settlements received - reimbursement owed reductions
-  COALESCE(st.total_owed, 0) + COALESCE(le.legacy_owed, 0) + COALESCE(sr.amount_received, 0) - COALESCE(lro.owed_reduction, 0) AS total_share,
+  COALESCE(st.total_owed, 0) + COALESCE(sr.amount_received, 0) - COALESCE(lro.owed_reduction, 0) AS total_share,
   -- Balance = total_paid - total_share
-  (COALESCE(st.total_paid, 0) + COALESCE(le.legacy_paid, 0) + COALESCE(sp.amount_paid, 0) - COALESCE(lrp.reimbursement_received, 0)) - 
-  (COALESCE(st.total_owed, 0) + COALESCE(le.legacy_owed, 0) + COALESCE(sr.amount_received, 0) - COALESCE(lro.owed_reduction, 0)) AS balance
+  (COALESCE(st.total_paid, 0) + COALESCE(sp.amount_paid, 0) - COALESCE(lrp.reimbursement_received, 0)) - 
+  (COALESCE(st.total_owed, 0) + COALESCE(sr.amount_received, 0) - COALESCE(lro.owed_reduction, 0)) AS balance
 FROM public.household_members hm
 LEFT JOIN split_totals st ON st.member_id = hm.id AND st.household_id = hm.household_id
-LEFT JOIN legacy_expenses le ON le.member_id = hm.id AND le.household_id = hm.household_id
 LEFT JOIN settlement_paid sp ON sp.member_id = hm.id AND sp.household_id = hm.household_id
 LEFT JOIN settlement_received sr ON sr.member_id = hm.id AND sr.household_id = hm.household_id
 LEFT JOIN linked_reimbursement_paid lrp ON lrp.member_id = hm.id AND lrp.household_id = hm.household_id
@@ -163,8 +225,8 @@ LEFT JOIN linked_reimbursement_owed lro ON lro.member_id = hm.id AND lro.househo
 WHERE hm.status IN ('approved', 'inactive');
 
 --------------------------------------------------------------------------------
--- FIX: create_transaction_with_splits search_path
--- Add SET search_path = '' to prevent search_path injection attacks
+-- STEP 9: Update create_transaction_with_splits function
+-- Remove special handling for 'equal' and 'shared' since client always sends splits
 --------------------------------------------------------------------------------
 
 DROP FUNCTION IF EXISTS public.create_transaction_with_splits(UUID, DATE, TEXT, NUMERIC, TEXT, UUID, UUID, UUID, TEXT, TEXT, UUID, UUID, BOOLEAN, TEXT, UUID, JSONB);
@@ -215,7 +277,7 @@ BEGIN
   -- Only create splits for expenses
   IF p_transaction_type = 'expense' THEN
     IF p_splits IS NOT NULL AND jsonb_array_length(p_splits) > 0 THEN
-      -- Use provided custom splits
+      -- Use provided splits (required for all expense transactions now)
       FOR v_split IN SELECT * FROM jsonb_array_elements(p_splits)
       LOOP
         INSERT INTO public.transaction_splits (
@@ -234,7 +296,8 @@ BEGIN
         );
       END LOOP;
     ELSE
-      -- Auto-generate splits based on split_type and paid_by_type
+      -- Fallback: Auto-generate splits based on split_type and paid_by_type
+      -- This is for backwards compatibility with older clients
       SELECT COUNT(*) INTO v_member_count
       FROM public.household_members
       WHERE household_id = p_household_id AND status = 'approved';
@@ -252,31 +315,31 @@ BEGIN
           v_transaction_id,
           v_member.id,
           CASE 
-            WHEN p_split_type = 'equal' THEN v_equal_share
+            WHEN p_split_type = 'custom' THEN v_equal_share  -- Default to equal for custom without splits
             WHEN p_split_type = 'member_only' AND v_member.id = p_split_member_id THEN p_amount
             WHEN p_split_type = 'payer_only' AND v_member.id = p_paid_by_member_id THEN p_amount
             ELSE 0
           END,
           CASE 
-            WHEN p_split_type = 'equal' THEN v_equal_share
+            WHEN p_split_type = 'custom' THEN v_equal_share
             WHEN p_split_type = 'member_only' AND v_member.id = p_split_member_id THEN p_amount
             WHEN p_split_type = 'payer_only' AND v_member.id = p_paid_by_member_id THEN p_amount
             ELSE 0
           END,
           CASE 
-            WHEN p_split_type = 'equal' THEN 100.0 / v_member_count
+            WHEN p_split_type = 'custom' THEN 100.0 / v_member_count
             WHEN p_split_type = 'member_only' AND v_member.id = p_split_member_id THEN 100
             WHEN p_split_type = 'payer_only' AND v_member.id = p_paid_by_member_id THEN 100
             ELSE 0
           END,
           CASE 
             WHEN p_paid_by_type = 'single' AND v_member.id = p_paid_by_member_id THEN p_amount
-            WHEN p_paid_by_type = 'shared' THEN v_equal_share
+            WHEN p_paid_by_type = 'custom' THEN v_equal_share  -- Default to equal for custom without splits
             ELSE 0
           END,
           CASE 
             WHEN p_paid_by_type = 'single' AND v_member.id = p_paid_by_member_id THEN 100
-            WHEN p_paid_by_type = 'shared' THEN 100.0 / v_member_count
+            WHEN p_paid_by_type = 'custom' THEN 100.0 / v_member_count
             ELSE 0
           END
         );
@@ -289,8 +352,7 @@ END;
 $$;
 
 --------------------------------------------------------------------------------
--- FIX: update_transaction_with_splits search_path
--- Add SET search_path = '' to prevent search_path injection attacks
+-- STEP 10: Update update_transaction_with_splits function
 --------------------------------------------------------------------------------
 
 DROP FUNCTION IF EXISTS public.update_transaction_with_splits(UUID, DATE, TEXT, NUMERIC, TEXT, UUID, UUID, UUID, TEXT, TEXT, UUID, UUID, BOOLEAN, TEXT, JSONB);
@@ -324,7 +386,7 @@ DECLARE
   v_equal_share NUMERIC;
   v_member RECORD;
 BEGIN
-  -- Get household_id and verify transaction exists
+  -- Get the household_id for the transaction
   SELECT household_id INTO v_household_id
   FROM public.transactions
   WHERE id = p_transaction_id;
@@ -332,17 +394,10 @@ BEGIN
   IF v_household_id IS NULL THEN
     RAISE EXCEPTION 'Transaction not found';
   END IF;
-  
-  -- Verify user has access to this household
-  IF NOT EXISTS (
-    SELECT 1 FROM public.household_members 
-    WHERE household_id = v_household_id AND user_id = auth.uid()
-  ) THEN
-    RAISE EXCEPTION 'Unauthorized';
-  END IF;
 
   -- Update the transaction
-  UPDATE public.transactions SET
+  UPDATE public.transactions
+  SET
     date = p_date,
     description = p_description,
     amount = p_amount,
@@ -359,16 +414,17 @@ BEGIN
     updated_at = NOW()
   WHERE id = p_transaction_id;
 
-  -- Delete existing splits
-  DELETE FROM public.transaction_splits WHERE transaction_id = p_transaction_id;
-
-  -- Only create splits for expenses
+  -- Only update splits for expenses
   IF p_transaction_type = 'expense' THEN
+    -- Delete existing splits
+    DELETE FROM public.transaction_splits WHERE transaction_id = p_transaction_id;
+    
     IF p_splits IS NOT NULL AND jsonb_array_length(p_splits) > 0 THEN
+      -- Use provided splits
       FOR v_split IN SELECT * FROM jsonb_array_elements(p_splits)
       LOOP
         INSERT INTO public.transaction_splits (
-          transaction_id, member_id, amount, percentage, 
+          transaction_id, member_id, amount, percentage,
           owed_amount, owed_percentage, paid_amount, paid_percentage
         )
         VALUES (
@@ -383,6 +439,7 @@ BEGIN
         );
       END LOOP;
     ELSE
+      -- Fallback: Auto-generate splits based on split_type and paid_by_type
       SELECT COUNT(*) INTO v_member_count
       FROM public.household_members
       WHERE household_id = v_household_id AND status = 'approved';
@@ -400,50 +457,43 @@ BEGIN
           p_transaction_id,
           v_member.id,
           CASE 
-            WHEN p_split_type = 'equal' THEN v_equal_share
+            WHEN p_split_type = 'custom' THEN v_equal_share
             WHEN p_split_type = 'member_only' AND v_member.id = p_split_member_id THEN p_amount
             WHEN p_split_type = 'payer_only' AND v_member.id = p_paid_by_member_id THEN p_amount
             ELSE 0
           END,
           CASE 
-            WHEN p_split_type = 'equal' THEN v_equal_share
+            WHEN p_split_type = 'custom' THEN v_equal_share
             WHEN p_split_type = 'member_only' AND v_member.id = p_split_member_id THEN p_amount
             WHEN p_split_type = 'payer_only' AND v_member.id = p_paid_by_member_id THEN p_amount
             ELSE 0
           END,
           CASE 
-            WHEN p_split_type = 'equal' THEN 100.0 / v_member_count
+            WHEN p_split_type = 'custom' THEN 100.0 / v_member_count
             WHEN p_split_type = 'member_only' AND v_member.id = p_split_member_id THEN 100
             WHEN p_split_type = 'payer_only' AND v_member.id = p_paid_by_member_id THEN 100
             ELSE 0
           END,
           CASE 
             WHEN p_paid_by_type = 'single' AND v_member.id = p_paid_by_member_id THEN p_amount
-            WHEN p_paid_by_type = 'shared' THEN v_equal_share
+            WHEN p_paid_by_type = 'custom' THEN v_equal_share
             ELSE 0
           END,
           CASE 
             WHEN p_paid_by_type = 'single' AND v_member.id = p_paid_by_member_id THEN 100
-            WHEN p_paid_by_type = 'shared' THEN 100.0 / v_member_count
+            WHEN p_paid_by_type = 'custom' THEN 100.0 / v_member_count
             ELSE 0
           END
         );
       END LOOP;
     END IF;
+  ELSE
+    -- Non-expense transactions don't have splits
+    DELETE FROM public.transaction_splits WHERE transaction_id = p_transaction_id;
   END IF;
   
   RETURN TRUE;
 END;
 $$;
-
---------------------------------------------------------------------------------
--- Done! Security fixes applied.
--- 
--- MANUAL STEP REQUIRED:
--- Enable "Leaked Password Protection" in Supabase Dashboard:
--- 1. Go to Authentication > Providers > Email
--- 2. Enable "Leaked password protection"
---------------------------------------------------------------------------------
-
 
 

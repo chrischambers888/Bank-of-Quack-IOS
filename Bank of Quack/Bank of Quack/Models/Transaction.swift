@@ -106,7 +106,7 @@ enum SplitType: String, Codable, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .equal: return "Split Equally"
-        case .memberOnly: return "Member Only"
+        case .memberOnly: return "Single Member"
         case .custom: return "Custom Split"
         case .payerOnly: return "Payer Only"
         }
@@ -126,14 +126,14 @@ enum PaidByType: String, Codable, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .single: return "Single Member"
-        case .shared: return "Shared Equally"
+        case .shared: return "Split Equally"
         case .custom: return "Custom Split"
         }
     }
     
     // Paid by types shown in the UI picker
     static var pickerCases: [PaidByType] {
-        [.single, .shared, .custom]
+        [.shared, .single, .custom]
     }
 }
 
