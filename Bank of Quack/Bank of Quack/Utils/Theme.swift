@@ -249,6 +249,10 @@ struct InputFieldStyle: ViewModifier {
             .padding(Theme.Spacing.md)
             .background(Theme.Colors.backgroundInput)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                    .stroke(Theme.Colors.borderLight, lineWidth: 1)
+            )
             .foregroundStyle(Theme.Colors.textPrimary)
     }
 }
