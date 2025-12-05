@@ -974,7 +974,7 @@ final class ImportExportService: Sendable {
                         row.matchedCategoryId = categoryMap[categoryLower]
                         summary.existingCategoriesUsed.insert(categoryStr)
                     } else {
-                        row.validationWarnings.append(.categoryWillBeCreated(name: categoryStr))
+                        // Track for creation - shown in summary, not per-row warning
                         summary.newCategoriesToCreate.insert(categoryStr)
                     }
                 }
@@ -1007,7 +1007,7 @@ final class ImportExportService: Sendable {
                         row.matchedPaidByMemberId = memberMap[paidToLower]
                         summary.membersUsed.insert(paidToStr)
                     } else {
-                        row.validationWarnings.append(.memberWillBeCreated(name: paidToStr))
+                        // Track for creation - shown in summary, not per-row warning
                         summary.newManagedMembersToCreate.insert(paidToStr)
                     }
                     row.parsedPaidByType = .single
@@ -1030,7 +1030,7 @@ final class ImportExportService: Sendable {
                         row.matchedPaidByMemberId = memberMap[paidByLower]
                         summary.membersUsed.insert(paidByStr)
                     } else {
-                        row.validationWarnings.append(.memberWillBeCreated(name: paidByStr))
+                        // Track for creation - shown in summary, not per-row warning
                         summary.newManagedMembersToCreate.insert(paidByStr)
                     }
                     row.parsedPaidByType = .single
@@ -1044,7 +1044,7 @@ final class ImportExportService: Sendable {
                         row.matchedPaidToMemberId = memberMap[paidToLower]
                         summary.membersUsed.insert(paidToStr)
                     } else {
-                        row.validationWarnings.append(.memberWillBeCreated(name: paidToStr))
+                        // Track for creation - shown in summary, not per-row warning
                         summary.newManagedMembersToCreate.insert(paidToStr)
                     }
                 }
@@ -1082,8 +1082,7 @@ final class ImportExportService: Sendable {
                     row.matchedPaidByMemberId = memberMap[paidByLower]
                     summary.membersUsed.insert(paidByStr)
                 } else {
-                    // Unknown member - will be created as managed member
-                    row.validationWarnings.append(.memberWillBeCreated(name: paidByStr))
+                    // Track for creation - shown in summary, not per-row warning
                     summary.newManagedMembersToCreate.insert(paidByStr)
                 }
             }
@@ -1096,8 +1095,7 @@ final class ImportExportService: Sendable {
                     row.matchedPaidToMemberId = memberMap[paidToLower]
                     summary.membersUsed.insert(paidToStr)
                 } else {
-                    // Unknown member - will be created as managed member
-                    row.validationWarnings.append(.memberWillBeCreated(name: paidToStr))
+                    // Track for creation - shown in summary, not per-row warning
                     summary.newManagedMembersToCreate.insert(paidToStr)
                 }
             }
@@ -1129,8 +1127,7 @@ final class ImportExportService: Sendable {
                     row.matchedExpenseForMemberId = memberMap[expenseForLower]
                     summary.membersUsed.insert(expenseForStr)
                 } else {
-                    // Unknown member - will be created as managed member
-                    row.validationWarnings.append(.memberWillBeCreated(name: expenseForStr))
+                    // Track for creation - shown in summary, not per-row warning
                     summary.newManagedMembersToCreate.insert(expenseForStr)
                 }
             }
@@ -1145,10 +1142,11 @@ final class ImportExportService: Sendable {
                !splits.isEmpty,
                let transactionAmount = row.parsedAmount {
                 
-                // Check for unmatched members in splits (this is now an ERROR, not silently skipped)
+                // Check for unmatched members in splits - track for creation (shown in summary, not per-row)
                 for split in splits {
                     if split.matchedMemberId == nil && !split.memberName.trimmingCharacters(in: .whitespaces).isEmpty {
-                        row.validationErrors.append(.unmatchedMemberInSplit(name: split.memberName))
+                        let memberName = split.memberName.trimmingCharacters(in: .whitespaces)
+                        summary.newManagedMembersToCreate.insert(memberName)
                     }
                 }
                 

@@ -550,49 +550,57 @@ struct ImportStagingView: View {
     
     private var actionButtons: some View {
         VStack(spacing: Theme.Spacing.sm) {
-            if viewModel.summary.canImportAll {
-                Button {
-                    importTransactions()
-                } label: {
-                    if viewModel.isImporting {
-                        ProgressView()
-                            .tint(Theme.Colors.textInverse)
-                    } else {
+            // Show progress during import
+            if viewModel.isImporting {
+                VStack(spacing: Theme.Spacing.sm) {
+                    ProgressView(value: viewModel.importProgress) {
+                        Text(viewModel.importProgressMessage)
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                    .tint(Theme.Colors.accent)
+                    
+                    Text("\(Int(viewModel.importProgress * 100))%")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundStyle(Theme.Colors.accent)
+                }
+                .padding(Theme.Spacing.md)
+                .background(Theme.Colors.backgroundCard)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
+            } else {
+                if viewModel.summary.canImportAll {
+                    Button {
+                        importTransactions()
+                    } label: {
                         Label("Import All (\(viewModel.summary.totalRows))", systemImage: "arrow.down.doc")
                     }
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(viewModel.isImporting)
-            } else if viewModel.summary.canImportValid {
-                Button {
-                    importTransactions()
-                } label: {
-                    if viewModel.isImporting {
-                        ProgressView()
-                            .tint(Theme.Colors.textInverse)
-                    } else {
+                    .buttonStyle(PrimaryButtonStyle())
+                } else if viewModel.summary.canImportValid {
+                    Button {
+                        importTransactions()
+                    } label: {
                         Label("Import Valid Only (\(viewModel.validRowsToImport.count))", systemImage: "arrow.down.doc")
                     }
+                    .buttonStyle(PrimaryButtonStyle())
                 }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(viewModel.isImporting)
-            }
-            
-            if viewModel.summary.errorRows > 0 {
+                
+                if viewModel.summary.errorRows > 0 {
+                    Button {
+                        exportFailedRows()
+                    } label: {
+                        Label("Download Failed Rows", systemImage: "arrow.up.doc")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+                
                 Button {
-                    exportFailedRows()
+                    showFilePicker = true
                 } label: {
-                    Label("Download Failed Rows", systemImage: "arrow.up.doc")
+                    Label("Choose Different File", systemImage: "folder")
                 }
                 .buttonStyle(SecondaryButtonStyle())
             }
-            
-            Button {
-                showFilePicker = true
-            } label: {
-                Label("Choose Different File", systemImage: "folder")
-            }
-            .buttonStyle(SecondaryButtonStyle())
         }
         .padding(.horizontal, Theme.Spacing.md)
     }

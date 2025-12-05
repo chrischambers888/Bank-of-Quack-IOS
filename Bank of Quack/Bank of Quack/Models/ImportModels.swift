@@ -80,7 +80,6 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
     case splitPaidSumMismatch(expected: Decimal, actual: Decimal)  // Split paid amounts don't sum to transaction amount
     case splitOwedPercentageMismatch(actual: Decimal)  // Split owed percentages don't sum to ~100%
     case splitPaidPercentageMismatch(actual: Decimal)  // Split paid percentages don't sum to ~100%
-    case unmatchedMemberInSplit(name: String)  // Split references a member that doesn't exist
     
     var id: String {
         switch self {
@@ -95,7 +94,6 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
         case .splitPaidSumMismatch(let expected, let actual): return "split_paid_mismatch_\(expected)_\(actual)"
         case .splitOwedPercentageMismatch(let actual): return "split_owed_pct_mismatch_\(actual)"
         case .splitPaidPercentageMismatch(let actual): return "split_paid_pct_mismatch_\(actual)"
-        case .unmatchedMemberInSplit(let name): return "unmatched_member_\(name)"
         }
     }
     
@@ -123,8 +121,6 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
             return "Split owed percentages (\(actual)%) don't add up to 100%. Fix the Splits sheet."
         case .splitPaidPercentageMismatch(let actual):
             return "Split paid percentages (\(actual)%) don't add up to 100%. Fix the Splits sheet."
-        case .unmatchedMemberInSplit(let name):
-            return "Split references unknown member \"\(name)\". Member must exist in household."
         }
     }
 }
@@ -132,28 +128,22 @@ enum ImportValidationError: Identifiable, Equatable, Sendable {
 // MARK: - Validation Warnings
 
 enum ImportValidationWarning: Identifiable, Equatable, Sendable {
-    case categoryWillBeCreated(name: String)
     case categoryWillBeIgnored(transactionType: String)
     case emptyCategory
     case emptyPaidBy
     case emptyExpenseFor
-    case memberWillBeCreated(name: String)
     
     var id: String {
         switch self {
-        case .categoryWillBeCreated(let name): return "create_cat_\(name)"
         case .categoryWillBeIgnored(let type): return "ignore_cat_\(type)"
         case .emptyCategory: return "empty_category"
         case .emptyPaidBy: return "empty_paid_by"
         case .emptyExpenseFor: return "empty_expense_for"
-        case .memberWillBeCreated(let name): return "create_member_\(name)"
         }
     }
     
     var message: String {
         switch self {
-        case .categoryWillBeCreated(let name):
-            return "Category \"\(name)\" will be created"
         case .categoryWillBeIgnored(let transactionType):
             return "Category will be ignored for \(transactionType) transactions"
         case .emptyCategory:
@@ -162,8 +152,6 @@ enum ImportValidationWarning: Identifiable, Equatable, Sendable {
             return "No 'Paid By' specified - will be assigned to you"
         case .emptyExpenseFor:
             return "No 'Expense For' specified - will split equally among all members"
-        case .memberWillBeCreated(let name):
-            return "Member \"\(name)\" will be created as managed member"
         }
     }
 }

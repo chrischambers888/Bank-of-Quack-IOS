@@ -15,6 +15,8 @@ final class ImportStagingViewModel {
     var summary = ImportSummary()
     var isLoading = false
     var isImporting = false
+    var importProgress: Double = 0.0  // 0.0 to 1.0
+    var importProgressMessage: String = ""  // e.g., "Importing transactions (5/20)..."
     var error: String?
     var importResult: ImportResult?
     var hasSplitData = false  // Whether splits were found in the xlsx file
@@ -192,6 +194,8 @@ final class ImportStagingViewModel {
         onDataCreated: @escaping () -> Void
     ) async {
         isImporting = true
+        importProgress = 0.0
+        importProgressMessage = "Preparing import..."
         error = nil
         
         let rowsToImport = validRowsToImport
@@ -212,9 +216,21 @@ final class ImportStagingViewModel {
         // Track CSV row -> created transaction ID for reimbursement linking
         var csvRowToTransactionId: [Int: UUID] = [:]
         
+        // Calculate total steps for progress tracking
+        let totalSetupSteps = summary.newManagedMembersToCreate.count + 
+                              summary.newCategoriesToCreate.count + 
+                              summary.newSectorsToCreate.count + 
+                              summary.newSectorCategoryLinks.count
+        let totalTransactions = rowsToImport.count
+        let totalSteps = totalSetupSteps + totalTransactions
+        var completedSteps = 0
+        
         // STEP 1: Create managed members first (so they can be used in transactions)
         var memberMap = Dictionary(uniqueKeysWithValues: existingMembers.filter { $0.status == .approved }.map { ($0.displayName.lowercased(), $0.id) })
         
+        if !summary.newManagedMembersToCreate.isEmpty {
+            importProgressMessage = "Creating members..."
+        }
         for memberName in summary.newManagedMembersToCreate {
             do {
                 let newMemberId = try await dataService.createManagedMember(
@@ -227,11 +243,16 @@ final class ImportStagingViewModel {
             } catch {
                 errors.append("Failed to create member '\(memberName)': \(error.localizedDescription)")
             }
+            completedSteps += 1
+            importProgress = Double(completedSteps) / Double(totalSteps)
         }
         
         // STEP 2: Create any new categories
         var categoryMap = Dictionary(uniqueKeysWithValues: existingCategories.map { ($0.name.lowercased(), $0.id) })
         
+        if !summary.newCategoriesToCreate.isEmpty {
+            importProgressMessage = "Creating categories..."
+        }
         for categoryName in summary.newCategoriesToCreate {
             do {
                 let newCategory = try await dataService.createCategory(CreateCategoryDTO(
@@ -247,11 +268,16 @@ final class ImportStagingViewModel {
             } catch {
                 errors.append("Failed to create category '\(categoryName)': \(error.localizedDescription)")
             }
+            completedSteps += 1
+            importProgress = Double(completedSteps) / Double(totalSteps)
         }
         
         // STEP 3: Create any new sectors
         var sectorMap = Dictionary(uniqueKeysWithValues: existingSectors.map { ($0.name.lowercased(), $0.id) })
         
+        if !summary.newSectorsToCreate.isEmpty {
+            importProgressMessage = "Creating sectors..."
+        }
         for sectorName in summary.newSectorsToCreate {
             do {
                 // Sort order is auto-assigned; app sorts alphabetically
@@ -266,15 +292,22 @@ final class ImportStagingViewModel {
             } catch {
                 errors.append("Failed to create sector '\(sectorName)': \(error.localizedDescription)")
             }
+            completedSteps += 1
+            importProgress = Double(completedSteps) / Double(totalSteps)
         }
         
         // STEP 4: Create sector-category linkages
+        if !summary.newSectorCategoryLinks.isEmpty {
+            importProgressMessage = "Linking categories to sectors..."
+        }
         for link in summary.newSectorCategoryLinks {
             let sectorLower = link.sectorName.lowercased()
             let categoryLower = link.categoryName.lowercased()
             
             guard let sectorId = sectorMap[sectorLower],
                   let categoryId = categoryMap[categoryLower] else {
+                completedSteps += 1
+                importProgress = Double(completedSteps) / Double(totalSteps)
                 continue
             }
             
@@ -284,6 +317,8 @@ final class ImportStagingViewModel {
             } catch {
                 errors.append("Failed to link '\(link.categoryName)' to '\(link.sectorName)': \(error.localizedDescription)")
             }
+            completedSteps += 1
+            importProgress = Double(completedSteps) / Double(totalSteps)
         }
         
         // STEP 5: Build updated member ID map for looking up splits
@@ -310,7 +345,10 @@ final class ImportStagingViewModel {
         }
         
         // STEP 6: Import non-reimbursement transactions first
+        var transactionIndex = 0
         for row in nonReimbursementRows {
+            transactionIndex += 1
+            importProgressMessage = "Importing transactions (\(transactionIndex)/\(totalTransactions))..."
             do {
                 // Resolve category ID (might be newly created)
                 var categoryId = row.matchedCategoryId
@@ -357,6 +395,7 @@ final class ImportStagingViewModel {
                 let memberSplits = buildMemberSplits(
                     from: splitRowsForTransaction,
                     memberIdMap: memberIdMap,
+                    memberNameMap: memberMap,
                     totalAmount: row.parsedAmount ?? 0
                 )
                 
@@ -364,6 +403,8 @@ final class ImportStagingViewModel {
                 if !splitRowsForTransaction.isEmpty && memberSplits == nil {
                     failedCount += 1
                     errors.append("Row \(row.rowNumber): Failed to build splits - one or more members in the Splits sheet don't exist in the household")
+                    completedSteps += 1
+                    importProgress = Double(completedSteps) / Double(totalSteps)
                     continue
                 }
                 
@@ -416,10 +457,14 @@ final class ImportStagingViewModel {
                 failedCount += 1
                 errors.append("Row \(row.rowNumber): \(error.localizedDescription)")
             }
+            completedSteps += 1
+            importProgress = Double(completedSteps) / Double(totalSteps)
         }
         
         // STEP 7: Import reimbursements with correct references
         for row in reimbursementRows {
+            transactionIndex += 1
+            importProgressMessage = "Importing transactions (\(transactionIndex)/\(totalTransactions))..."
             do {
                 // Resolve category ID (might be newly created)
                 var categoryId = row.matchedCategoryId
@@ -457,6 +502,7 @@ final class ImportStagingViewModel {
                 let memberSplits = buildMemberSplits(
                     from: splitRowsForReimbursement,
                     memberIdMap: memberIdMap,
+                    memberNameMap: memberMap,
                     totalAmount: row.parsedAmount ?? 0
                 )
                 
@@ -464,6 +510,8 @@ final class ImportStagingViewModel {
                 if !splitRowsForReimbursement.isEmpty && memberSplits == nil {
                     failedCount += 1
                     errors.append("Row \(row.rowNumber): Failed to build splits - one or more members in the Splits sheet don't exist in the household")
+                    completedSteps += 1
+                    importProgress = Double(completedSteps) / Double(totalSteps)
                     continue
                 }
                 
@@ -516,7 +564,13 @@ final class ImportStagingViewModel {
                 failedCount += 1
                 errors.append("Row \(row.rowNumber): \(error.localizedDescription)")
             }
+            completedSteps += 1
+            importProgress = Double(completedSteps) / Double(totalSteps)
         }
+        
+        // Mark progress complete
+        importProgress = 1.0
+        importProgressMessage = "Finishing up..."
         
         // Notify that data was created so caller can refresh
         onDataCreated()
@@ -560,6 +614,7 @@ final class ImportStagingViewModel {
     private func buildMemberSplits(
         from splitRows: [ImportSplitRow],
         memberIdMap: [UUID: HouseholdMember],
+        memberNameMap: [String: UUID],
         totalAmount: Decimal
     ) -> [MemberSplit]? {
         guard !splitRows.isEmpty else { return nil }
@@ -567,7 +622,17 @@ final class ImportStagingViewModel {
         var memberSplits: [MemberSplit] = []
         
         for splitRow in splitRows {
-            guard let memberId = splitRow.matchedMemberId,
+            // Try matchedMemberId first, then fall back to name lookup (for newly created managed members)
+            let resolvedMemberId: UUID?
+            if let matched = splitRow.matchedMemberId {
+                resolvedMemberId = matched
+            } else {
+                // Look up by name (case-insensitive) - this handles newly created managed members
+                let nameLower = splitRow.memberName.lowercased().trimmingCharacters(in: .whitespaces)
+                resolvedMemberId = memberNameMap[nameLower]
+            }
+            
+            guard let memberId = resolvedMemberId,
                   let member = memberIdMap[memberId] else {
                 // If any split has an unmatched member, return nil to prevent partial splits
                 // This should have been caught by validation, but acts as a safety net
@@ -632,6 +697,8 @@ final class ImportStagingViewModel {
         summary = ImportSummary()
         isLoading = false
         isImporting = false
+        importProgress = 0.0
+        importProgressMessage = ""
         error = nil
         importResult = nil
         filterStatus = .all
