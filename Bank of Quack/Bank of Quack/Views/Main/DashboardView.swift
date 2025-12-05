@@ -19,10 +19,11 @@ struct DashboardView: View {
     // Filter state
     @State private var filterManager = DashboardFilterManager()
     
-    // Sector breakdown data
-    @State private var sectors: [Sector] = []
-    @State private var categories: [Category] = []
-    @State private var sectorCategories: [UUID: [UUID]] = [:] // sectorId -> [categoryId]
+    // Use authViewModel's data for sectors/categories (same source as Settings)
+    // This ensures consistency and avoids potential fetch issues
+    private var sectors: [Sector] { authViewModel.sectors }
+    private var categories: [Category] { authViewModel.categories }
+    private var sectorCategories: [UUID: [UUID]] { authViewModel.sectorCategories }
     
     private let dataService = DataService()
     
@@ -940,33 +941,35 @@ struct DashboardView: View {
     private func refreshData() async {
         guard let householdId = authViewModel.currentHousehold?.id else { return }
         
+        // Ensure filter is for the current household (resets if household changed)
+        filterManager.setHousehold(householdId)
+        
+        // Refresh authViewModel's data (categories, sectors, sectorCategories)
+        // This ensures we have the same data that Settings uses
+        await authViewModel.refreshCategories()
+        await authViewModel.refreshSectors()
+        
         // Fetch transactions
         await transactionViewModel.fetchTransactions(householdId: householdId)
         
-        // Fetch member balances, splits, and sector data from database
+        // Fetch member balances and splits from database
         do {
             async let balancesTask = dataService.fetchMemberBalances(householdId: householdId)
             async let splitsTask = dataService.fetchAllSplitsForHousehold(householdId: householdId)
-            async let sectorsTask = dataService.fetchSectors(householdId: householdId)
-            async let categoriesTask = dataService.fetchCategories(householdId: householdId)
             
-            let (balances, splits, fetchedSectors, fetchedCategories) = try await (
-                balancesTask, splitsTask, sectorsTask, categoriesTask
-            )
+            let (balances, splits) = try await (balancesTask, splitsTask)
             memberBalances = balances
-            sectors = fetchedSectors
-            categories = fetchedCategories
             
             // Group splits by transaction ID
             allSplits = Dictionary(grouping: splits, by: { $0.transactionId })
             
-            // Fetch sector-category mappings for each sector
-            var mappings: [UUID: [UUID]] = [:]
-            for sector in fetchedSectors {
-                let sectorCats = try await dataService.fetchSectorCategories(sectorId: sector.id)
-                mappings[sector.id] = sectorCats.map { $0.categoryId }
-            }
-            sectorCategories = mappings
+            // Validate filter against current data to remove any stale IDs
+            // (e.g., from deleted categories/sectors/members)
+            filterManager.validateFilter(
+                validSectorIds: Set(sectors.map { $0.id }),
+                validCategoryIds: Set(categories.map { $0.id }),
+                validMemberIds: Set(authViewModel.members.map { $0.id })
+            )
         } catch {
             print("Failed to fetch data: \(error)")
         }

@@ -24,6 +24,10 @@ struct SettingsView: View {
     @State private var exportURL: URL?
     @State private var templateURL: URL?
     @State private var isExporting = false
+    @State private var exportProgress: Double = 0.0
+    @State private var exportPhase: String = ""
+    @State private var showExportError = false
+    @State private var exportErrorMessage: String = ""
     
     // Balance health check state
     @State private var balanceHealthCheck: BalanceHealthCheck?
@@ -117,6 +121,11 @@ struct SettingsView: View {
         .sheet(item: $templateURL) { url in
             ShareSheet(items: [url])
         }
+        .alert("Export Failed", isPresented: $showExportError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(exportErrorMessage)
+        }
         .sheet(isPresented: $showProblematicTransactions) {
             ProblematicTransactionsSheet(
                 transactions: problematicTransactions,
@@ -171,6 +180,8 @@ struct SettingsView: View {
             DataSettingsSection(
                 isOwner: authViewModel.isOwner,
                 isExporting: isExporting,
+                exportProgress: exportProgress,
+                exportPhase: exportPhase,
                 onExport: exportHouseholdData,
                 onImport: { showImportView = true },
                 onDownloadTemplate: downloadTemplate
@@ -660,52 +671,95 @@ struct SettingsView: View {
         guard let household = authViewModel.currentHousehold else { return }
         
         isExporting = true
+        exportProgress = 0.0
+        exportPhase = "Starting export..."
         
         Task {
-            do {
-                let importExportService = ImportExportService()
-                
-                // Build sector-category mappings from the sectorCategories dictionary
-                var sectorCategoryMappings: [(sectorName: String, categoryName: String)] = []
-                let categoryMap = Dictionary(uniqueKeysWithValues: authViewModel.categories.map { ($0.id, $0.name) })
-                
-                for sector in authViewModel.sectors {
-                    // Use authViewModel.sectorCategories instead of sector.categoryIds
-                    if let categoryIds = authViewModel.sectorCategories[sector.id] {
-                        for categoryId in categoryIds {
-                            if let categoryName = categoryMap[categoryId] {
-                                sectorCategoryMappings.append((sectorName: sector.name, categoryName: categoryName))
-                            }
-                        }
+            await performExport(household: household)
+        }
+    }
+    
+    @MainActor
+    private func performExport(household: Household) async {
+        // Capture all data on main actor
+        let categories = authViewModel.categories
+        let sectors = authViewModel.sectors
+        let sectorCategoriesMap = authViewModel.sectorCategories
+        let members = authViewModel.members
+        let householdId = household.id
+        let householdName = household.name
+        
+        // Build sector-category mappings
+        var sectorCategoryMappings: [(sectorName: String, categoryName: String)] = []
+        let categoryMap = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0.name) })
+        
+        for sector in sectors {
+            if let categoryIds = sectorCategoriesMap[sector.id] {
+                for categoryId in categoryIds {
+                    if let categoryName = categoryMap[categoryId] {
+                        sectorCategoryMappings.append((sectorName: sector.name, categoryName: categoryName))
                     }
                 }
-                
-                // Fetch all transactions and splits for export
-                let dataService = DataService()
-                let allTransactions = try await dataService.fetchTransactions(householdId: household.id)
-                let allSplits = try await dataService.fetchAllSplitsForHousehold(householdId: household.id)
-                
-                let url = try importExportService.exportHouseholdData(
-                    transactions: allTransactions,
-                    transactionSplits: allSplits,
-                    categories: authViewModel.categories,
-                    sectors: authViewModel.sectors,
-                    sectorCategories: sectorCategoryMappings,
-                    members: authViewModel.members,
-                    householdName: household.name
-                )
-                
-                await MainActor.run {
-                    exportURL = url
-                    showExportShare = true
-                    isExporting = false
-                }
-            } catch {
-                await MainActor.run {
-                    isExporting = false
-                    // Could show an error alert here
-                }
             }
+        }
+        
+        do {
+            // Update progress for data fetching
+            exportPhase = "Fetching transactions..."
+            exportProgress = 0.05
+            
+            let dataService = DataService()
+            print("[Export] Fetching transactions for household: \(householdId)")
+            let allTransactions = try await dataService.fetchTransactions(householdId: householdId)
+            print("[Export] Fetched \(allTransactions.count) transactions")
+            
+            exportPhase = "Fetching transaction splits..."
+            exportProgress = 0.08
+            
+            // Use the optimized method that accepts pre-fetched transactions
+            // This avoids fetching transactions twice and batches the query for large datasets
+            print("[Export] Fetching splits for \(allTransactions.count) transactions...")
+            let allSplits = try await dataService.fetchSplitsForTransactions(allTransactions)
+            print("[Export] Fetched \(allSplits.count) splits")
+            
+            exportPhase = "Building export file..."
+            exportProgress = 0.10
+            
+            // Perform the export (optimized to be fast even with large data)
+            print("[Export] Starting XLSX generation...")
+            let importExportService = ImportExportService()
+            let url = try importExportService.exportHouseholdData(
+                transactions: allTransactions,
+                transactionSplits: allSplits,
+                categories: categories,
+                sectors: sectors,
+                sectorCategories: sectorCategoryMappings,
+                members: members,
+                householdName: householdName,
+                progressCallback: { [self] phase, progress in
+                    // Since we're @MainActor, we can update state directly
+                    // but the callback comes from sync code, so dispatch back
+                    Task { @MainActor in
+                        self.exportPhase = phase
+                        self.exportProgress = progress
+                    }
+                }
+            )
+            
+            print("[Export] Export complete, file at: \(url.path)")
+            exportProgress = 1.0
+            exportPhase = "Complete!"
+            exportURL = url
+            showExportShare = true
+            isExporting = false
+        } catch {
+            print("[Export] ERROR: \(error)")
+            print("[Export] Error description: \(error.localizedDescription)")
+            isExporting = false
+            exportProgress = 0.0
+            exportPhase = ""
+            exportErrorMessage = "Failed to export data: \(error.localizedDescription)"
+            showExportError = true
         }
     }
     
@@ -1085,6 +1139,8 @@ struct EmojiPickerSheet: View {
 struct DataSettingsSection: View {
     let isOwner: Bool
     let isExporting: Bool
+    let exportProgress: Double
+    let exportPhase: String
     let onExport: () -> Void
     let onImport: () -> Void
     let onDownloadTemplate: () -> Void
@@ -1100,22 +1156,19 @@ struct DataSettingsSection: View {
             VStack(spacing: 0) {
                 // Export - Owner only
                 if isOwner {
-                    Button(action: onExport) {
-                        HStack {
+                    if isExporting {
+                        // Show progress view when exporting
+                        ExportProgressView(progress: exportProgress, phase: exportPhase)
+                    } else {
+                        Button(action: onExport) {
                             SettingsRow(
                                 icon: "square.and.arrow.up",
                                 title: "Export Bank Data",
                                 subtitle: "Download all data as Excel file",
                                 showChevron: false
                             )
-                            
-                            if isExporting {
-                                ProgressView()
-                                    .padding(.trailing, Theme.Spacing.md)
-                            }
                         }
                     }
-                    .disabled(isExporting)
                     
                     Divider()
                         .background(Theme.Colors.borderLight)
@@ -2004,6 +2057,65 @@ struct ProblematicTransactionCard: View {
                 .stroke(Theme.Colors.error.opacity(0.3), lineWidth: 1)
         )
         .padding(.horizontal, Theme.Spacing.md)
+    }
+}
+
+// MARK: - Export Progress View
+
+struct ExportProgressView: View {
+    let progress: Double
+    let phase: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            HStack(spacing: Theme.Spacing.md) {
+                Image(systemName: "square.and.arrow.up")
+                    .foregroundStyle(Theme.Colors.accent)
+                    .frame(width: 24)
+                
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                    Text("Exporting Bank Data...")
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                    
+                    Text(phase.isEmpty ? "Starting export..." : phase)
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                Text("\(Int(progress * 100))%")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.Colors.accent)
+                    .monospacedDigit()
+            }
+            .padding(.horizontal, Theme.Spacing.md)
+            .padding(.top, Theme.Spacing.md)
+            
+            // Progress bar
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    // Background track
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Theme.Colors.backgroundTertiary)
+                        .frame(height: 8)
+                    
+                    // Progress fill
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Theme.Colors.accent)
+                        .frame(width: max(0, geometry.size.width * progress), height: 8)
+                        .animation(.easeInOut(duration: 0.2), value: progress)
+                }
+            }
+            .frame(height: 8)
+            .padding(.horizontal, Theme.Spacing.md)
+            .padding(.bottom, Theme.Spacing.md)
+        }
+        .background(Theme.Colors.backgroundSecondary)
     }
 }
 

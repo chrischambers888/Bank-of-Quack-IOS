@@ -351,24 +351,29 @@ final class ImportStagingViewModel {
             importProgressMessage = "Importing transactions (\(transactionIndex)/\(totalTransactions))..."
             do {
                 // Resolve category ID (might be newly created)
+                // Note: Must trim whitespace to match how categories were stored in categoryMap
                 var categoryId = row.matchedCategoryId
                 if categoryId == nil && !row.category.isEmpty {
-                    categoryId = categoryMap[row.category.lowercased()]
+                    let categoryKey = row.category.trimmingCharacters(in: .whitespaces).lowercased()
+                    categoryId = categoryMap[categoryKey]
                 }
                 
                 // Resolve paid by member (might be newly created managed member, or default to current member)
                 // For income: "Paid To" maps to paidByMemberId (recipient of income)
+                // Note: Must trim whitespace to match how members were stored in memberMap
                 var paidByMemberId = row.matchedPaidByMemberId
                 let transactionType = row.parsedType ?? .expense
                 if transactionType == .income {
                     // Income: use Paid To as the recipient
                     if paidByMemberId == nil && !row.paidTo.isEmpty {
-                        paidByMemberId = memberMap[row.paidTo.lowercased()]
+                        let paidToKey = row.paidTo.trimmingCharacters(in: .whitespaces).lowercased()
+                        paidByMemberId = memberMap[paidToKey]
                     }
                 } else {
                     // Other types: use Paid By
                     if paidByMemberId == nil && !row.paidBy.isEmpty {
-                        paidByMemberId = memberMap[row.paidBy.lowercased()]
+                        let paidByKey = row.paidBy.trimmingCharacters(in: .whitespaces).lowercased()
+                        paidByMemberId = memberMap[paidByKey]
                     }
                 }
                 paidByMemberId = paidByMemberId ?? currentMemberId
@@ -376,14 +381,15 @@ final class ImportStagingViewModel {
                 // Resolve paid to member (for settlements)
                 var paidToMemberId = row.matchedPaidToMemberId
                 if paidToMemberId == nil && !row.paidTo.isEmpty && transactionType != .income {
-                    paidToMemberId = memberMap[row.paidTo.lowercased()]
+                    let paidToKey = row.paidTo.trimmingCharacters(in: .whitespaces).lowercased()
+                    paidToMemberId = memberMap[paidToKey]
                 }
                 
                 // Resolve expense for member (for member_only split type)
                 var expenseForMemberId = row.matchedExpenseForMemberId
                 if expenseForMemberId == nil && !row.expenseFor.isEmpty {
                     // Only treat as member name if it's not a special value
-                    let expenseForLower = row.expenseFor.lowercased()
+                    let expenseForLower = row.expenseFor.trimmingCharacters(in: .whitespaces).lowercased()
                     if !["equal", "shared", "split", "custom", "split equally", "all"].contains(expenseForLower) {
                         expenseForMemberId = memberMap[expenseForLower]
                     }
@@ -467,17 +473,21 @@ final class ImportStagingViewModel {
             importProgressMessage = "Importing transactions (\(transactionIndex)/\(totalTransactions))..."
             do {
                 // Resolve category ID (might be newly created)
+                // Note: Must trim whitespace to match how categories were stored in categoryMap
                 var categoryId = row.matchedCategoryId
                 if categoryId == nil && !row.category.isEmpty {
-                    categoryId = categoryMap[row.category.lowercased()]
+                    let categoryKey = row.category.trimmingCharacters(in: .whitespaces).lowercased()
+                    categoryId = categoryMap[categoryKey]
                 }
                 
                 // Resolve paid by member
                 // For reimbursement: "Paid To" maps to paidByMemberId (recipient of reimbursement)
+                // Note: Must trim whitespace to match how members were stored in memberMap
                 var paidByMemberId = row.matchedPaidByMemberId
                 if paidByMemberId == nil && !row.paidTo.isEmpty {
                     // Reimbursement: use Paid To as the recipient
-                    paidByMemberId = memberMap[row.paidTo.lowercased()]
+                    let paidToKey = row.paidTo.trimmingCharacters(in: .whitespaces).lowercased()
+                    paidByMemberId = memberMap[paidToKey]
                 }
                 paidByMemberId = paidByMemberId ?? currentMemberId
                 

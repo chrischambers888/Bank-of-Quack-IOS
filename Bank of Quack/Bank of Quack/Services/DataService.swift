@@ -704,16 +704,35 @@ actor DataService {
     func fetchAllSplitsForHousehold(householdId: UUID) async throws -> [TransactionSplit] {
         // First get all transaction IDs for this household
         let transactions: [TransactionView] = try await fetchTransactions(householdId: householdId)
+        return try await fetchSplitsForTransactions(transactions)
+    }
+    
+    /// Fetches splits for a pre-fetched list of transactions (more efficient when you already have transactions)
+    func fetchSplitsForTransactions(_ transactions: [TransactionView]) async throws -> [TransactionSplit] {
         let transactionIds = transactions.map { $0.id.uuidString }
         
         guard !transactionIds.isEmpty else { return [] }
         
-        return try await supabase
-            .from(.transactionSplits)
-            .select()
-            .in("transaction_id", values: transactionIds)
-            .execute()
-            .value
+        // Batch the query to avoid URL length limits with large IN clauses
+        // Supabase/PostgREST has limits on query string length
+        let batchSize = 100
+        var allSplits: [TransactionSplit] = []
+        
+        for batchStart in stride(from: 0, to: transactionIds.count, by: batchSize) {
+            let batchEnd = min(batchStart + batchSize, transactionIds.count)
+            let batchIds = Array(transactionIds[batchStart..<batchEnd])
+            
+            let batchSplits: [TransactionSplit] = try await supabase
+                .from(.transactionSplits)
+                .select()
+                .in("transaction_id", values: batchIds)
+                .execute()
+                .value
+            
+            allSplits.append(contentsOf: batchSplits)
+        }
+        
+        return allSplits
     }
     
     // MARK: - Transaction Totals

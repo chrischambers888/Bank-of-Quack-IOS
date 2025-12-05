@@ -34,6 +34,7 @@ enum DateFilterPreset: String, Codable, CaseIterable, Sendable {
 // MARK: - Dashboard Filter
 
 struct DashboardFilter: Codable, Equatable, Sendable {
+    var householdId: UUID? // Track which household this filter is for
     var datePreset: DateFilterPreset = .thisMonth
     var customStartDate: Date?
     var customEndDate: Date?
@@ -52,6 +53,13 @@ struct DashboardFilter: Codable, Equatable, Sendable {
     /// Default filter state (current month only)
     static var `default`: DashboardFilter {
         DashboardFilter()
+    }
+    
+    /// Default filter state for a specific household
+    static func `default`(for householdId: UUID) -> DashboardFilter {
+        var filter = DashboardFilter()
+        filter.householdId = householdId
+        return filter
     }
     
     /// Whether any non-default filters are active
@@ -168,9 +176,11 @@ struct DashboardFilter: Codable, Equatable, Sendable {
         }
     }
     
-    /// Reset to default state
+    /// Reset to default state (preserves householdId)
     mutating func reset() {
+        let currentHouseholdId = householdId
         self = .default
+        self.householdId = currentHouseholdId
     }
 }
 
@@ -186,11 +196,15 @@ final class DashboardFilterManager {
         }
     }
     
+    /// The household ID this manager is tracking
+    private var currentHouseholdId: UUID?
+    
     init() {
         // Try to load persisted filter, otherwise use default
         if let data = UserDefaults.standard.data(forKey: Self.storageKey),
            let decoded = try? JSONDecoder().decode(DashboardFilter.self, from: data) {
             self.filter = decoded
+            self.currentHouseholdId = decoded.householdId
         } else {
             self.filter = .default
         }
@@ -205,12 +219,51 @@ final class DashboardFilterManager {
     
     /// Reset filter to default and clear persisted state
     func resetToDefault() {
+        let householdId = filter.householdId
         filter = .default
+        filter.householdId = householdId
     }
     
     /// Clear persisted filter (called on force quit detection if needed)
     static func clearPersistedFilter() {
         UserDefaults.standard.removeObject(forKey: storageKey)
+    }
+    
+    /// Update the filter for a new household, resetting if the household changed
+    /// Call this when the household changes or on initial load
+    func setHousehold(_ householdId: UUID?) {
+        // If household changed, reset filter to default for the new household
+        if filter.householdId != householdId {
+            filter = .default
+            filter.householdId = householdId
+            currentHouseholdId = householdId
+        }
+    }
+    
+    /// Validates and cleans up the filter against current valid data
+    /// Removes any selected IDs that no longer exist in the provided arrays
+    func validateFilter(
+        validSectorIds: Set<UUID>,
+        validCategoryIds: Set<UUID>,
+        validMemberIds: Set<UUID>
+    ) {
+        // Remove stale sector IDs
+        let validSelectedSectors = filter.selectedSectorIds.intersection(validSectorIds)
+        if validSelectedSectors != filter.selectedSectorIds {
+            filter.selectedSectorIds = validSelectedSectors
+        }
+        
+        // Remove stale category IDs
+        let validSelectedCategories = filter.selectedCategoryIds.intersection(validCategoryIds)
+        if validSelectedCategories != filter.selectedCategoryIds {
+            filter.selectedCategoryIds = validSelectedCategories
+        }
+        
+        // Remove stale member IDs
+        let validSelectedMembers = filter.selectedMemberIds.intersection(validMemberIds)
+        if validSelectedMembers != filter.selectedMemberIds {
+            filter.selectedMemberIds = validSelectedMembers
+        }
     }
 }
 

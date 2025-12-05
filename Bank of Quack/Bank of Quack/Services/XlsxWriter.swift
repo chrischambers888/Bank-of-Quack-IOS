@@ -1,6 +1,12 @@
 import Foundation
 import ZIPFoundation
 
+/// Progress callback for export operations
+/// - Parameters:
+///   - phase: Description of current phase (e.g., "Building strings", "Writing sheet 1")
+///   - progress: Progress value from 0.0 to 1.0
+typealias ExportProgressCallback = @Sendable (_ phase: String, _ progress: Double) -> Void
+
 /// A helper class to create XLSX files from tabular data
 /// XLSX files are essentially ZIP archives containing XML files
 final class XlsxWriter {
@@ -27,8 +33,12 @@ final class XlsxWriter {
     }
     
     /// Writes the workbook to a file and returns the URL
-    func write(to filename: String) throws -> URL {
+    /// - Parameters:
+    ///   - filename: The output filename
+    ///   - progressCallback: Optional callback for progress updates
+    func write(to filename: String, progressCallback: ExportProgressCallback? = nil) throws -> URL {
         // Build shared strings table first
+        progressCallback?("Preparing data...", 0.05)
         buildSharedStrings()
         
         let tempDir = FileManager.default.temporaryDirectory
@@ -40,19 +50,32 @@ final class XlsxWriter {
         // Create archive directly by adding data entries
         let archive = try Archive(url: xlsxURL, accessMode: .create)
         
+        progressCallback?("Creating workbook structure...", 0.1)
+        
         // Add all required files directly to the archive
         try addFileToArchive(archive, path: "[Content_Types].xml", content: generateContentTypes())
         try addFileToArchive(archive, path: "_rels/.rels", content: generateRootRels())
         try addFileToArchive(archive, path: "xl/_rels/workbook.xml.rels", content: generateWorkbookRels())
         try addFileToArchive(archive, path: "xl/workbook.xml", content: generateWorkbook())
         try addFileToArchive(archive, path: "xl/styles.xml", content: generateStyles())
+        
+        progressCallback?("Writing shared strings...", 0.15)
         try addFileToArchive(archive, path: "xl/sharedStrings.xml", content: generateSharedStrings())
         
-        // Add each worksheet
+        // Add each worksheet - this is typically the bulk of the work
+        let sheetProgressStart = 0.2
+        let sheetProgressEnd = 0.95
+        let sheetProgressRange = sheetProgressEnd - sheetProgressStart
+        
         for (index, sheet) in sheets.enumerated() {
+            let sheetProgress = sheetProgressStart + (Double(index) / Double(sheets.count)) * sheetProgressRange
+            progressCallback?("Writing \(sheet.name)...", sheetProgress)
+            
             let content = generateWorksheet(sheet, index: index + 1)
             try addFileToArchive(archive, path: "xl/worksheets/sheet\(index + 1).xml", content: content)
         }
+        
+        progressCallback?("Finalizing export...", 0.98)
         
         return xlsxURL
     }
@@ -106,10 +129,10 @@ final class XlsxWriter {
     }
     
     private func generateContentTypes() -> String {
-        var sheetOverrides = ""
-        for (index, _) in sheets.enumerated() {
-            sheetOverrides += "<Override PartName=\"/xl/worksheets/sheet\(index + 1).xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
-        }
+        // Use array + joined() for efficient string building
+        let sheetOverrides = sheets.enumerated().map { index, _ in
+            "<Override PartName=\"/xl/worksheets/sheet\(index + 1).xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+        }.joined()
         
         return """
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -125,29 +148,28 @@ final class XlsxWriter {
     }
     
     private func generateWorkbookRels() -> String {
-        var relationships = ""
-        for (index, _) in sheets.enumerated() {
-            relationships += "<Relationship Id=\"rId\(index + 1)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet\(index + 1).xml\"/>"
+        // Build relationships array efficiently
+        var relationshipParts: [String] = sheets.enumerated().map { index, _ in
+            "<Relationship Id=\"rId\(index + 1)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet\(index + 1).xml\"/>"
         }
         
         let stylesId = sheets.count + 1
         let stringsId = sheets.count + 2
         
-        relationships += "<Relationship Id=\"rId\(stylesId)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>"
-        relationships += "<Relationship Id=\"rId\(stringsId)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/>"
+        relationshipParts.append("<Relationship Id=\"rId\(stylesId)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>")
+        relationshipParts.append("<Relationship Id=\"rId\(stringsId)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/>")
         
         return """
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\(relationships)</Relationships>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\(relationshipParts.joined())</Relationships>
         """
     }
     
     private func generateWorkbook() -> String {
-        var sheetElements = ""
-        for (index, sheet) in sheets.enumerated() {
+        let sheetElements = sheets.enumerated().map { index, sheet in
             let escapedName = escapeXML(sheet.name)
-            sheetElements += "<sheet name=\"\(escapedName)\" sheetId=\"\(index + 1)\" r:id=\"rId\(index + 1)\"/>"
-        }
+            return "<sheet name=\"\(escapedName)\" sheetId=\"\(index + 1)\" r:id=\"rId\(index + 1)\"/>"
+        }.joined()
         
         return """
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -163,11 +185,11 @@ final class XlsxWriter {
     }
     
     private func generateSharedStrings() -> String {
-        var stringElements = ""
-        for string in sharedStrings {
+        // Use map + joined for O(n) instead of O(n²) string building
+        let stringElements = sharedStrings.map { string in
             let escapedString = escapeXML(string)
-            stringElements += "<si><t>\(escapedString)</t></si>"
-        }
+            return "<si><t>\(escapedString)</t></si>"
+        }.joined()
         
         return """
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -176,28 +198,35 @@ final class XlsxWriter {
     }
     
     private func generateWorksheet(_ sheet: Sheet, index: Int) -> String {
-        var rowElements = ""
+        // Pre-compute column letters to avoid repeated calculations
+        let maxCols = max(sheet.headers.count, sheet.rows.map { $0.count }.max() ?? 0)
+        let columnLetters = (0..<maxCols).map { columnLetter(for: $0) }
         
-        // Header row (row 1)
-        var headerCells = ""
-        for (colIndex, header) in sheet.headers.enumerated() {
-            let colLetter = columnLetter(for: colIndex)
+        // Build rows array efficiently using map + joined
+        var rowParts: [String] = []
+        rowParts.reserveCapacity(sheet.rows.count + 1)
+        
+        // Header row (row 1) - use map for cells
+        let headerCells = sheet.headers.enumerated().map { colIndex, header in
+            let colLetter = colIndex < columnLetters.count ? columnLetters[colIndex] : columnLetter(for: colIndex)
             let stringIndex = getStringIndex(header)
-            headerCells += "<c r=\"\(colLetter)1\" t=\"s\" s=\"1\"><v>\(stringIndex)</v></c>"
-        }
-        rowElements += "<row r=\"1\">\(headerCells)</row>"
+            return "<c r=\"\(colLetter)1\" t=\"s\" s=\"1\"><v>\(stringIndex)</v></c>"
+        }.joined()
+        rowParts.append("<row r=\"1\">\(headerCells)</row>")
         
-        // Data rows
-        for (rowIndex, row) in sheet.rows.enumerated() {
+        // Data rows - use map for both rows and cells
+        let dataRows = sheet.rows.enumerated().map { rowIndex, row -> String in
             let excelRow = rowIndex + 2
-            var cells = ""
-            for (colIndex, cellValue) in row.enumerated() {
-                let colLetter = columnLetter(for: colIndex)
+            let cells = row.enumerated().map { colIndex, cellValue -> String in
+                let colLetter = colIndex < columnLetters.count ? columnLetters[colIndex] : columnLetter(for: colIndex)
                 let stringIndex = getStringIndex(cellValue)
-                cells += "<c r=\"\(colLetter)\(excelRow)\" t=\"s\"><v>\(stringIndex)</v></c>"
-            }
-            rowElements += "<row r=\"\(excelRow)\">\(cells)</row>"
+                return "<c r=\"\(colLetter)\(excelRow)\" t=\"s\"><v>\(stringIndex)</v></c>"
+            }.joined()
+            return "<row r=\"\(excelRow)\">\(cells)</row>"
         }
+        rowParts.append(contentsOf: dataRows)
+        
+        let rowElements = rowParts.joined()
         
         // Calculate the dimension
         let lastCol = columnLetter(for: max(sheet.headers.count - 1, 0))

@@ -27,6 +27,8 @@ final class ImportExportService: Sendable {
     
     /// Exports all household data to a single XLSX file with multiple sheets
     /// Returns the URL to the export file
+    /// - Parameters:
+    ///   - progressCallback: Optional callback for progress updates (phase description, 0.0-1.0 progress)
     func exportHouseholdData(
         transactions: [TransactionView],
         transactionSplits: [TransactionSplit],
@@ -34,8 +36,10 @@ final class ImportExportService: Sendable {
         sectors: [Sector],
         sectorCategories: [(sectorName: String, categoryName: String)],
         members: [HouseholdMember],
-        householdName: String
+        householdName: String,
+        progressCallback: ExportProgressCallback? = nil
     ) throws -> URL {
+        progressCallback?("Preparing export data...", 0.0)
         let xlsxWriter = XlsxWriter()
         
         // Build lookup maps
@@ -57,10 +61,18 @@ final class ImportExportService: Sendable {
         }
         
         // Sheet 1: Transactions
+        progressCallback?("Processing transactions...", 0.05)
         let transactionHeaders = ExportTransaction.headers
         var transactionRows: [[String]] = []
+        transactionRows.reserveCapacity(transactions.count)
         
+        let transactionCount = transactions.count
         for (index, transaction) in transactions.enumerated() {
+            // Report progress every 50 transactions to avoid excessive callbacks
+            if index % 50 == 0 && transactionCount > 0 {
+                let progress = 0.05 + (Double(index) / Double(transactionCount)) * 0.15
+                progressCallback?("Processing transaction \(index + 1) of \(transactionCount)...", progress)
+            }
             let rowNumber = index + 1
             
             var reimbursesRow = ""
@@ -131,8 +143,10 @@ final class ImportExportService: Sendable {
         xlsxWriter.addSheet(name: "Transactions", headers: transactionHeaders, rows: transactionRows)
         
         // Sheet 2: Splits
+        progressCallback?("Processing transaction splits...", 0.20)
         let splitHeaders = ExportTransactionSplit.headers
         var splitRows: [[String]] = []
+        splitRows.reserveCapacity(transactionSplits.count)
         
         for split in transactionSplits {
             guard let rowNumber = transactionRowMap[split.transactionId],
@@ -155,6 +169,7 @@ final class ImportExportService: Sendable {
         xlsxWriter.addSheet(name: "Splits", headers: splitHeaders, rows: splitRows)
         
         // Sheet 3: Categories
+        progressCallback?("Processing categories...", 0.25)
         let categoryHeaders = ExportCategory.headers
         var categoryRows: [[String]] = []
         
@@ -215,7 +230,16 @@ final class ImportExportService: Sendable {
         let dateStr = Self.dateFormatter.string(from: Date())
         let filename = "\(sanitizedName)_export_\(dateStr).xlsx"
         
-        return try xlsxWriter.write(to: filename)
+        // Pass progress callback to writer (starts at ~30% since data prep is done)
+        let writerCallback: ExportProgressCallback? = progressCallback.map { callback -> ExportProgressCallback in
+            { @Sendable phase, progress in
+                // Map writer's 0-1 progress to 0.3-1.0 range (data prep is first 30%)
+                let adjustedProgress = 0.3 + (progress * 0.7)
+                callback(phase, adjustedProgress)
+            }
+        }
+        
+        return try xlsxWriter.write(to: filename, progressCallback: writerCallback)
     }
     
     /// Determines the "Paid By" export value by examining actual splits

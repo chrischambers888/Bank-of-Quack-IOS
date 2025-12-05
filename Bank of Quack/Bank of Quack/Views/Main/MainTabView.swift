@@ -6,6 +6,7 @@ struct MainTabView: View {
     @State private var selectedTab = 0
     @State private var transactionViewModel = TransactionViewModel()
     @State private var privacyManager = PrivacyManager.shared
+    @State private var dashboardRefreshTrigger = UUID()
     
     /// Icon for Home tab - shows lock when privacy is active
     private var homeIcon: String {
@@ -21,6 +22,7 @@ struct MainTabView: View {
         TabView(selection: $selectedTab) {
             DashboardView()
                 .environment(transactionViewModel)
+                .id(dashboardRefreshTrigger) // Force view recreation and data refresh when switching back to this tab
                 .tabItem {
                     Label("Home", systemImage: homeIcon)
                 }
@@ -52,6 +54,13 @@ struct MainTabView: View {
         }
         .onChange(of: themeProvider.currentPalette.id) { _, _ in
             updateTabBarAppearance()
+        }
+        .onChange(of: selectedTab) { oldTab, newTab in
+            // Refresh dashboard data when switching TO the dashboard tab
+            // This ensures categories/sectors are up-to-date after making changes in Settings
+            if newTab == 0 && oldTab != 0 {
+                dashboardRefreshTrigger = UUID()
+            }
         }
         .task {
             if let householdId = authViewModel.currentHousehold?.id {
