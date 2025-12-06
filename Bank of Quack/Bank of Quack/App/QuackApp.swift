@@ -34,26 +34,34 @@ struct QuackApp: App {
 
 struct ContentView: View {
     @Environment(AuthViewModel.self) private var authViewModel
+    @ObservedObject private var themeProvider = ThemeProvider.shared
     
     var body: some View {
-        Group {
-            if authViewModel.isLoading {
-                LoadingView()
-            } else if authViewModel.isAuthenticated {
-                if authViewModel.currentHousehold != nil {
-                    MainTabView()
+        ZStack {
+            Group {
+                if authViewModel.isLoading {
+                    LoadingView()
+                } else if authViewModel.isAuthenticated {
+                    if authViewModel.currentHousehold != nil {
+                        MainTabView()
+                    } else {
+                        HouseholdSetupView()
+                    }
+                } else if let email = authViewModel.awaitingConfirmationEmail {
+                    AwaitingConfirmationView(email: email)
                 } else {
-                    HouseholdSetupView()
+                    LoginView()
                 }
-            } else if let email = authViewModel.awaitingConfirmationEmail {
-                AwaitingConfirmationView(email: email)
-            } else {
-                LoginView()
+            }
+            .animation(.easeInOut, value: authViewModel.isAuthenticated)
+            .animation(.easeInOut, value: authViewModel.currentHousehold != nil)
+            .animation(.easeInOut, value: authViewModel.awaitingConfirmationEmail)
+            
+            // Special effects overlay based on theme
+            if themeProvider.currentPalette.specialEffect == .snowfall {
+                SnowfallOverlay()
             }
         }
-        .animation(.easeInOut, value: authViewModel.isAuthenticated)
-        .animation(.easeInOut, value: authViewModel.currentHousehold != nil)
-        .animation(.easeInOut, value: authViewModel.awaitingConfirmationEmail)
     }
 }
 

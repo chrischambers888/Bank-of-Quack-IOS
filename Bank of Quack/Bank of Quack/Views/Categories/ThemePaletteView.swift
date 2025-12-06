@@ -1,6 +1,12 @@
 import SwiftUI
 import Combine
 
+// MARK: - Special Effects for Themes
+
+enum SpecialEffect: String, Codable {
+    case snowfall
+}
+
 // MARK: - Color Palette Model (Expanded)
 
 struct ColorPalette: Identifiable, Codable {
@@ -22,6 +28,9 @@ struct ColorPalette: Identifiable, Codable {
     // Theme-aware semantic colors (optional - falls back to defaults)
     let successColor: String?
     let errorColor: String?
+    
+    // Special visual effects for themed experiences
+    let specialEffect: SpecialEffect?
     
     var previewGradient: [Color] {
         [
@@ -68,7 +77,8 @@ struct ColorPalette: Identifiable, Codable {
         backgroundSecondary: String,
         isLightMode: Bool = false,
         successColor: String? = nil,
-        errorColor: String? = nil
+        errorColor: String? = nil,
+        specialEffect: SpecialEffect? = nil
     ) {
         self.id = id
         self.name = name
@@ -84,6 +94,7 @@ struct ColorPalette: Identifiable, Codable {
         self.isLightMode = isLightMode
         self.successColor = successColor
         self.errorColor = errorColor
+        self.specialEffect = specialEffect
     }
 }
 
@@ -286,7 +297,10 @@ class AppliedThemeManager: ObservableObject {
                 secondaryTextColor: basePalette.secondaryTextColor,
                 backgroundPrimary: basePalette.backgroundPrimary,
                 backgroundSecondary: basePalette.backgroundSecondary,
-                isLightMode: basePalette.isLightMode
+                isLightMode: basePalette.isLightMode,
+                successColor: basePalette.successColor,
+                errorColor: basePalette.errorColor,
+                specialEffect: basePalette.specialEffect
             )
         }
         
@@ -625,12 +639,37 @@ enum QuackPalettes {
         errorColor: "#C62828"     // Deep red for errors
     )
     
+    // MARK: - Seasonal Themes
+    
+    /// Festive Christmas theme with falling snowflakes
+    static let christmasCheer = ColorPalette(
+        id: "christmas_cheer",
+        name: "Christmas Cheer",
+        description: "Festive red with falling snowflakes",
+        colors: [
+            "#004733", "#2b6a4d", "#568d66", "#a5c1ae", "#f3f4f6",
+            "#dcdfe5", "#df8080", "#cb0b0a", "#ad080f", "#8e0413"
+        ],
+        gradientStart: "#cb0b0a",
+        gradientEnd: "#8e0413",
+        accentColor: "#568d66",
+        primaryTextColor: "#f3f4f6",
+        secondaryTextColor: "#dcdfe5",
+        backgroundPrimary: "#8e0413",
+        backgroundSecondary: "#ad080f",
+        isLightMode: false,
+        successColor: "#568d66",  // Forest green for success
+        errorColor: "#df8080",    // Soft pink-red for errors
+        specialEffect: .snowfall
+    )
+    
     // MARK: - All Palettes
     
     static let all: [ColorPalette] = [
         quackClassic, quackAttack, mallardMidnight, pondRipple,
         waddleSunset, billBright, plumageParadise, rubberDucky,
-        ducklingRainbow, wingTips, tailFeathers, forestCanopy, peachyKeen
+        ducklingRainbow, wingTips, tailFeathers, forestCanopy, peachyKeen,
+        christmasCheer
     ]
     
     static let darkThemes: [ColorPalette] = all
