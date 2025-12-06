@@ -27,6 +27,7 @@ struct CategoryExpense: Identifiable {
     let id: UUID
     let name: String
     let icon: String?
+    let imageUrl: String? // Photo URL for category image
     let color: Color
     let amount: Decimal
     let percentage: Double // Percentage of sector total
@@ -600,13 +601,34 @@ struct CategoryCircleButton: View {
                         .stroke(category.color, lineWidth: 2.5)
                         .frame(width: 52, height: 52)
                     
-                    // Inner colored circle
-                    Circle()
-                        .fill(category.color.opacity(0.2))
-                        .frame(width: 44, height: 44)
+                    // Inner colored circle (hidden when showing photo)
+                    if !(category.imageUrl?.isPhotoUrl ?? false) {
+                        Circle()
+                            .fill(category.color.opacity(0.2))
+                            .frame(width: 44, height: 44)
+                    }
                     
-                    // Icon or emoji
-                    if let icon = category.icon, !icon.isEmpty {
+                    // Photo, icon, or emoji
+                    if let imageUrl = category.imageUrl, imageUrl.isPhotoUrl {
+                        // Photo icon
+                        AsyncImage(url: URL(string: imageUrl)) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 44, height: 44)
+                                    .clipShape(Circle())
+                            case .failure:
+                                defaultIcon
+                            case .empty:
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                            @unknown default:
+                                EmptyView()
+                            }
+                        }
+                    } else if let icon = category.icon, !icon.isEmpty {
                         if isSFSymbol(icon) {
                             Image(systemName: icon)
                                 .font(.system(size: 18))
@@ -616,9 +638,7 @@ struct CategoryCircleButton: View {
                                 .font(.system(size: 20))
                         }
                     } else {
-                        Image(systemName: "tag.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(category.color)
+                        defaultIcon
                     }
                 }
                 
@@ -646,6 +666,12 @@ struct CategoryCircleButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(CategoryCircleButtonStyle())
+    }
+    
+    private var defaultIcon: some View {
+        Image(systemName: "tag.fill")
+            .font(.system(size: 18))
+            .foregroundStyle(category.color)
     }
 }
 
@@ -1015,11 +1041,33 @@ struct CategoryMemberPopup: View {
                         // Category header
                         VStack(spacing: Theme.Spacing.sm) {
                             ZStack {
-                                Circle()
-                                    .fill(category.color.opacity(0.2))
-                                    .frame(width: 60, height: 60)
+                                // Background circle (hidden when showing photo)
+                                if !(category.imageUrl?.isPhotoUrl ?? false) {
+                                    Circle()
+                                        .fill(category.color.opacity(0.2))
+                                        .frame(width: 60, height: 60)
+                                }
                                 
-                                if let icon = category.icon, !icon.isEmpty {
+                                if let imageUrl = category.imageUrl, imageUrl.isPhotoUrl {
+                                    // Photo icon
+                                    AsyncImage(url: URL(string: imageUrl)) { phase in
+                                        switch phase {
+                                        case .success(let image):
+                                            image
+                                                .resizable()
+                                                .scaledToFill()
+                                                .frame(width: 60, height: 60)
+                                                .clipShape(Circle())
+                                        case .failure:
+                                            defaultHeaderIcon
+                                        case .empty:
+                                            ProgressView()
+                                                .scaleEffect(0.7)
+                                        @unknown default:
+                                            EmptyView()
+                                        }
+                                    }
+                                } else if let icon = category.icon, !icon.isEmpty {
                                     if isSFSymbol(icon) {
                                         Image(systemName: icon)
                                             .font(.system(size: 28))
@@ -1029,9 +1077,7 @@ struct CategoryMemberPopup: View {
                                             .font(.system(size: 32))
                                     }
                                 } else {
-                                    Image(systemName: "tag.fill")
-                                        .font(.system(size: 28))
-                                        .foregroundStyle(category.color)
+                                    defaultHeaderIcon
                                 }
                             }
                             
@@ -1152,6 +1198,12 @@ struct CategoryMemberPopup: View {
                 TransactionDetailView(transaction: transaction)
             }
         }
+    }
+    
+    private var defaultHeaderIcon: some View {
+        Image(systemName: "tag.fill")
+            .font(.system(size: 28))
+            .foregroundStyle(category.color)
     }
 }
 
@@ -1397,6 +1449,7 @@ struct ExpenseDonutEmptyState: View {
                                 id: UUID(),
                                 name: "Rent",
                                 icon: "house.fill",
+                                imageUrl: nil,
                                 color: .blue,
                                 amount: 1200,
                                 percentage: 80,
@@ -1409,6 +1462,7 @@ struct ExpenseDonutEmptyState: View {
                                 id: UUID(),
                                 name: "Utilities",
                                 icon: "bolt.fill",
+                                imageUrl: nil,
                                 color: .cyan,
                                 amount: 300,
                                 percentage: 20,
@@ -1434,6 +1488,7 @@ struct ExpenseDonutEmptyState: View {
                                 id: UUID(),
                                 name: "Groceries",
                                 icon: "🛒",
+                                imageUrl: nil,
                                 color: .green,
                                 amount: 500,
                                 percentage: 62.5,
@@ -1446,6 +1501,7 @@ struct ExpenseDonutEmptyState: View {
                                 id: UUID(),
                                 name: "Dining Out",
                                 icon: "🍔",
+                                imageUrl: nil,
                                 color: .orange,
                                 amount: 300,
                                 percentage: 37.5,
@@ -1471,6 +1527,7 @@ struct ExpenseDonutEmptyState: View {
                                 id: UUID(),
                                 name: "Gas",
                                 icon: "fuelpump.fill",
+                                imageUrl: nil,
                                 color: .orange,
                                 amount: 300,
                                 percentage: 60,
@@ -1483,6 +1540,7 @@ struct ExpenseDonutEmptyState: View {
                                 id: UUID(),
                                 name: "Parking",
                                 icon: "parkingsign",
+                                imageUrl: nil,
                                 color: .red,
                                 amount: 200,
                                 percentage: 40,
@@ -1508,6 +1566,7 @@ struct ExpenseDonutEmptyState: View {
                                 id: UUID(),
                                 name: "Streaming",
                                 icon: "play.tv",
+                                imageUrl: nil,
                                 color: .purple,
                                 amount: 33,
                                 percentage: 6,
@@ -1520,6 +1579,7 @@ struct ExpenseDonutEmptyState: View {
                                 id: UUID(),
                                 name: "Games",
                                 icon: "gamecontroller.fill",
+                                imageUrl: nil,
                                 color: .pink,
                                 amount: 500,
                                 percentage: 94,
