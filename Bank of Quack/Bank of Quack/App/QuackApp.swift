@@ -35,6 +35,7 @@ struct QuackApp: App {
 struct ContentView: View {
     @Environment(AuthViewModel.self) private var authViewModel
     @ObservedObject private var themeProvider = ThemeProvider.shared
+    @ObservedObject private var themeManager = AppliedThemeManager.shared
     
     var body: some View {
         ZStack {
@@ -57,8 +58,8 @@ struct ContentView: View {
             .animation(.easeInOut, value: authViewModel.currentHousehold != nil)
             .animation(.easeInOut, value: authViewModel.awaitingConfirmationEmail)
             
-            // Special effects overlay based on theme
-            if themeProvider.currentPalette.specialEffect == .snowfall {
+            // Special effects overlay based on theme (only if enabled)
+            if themeProvider.currentPalette.specialEffect == .snowfall && themeManager.specialEffectEnabled {
                 SnowfallOverlay()
             }
         }

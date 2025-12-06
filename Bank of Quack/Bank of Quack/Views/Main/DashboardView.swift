@@ -805,8 +805,8 @@ struct DashboardView: View {
                     VStack(spacing: Theme.Spacing.md) {
                         // Header with Mascot Background
                         ZStack(alignment: .bottom) {
-                            // Mascot background image
-                            Image("QuackMascot")
+                            // Mascot background image (swaps for Christmas theme)
+                            Image(themeProvider.currentPalette.specialEffect == .snowfall ? "QuackMascotChristmas" : "QuackMascot")
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
                                 .frame(height: 180)

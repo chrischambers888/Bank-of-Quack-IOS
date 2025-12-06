@@ -107,9 +107,11 @@ class AppliedThemeManager: ObservableObject {
     @Published var appliedThemeName: String?
     @Published var currentHouseholdId: UUID?
     @Published var customAccentColor: String?
+    @Published var specialEffectEnabled: Bool = true
     
     private let colorOrderKey = "themeColorOrder"
     private let customAccentKey = "customAccentColor"
+    private let specialEffectKey = "specialEffectEnabled"
     
     init() {
         // Will be set when household is selected
@@ -139,6 +141,7 @@ class AppliedThemeManager: ObservableObject {
         // Load custom accent color for this theme/household
         if let themeId = appliedThemeId {
             customAccentColor = getCustomAccentColor(for: themeId)
+            specialEffectEnabled = isSpecialEffectEnabled(for: themeId)
         }
         
         objectWillChange.send()
@@ -227,6 +230,41 @@ class AppliedThemeManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: key)
         customAccentColor = nil
         objectWillChange.send()
+    }
+    
+    // MARK: - Special Effect Toggle
+    
+    private func specialEffectKey(for themeId: String, householdId: UUID) -> String {
+        "\(specialEffectKey)_\(themeId)_\(householdId.uuidString)"
+    }
+    
+    /// Check if special effect is enabled for a theme (defaults to true)
+    func isSpecialEffectEnabled(for themeId: String) -> Bool {
+        guard let householdId = currentHouseholdId else { return true }
+        let key = specialEffectKey(for: themeId, householdId: householdId)
+        // Default to true if not set
+        if UserDefaults.standard.object(forKey: key) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+    
+    /// Set special effect enabled state for a theme
+    func setSpecialEffectEnabled(_ enabled: Bool, for themeId: String) {
+        guard let householdId = currentHouseholdId else { return }
+        let key = specialEffectKey(for: themeId, householdId: householdId)
+        UserDefaults.standard.set(enabled, forKey: key)
+        specialEffectEnabled = enabled
+        objectWillChange.send()
+    }
+    
+    /// Load special effect setting for current theme
+    func loadSpecialEffectSetting() {
+        guard let themeId = appliedThemeId else {
+            specialEffectEnabled = true
+            return
+        }
+        specialEffectEnabled = isSpecialEffectEnabled(for: themeId)
     }
     
     /// Get available accent colors for a theme (colors that work well as accents)
@@ -775,6 +813,40 @@ struct ThemePaletteView: View {
                                         Image(systemName: "chevron.right")
                                             .font(.caption)
                                             .foregroundStyle(currentTheme.textSecondary.opacity(0.6))
+                                    }
+                                    .foregroundStyle(currentTheme.accent)
+                                    .padding(Theme.Spacing.md)
+                                    .background(currentTheme.textPrimary.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: Theme.CornerRadius.lg)
+                                            .stroke(currentTheme.accent.opacity(0.3), lineWidth: 1)
+                                    )
+                                }
+                                
+                                // Special Effects Toggle (only for themes with effects)
+                                if currentTheme.specialEffect != nil {
+                                    HStack {
+                                        Image(systemName: "snowflake")
+                                            .font(.title2)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Snowfall Effect")
+                                                .fontWeight(.semibold)
+                                            Text(themeManager.specialEffectEnabled ? "Snowflakes are falling" : "Snowflakes disabled")
+                                                .font(.caption)
+                                                .foregroundStyle(currentTheme.textSecondary)
+                                        }
+                                        Spacer()
+                                        Toggle("", isOn: Binding(
+                                            get: { themeManager.specialEffectEnabled },
+                                            set: { newValue in
+                                                if let themeId = themeManager.appliedThemeId {
+                                                    themeManager.setSpecialEffectEnabled(newValue, for: themeId)
+                                                }
+                                            }
+                                        ))
+                                        .labelsHidden()
+                                        .tint(currentTheme.accent)
                                     }
                                     .foregroundStyle(currentTheme.accent)
                                     .padding(Theme.Spacing.md)

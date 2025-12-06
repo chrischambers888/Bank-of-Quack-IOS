@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LoginView: View {
     @Environment(AuthViewModel.self) private var authViewModel
+    @ObservedObject private var themeProvider = ThemeProvider.shared
     
     @State private var email = ""
     @State private var password = ""
@@ -27,7 +28,7 @@ struct LoginView: View {
                         VStack(spacing: Theme.Spacing.xl) {
                             // Hero Image with Cursive Title - extends to top edge
                             ZStack {
-                                Image("QuackMascot")
+                                Image(themeProvider.currentPalette.specialEffect == .snowfall ? "QuackMascotChristmas" : "QuackMascot")
                                     .resizable()
                                     .aspectRatio(contentMode: .fill)
                                     .frame(width: geometry.size.width, height: 380 + geometry.safeAreaInsets.top)
@@ -169,4 +170,3 @@ struct LoginView: View {
     LoginView()
         .environment(AuthViewModel())
 }
-
