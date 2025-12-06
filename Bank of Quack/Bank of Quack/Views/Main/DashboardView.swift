@@ -839,6 +839,7 @@ struct DashboardView: View {
                             MemberBalanceCardWithInfo(
                                 balance: filteredCurrentMemberBalance,
                                 memberCount: membersWithNonZeroBalance,
+                                isLoading: transactionViewModel.isLoading,
                                 onInfoTapped: { showBalanceDetails = true }
                             )
                             .padding(.horizontal, Theme.Spacing.md)
@@ -1080,6 +1081,7 @@ struct DashboardView: View {
 struct MemberBalanceCardWithInfo: View {
     let balance: Decimal
     let memberCount: Int
+    let isLoading: Bool
     let onInfoTapped: () -> Void
     
     private var isZero: Bool {
@@ -1104,9 +1106,18 @@ struct MemberBalanceCardWithInfo: View {
                         .font(.title3)
                         .foregroundStyle(Theme.Colors.accent)
                 }
+                .disabled(isLoading)
             }
             
-            if isZero {
+            if isLoading {
+                HStack(spacing: Theme.Spacing.sm) {
+                    ProgressView()
+                        .tint(Theme.Colors.accent)
+                    Text("Loading balance...")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+            } else if isZero {
                 Text("You're all settled up! 🎉")
                     .font(.title2)
                     .fontWeight(.bold)
