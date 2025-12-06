@@ -24,7 +24,7 @@ struct BalanceCard: View {
                 .foregroundStyle(Theme.Colors.textPrimary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle()
+        .materialCardStyle()
     }
 }
 
@@ -51,7 +51,7 @@ struct NetBalanceCard: View {
                 .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
         }
         .frame(maxWidth: .infinity)
-        .cardStyle()
+        .materialCardStyle()
     }
 }
 
@@ -85,7 +85,7 @@ struct MemberBalanceCard: View {
                 .foregroundStyle(Theme.Colors.textMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle()
+        .materialCardStyle()
     }
 }
 
@@ -114,4 +114,3 @@ struct MemberBalanceCard: View {
     .padding()
     .background(Theme.Colors.backgroundPrimary)
 }
-

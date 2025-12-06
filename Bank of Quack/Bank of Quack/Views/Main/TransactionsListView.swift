@@ -279,8 +279,12 @@ struct TransactionsListView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Theme.Colors.backgroundPrimary
-                    .ignoresSafeArea()
+                LinearGradient(
+                    colors: [Theme.Colors.gradientStart, Theme.Colors.backgroundPrimary],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+                .ignoresSafeArea()
                 
                 VStack(spacing: 0) {
                     // Filter summary header (matches Dashboard filter button style)
@@ -351,7 +355,7 @@ struct TransactionsListView: View {
                                         }
                                         .padding(.horizontal, Theme.Spacing.md)
                                         .padding(.vertical, Theme.Spacing.sm)
-                                        .background(Theme.Colors.backgroundPrimary)
+                                        .background(.ultraThinMaterial)
                                     }
                                 }
                                 

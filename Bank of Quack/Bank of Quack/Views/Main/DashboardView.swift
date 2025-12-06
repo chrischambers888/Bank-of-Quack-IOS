@@ -1125,7 +1125,7 @@ struct MemberBalanceCardWithInfo: View {
                 .foregroundStyle(Theme.Colors.textMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle()
+        .materialCardStyle()
     }
 }
 
@@ -1483,7 +1483,7 @@ struct BalanceDetailsSheet: View {
                                         }
                                     }
                                 }
-                                .cardStyle()
+                                .materialCardStyle()
                             }
                         }
                         
@@ -1622,7 +1622,7 @@ struct BalanceDetailsSheet: View {
                                         .buttonStyle(.plain)
                                     }
                                 }
-                                .cardStyle()
+                                .materialCardStyle()
                 }
             }
         }
@@ -1683,7 +1683,7 @@ struct BalanceDetailsSheet: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .cardStyle()
+                .materialCardStyle()
             }
         }
     }
@@ -3017,7 +3017,7 @@ struct TotalExpensesDetailSheet: View {
                             }
                             .frame(height: 180)
                             .frame(maxWidth: .infinity)
-                            .cardStyle()
+                            .materialCardStyle()
                             .padding(.horizontal, Theme.Spacing.md)
                         } else if let data = chartData {
                             if data.totalLine.count >= 2 {
@@ -3036,7 +3036,7 @@ struct TotalExpensesDetailSheet: View {
                                         .foregroundStyle(Theme.Colors.expense)
                                 }
                                 .frame(maxWidth: .infinity)
-                                .cardStyle()
+                                .materialCardStyle()
                                 .padding(.horizontal, Theme.Spacing.md)
                             }
                         }
@@ -3551,7 +3551,7 @@ struct MultiLineExpenseChart: View {
             }
             .padding(.top, Theme.Spacing.xs)
         }
-        .cardStyle()
+        .materialCardStyle()
         .sheet(isPresented: $showPeriodTransactions) {
             if let point = selectedPoint {
                 PeriodTransactionsSheet(
@@ -3980,7 +3980,7 @@ struct TotalIncomeDetailSheet: View {
                             }
                             .frame(height: 180)
                             .frame(maxWidth: .infinity)
-                            .cardStyle()
+                            .materialCardStyle()
                             .padding(.horizontal, Theme.Spacing.md)
                         } else if let data = chartData {
                             if data.totalLine.count >= 2 {
@@ -3999,7 +3999,7 @@ struct TotalIncomeDetailSheet: View {
                                         .foregroundStyle(Theme.Colors.income)
                                 }
                                 .frame(maxWidth: .infinity)
-                                .cardStyle()
+                                .materialCardStyle()
                                 .padding(.horizontal, Theme.Spacing.md)
                             }
                         }
@@ -4488,7 +4488,7 @@ struct MultiLineIncomeChart: View {
             }
             .padding(.top, Theme.Spacing.xs)
         }
-        .cardStyle()
+        .materialCardStyle()
         .sheet(isPresented: $showPeriodTransactions) {
             if let point = selectedPoint {
                 PeriodTransactionsSheet(
@@ -5024,7 +5024,7 @@ struct NetBalanceDetailSheet: View {
                             }
                             .frame(height: 180)
                             .frame(maxWidth: .infinity)
-                            .cardStyle()
+                            .materialCardStyle()
                             .padding(.horizontal, Theme.Spacing.md)
                         } else if let data = chartData {
                             if data.totalLine.count >= 2 {
@@ -5043,7 +5043,7 @@ struct NetBalanceDetailSheet: View {
                                         .foregroundStyle(data.totalLine[0].dailyNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
                                 }
                                 .frame(maxWidth: .infinity)
-                                .cardStyle()
+                                .materialCardStyle()
                                 .padding(.horizontal, Theme.Spacing.md)
                             }
                         }
@@ -5496,7 +5496,7 @@ struct MultiLineNetBalanceChart: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .cardStyle()
+        .materialCardStyle()
     }
     
     private func formatAxisLabel(_ value: Double) -> String {

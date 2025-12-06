@@ -208,6 +208,15 @@ struct SolidCardStyle: ViewModifier {
     }
 }
 
+struct MaterialCardStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(Theme.Spacing.md)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
+    }
+}
+
 struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     var isLoading: Bool = false
@@ -266,6 +275,10 @@ extension View {
         modifier(SolidCardStyle())
     }
     
+    func materialCardStyle() -> some View {
+        modifier(MaterialCardStyle())
+    }
+    
     func inputFieldStyle() -> some View {
         modifier(InputFieldStyle())
     }
@@ -275,6 +288,18 @@ extension View {
         self.background(
             LinearGradient(
                 colors: [Theme.Colors.gradientStart, Theme.Colors.gradientEnd],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .ignoresSafeArea()
+        )
+    }
+    
+    /// Apply a subtle gradient background (for non-home tabs)
+    func subtleThemedBackground() -> some View {
+        self.background(
+            LinearGradient(
+                colors: [Theme.Colors.gradientStart, Theme.Colors.backgroundPrimary],
                 startPoint: .top,
                 endPoint: .center
             )

@@ -151,16 +151,12 @@ struct AddTransactionView: View {
     
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.Colors.backgroundPrimary
-                    .ignoresSafeArea()
-                
-                ScrollView {
-                    VStack(spacing: Theme.Spacing.lg) {
-                        // Transaction Type Selector + Template Button
+            ScrollView {
+                VStack(spacing: Theme.Spacing.lg) {
+                    // Transaction Type Selector + Template Button
+                    HStack(spacing: Theme.Spacing.sm) {
                         HStack(spacing: Theme.Spacing.sm) {
-                            HStack(spacing: Theme.Spacing.sm) {
-                                ForEach(availableTransactionTypes, id: \.self) { type in
+                            ForEach(availableTransactionTypes, id: \.self) { type in
                                     TransactionTypeButton(
                                         type: type,
                                         isSelected: transactionType == type
@@ -427,7 +423,7 @@ struct AddTransactionView: View {
                     }
                 }
                 .scrollDismissesKeyboard(.immediately)
-            }
+            .subtleThemedBackground()
             .navigationTitle("Add Transaction")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
@@ -652,7 +648,7 @@ struct AddTransactionView: View {
         }
         .padding(Theme.Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Colors.backgroundCard)
+        .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
     }
     
@@ -799,7 +795,7 @@ struct AddTransactionView: View {
         }
         .padding(Theme.Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.Colors.backgroundCard)
+        .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
     }
     
@@ -2321,7 +2317,7 @@ struct CustomSplitEditor: View {
             }
         }
         .padding(Theme.Spacing.md)
-        .background(Theme.Colors.backgroundCard)
+        .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
     }
     

@@ -221,7 +221,7 @@ struct ExpenseDonutChart: View {
                 }
             )
         }
-        .cardStyle()
+        .materialCardStyle()
         .task {
             // Small delay to ensure view is laid out before animating
             try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
@@ -1369,7 +1369,7 @@ struct ExpenseDonutEmptyState: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, Theme.Spacing.lg)
         }
-        .cardStyle()
+        .materialCardStyle()
     }
 }
 

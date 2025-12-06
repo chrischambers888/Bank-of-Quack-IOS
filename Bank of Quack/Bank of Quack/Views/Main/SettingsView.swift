@@ -40,14 +40,10 @@ struct SettingsView: View {
     
     var body: some View {
         NavigationStack {
-            ZStack {
-                Theme.Colors.backgroundPrimary
-                    .ignoresSafeArea()
-                
-                ScrollView {
-                    settingsContent
-                }
+            ScrollView {
+                settingsContent
             }
+            .subtleThemedBackground()
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(Theme.Colors.backgroundPrimary, for: .navigationBar)
@@ -288,7 +284,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .background(Theme.Colors.backgroundCard)
+            .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -357,7 +353,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .background(Theme.Colors.backgroundCard)
+            .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -417,7 +413,7 @@ struct SettingsView: View {
                     SettingsRow(icon: "paintpalette.fill", title: "Color Themes", subtitle: AppliedThemeManager.shared.appliedThemeName ?? "No theme applied", showChevron: true)
                 }
             }
-            .background(Theme.Colors.backgroundCard)
+            .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -657,7 +653,7 @@ struct SettingsView: View {
                     SettingsRow(icon: "rectangle.portrait.and.arrow.right", title: "Sign Out", iconColor: Theme.Colors.error)
                 }
             }
-            .background(Theme.Colors.backgroundCard)
+            .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -1467,7 +1463,7 @@ struct DataSettingsSection: View {
                     )
                 }
             }
-            .background(Theme.Colors.backgroundCard)
+            .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -2004,7 +2000,7 @@ struct PrivacySettingsSection: View {
                     )
                 )
             }
-            .background(Theme.Colors.backgroundCard)
+            .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
             
