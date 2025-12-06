@@ -616,12 +616,12 @@ enum QuackPalettes {
         gradientStart: "#f4978e",
         gradientEnd: "#ffdab9",
         accentColor: "#f08080",
-        primaryTextColor: "#5D4037",
-        secondaryTextColor: "#8D6E63",
+        primaryTextColor: "#4E342E",  // Darker brown for better contrast on light backgrounds
+        secondaryTextColor: "#6D4C41", // Darker secondary for readability
         backgroundPrimary: "#ffdab9",
         backgroundSecondary: "#fbc4ab",
         isLightMode: true,
-        successColor: "#66BB6A",  // Fresh green for contrast
+        successColor: "#2E7D32",  // Darker green for contrast on light bg
         errorColor: "#C62828"     // Deep red for errors
     )
     

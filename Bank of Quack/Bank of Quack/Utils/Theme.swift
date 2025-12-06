@@ -41,15 +41,30 @@ class ThemeProvider: ObservableObject {
     var success: Color { currentPalette.success }
     var error: Color { currentPalette.error }
     
-    // Derived colors
-    var textTertiary: Color { textSecondary.opacity(0.75) }
-    var textMuted: Color { textSecondary.opacity(0.5) }
+    // Derived colors - adjusted for light/dark mode contrast
+    var textTertiary: Color { 
+        // Light mode needs stronger text, dark mode can use opacity
+        isLightMode ? textSecondary : textSecondary.opacity(0.75)
+    }
+    var textMuted: Color { 
+        // Light mode uses darker muted text for readability
+        isLightMode ? textSecondary.opacity(0.8) : textSecondary.opacity(0.5)
+    }
     var textInverse: Color { isLightMode ? .white : Color(hex: "212121") }
-    var backgroundCard: Color { textPrimary.opacity(0.1) }
+    var backgroundCard: Color { 
+        // Light mode uses darker cards for definition, dark mode uses lighter overlay
+        isLightMode ? textPrimary.opacity(0.08) : textPrimary.opacity(0.1)
+    }
     var backgroundCardSolid: Color { backgroundSecondary }
-    var backgroundInput: Color { textPrimary.opacity(0.15) }
-    var borderLight: Color { textPrimary.opacity(0.2) }
-    var borderDefault: Color { textPrimary.opacity(0.3) }
+    var backgroundInput: Color { 
+        isLightMode ? textPrimary.opacity(0.08) : textPrimary.opacity(0.15)
+    }
+    var borderLight: Color { 
+        isLightMode ? textPrimary.opacity(0.15) : textPrimary.opacity(0.2)
+    }
+    var borderDefault: Color { 
+        isLightMode ? textPrimary.opacity(0.25) : textPrimary.opacity(0.3)
+    }
     
     // Gradient helper
     var backgroundGradient: LinearGradient {

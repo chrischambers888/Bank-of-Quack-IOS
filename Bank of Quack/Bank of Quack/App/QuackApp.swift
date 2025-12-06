@@ -4,12 +4,14 @@ import Auth
 @main
 struct QuackApp: App {
     @State private var authViewModel = AuthViewModel()
+    @ObservedObject private var themeProvider = ThemeProvider.shared
     
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(authViewModel)
-                .preferredColorScheme(.dark)
+                // Dynamic color scheme based on current theme
+                .preferredColorScheme(themeProvider.isLightMode ? .light : .dark)
                 .onOpenURL { url in
                     handleDeepLink(url)
                 }
@@ -77,4 +79,3 @@ struct LoadingView: View {
     ContentView()
         .environment(AuthViewModel())
 }
-
