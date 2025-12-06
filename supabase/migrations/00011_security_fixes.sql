@@ -444,8 +444,3 @@ $$;
 -- 1. Go to Authentication > Providers > Email
 -- 2. Enable "Leaked password protection"
 --------------------------------------------------------------------------------
-
-
-
-
-

@@ -14,7 +14,3 @@ ALTER TABLE public.transaction_templates
 -- Create index for faster lookups by household
 CREATE INDEX IF NOT EXISTS idx_transaction_templates_sort_order 
   ON public.transaction_templates(household_id, sort_order);
-
-
-
-

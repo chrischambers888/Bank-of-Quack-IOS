@@ -72,8 +72,3 @@ BEGIN
   RETURN TRUE;
 END;
 $$;
-
-
-
-
-

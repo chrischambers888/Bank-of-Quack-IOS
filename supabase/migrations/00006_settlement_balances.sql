@@ -94,8 +94,3 @@ LEFT JOIN legacy_expenses le ON le.member_id = hm.id AND le.household_id = hm.ho
 LEFT JOIN settlement_paid sp ON sp.member_id = hm.id AND sp.household_id = hm.household_id
 LEFT JOIN settlement_received sr ON sr.member_id = hm.id AND sr.household_id = hm.household_id
 WHERE hm.status = 'approved';
-
-
-
-
-
