@@ -840,6 +840,9 @@ struct DashboardView: View {
                                 balance: filteredCurrentMemberBalance,
                                 memberCount: membersWithNonZeroBalance,
                                 isLoading: transactionViewModel.isLoading,
+                                members: authViewModel.members,
+                                memberBalances: filteredMemberBalances,
+                                currentMemberId: authViewModel.currentMember?.id,
                                 onInfoTapped: { showBalanceDetails = true }
                             )
                             .padding(.horizontal, Theme.Spacing.md)
@@ -1082,6 +1085,9 @@ struct MemberBalanceCardWithInfo: View {
     let balance: Decimal
     let memberCount: Int
     let isLoading: Bool
+    let members: [HouseholdMember]
+    let memberBalances: [MemberBalance]
+    let currentMemberId: UUID?
     let onInfoTapped: () -> Void
     
     private var isZero: Bool {
@@ -1090,6 +1096,27 @@ struct MemberBalanceCardWithInfo: View {
     
     private var isPositive: Bool {
         balance >= 0
+    }
+    
+    /// Members with non-zero balances for display
+    private var relevantMembers: [HouseholdMember] {
+        let nonZeroMemberIds = Set(memberBalances.filter { abs($0.balance.doubleValue) >= 0.01 }.map { $0.memberId })
+        return members.filter { nonZeroMemberIds.contains($0.id) || $0.id == currentMemberId }
+    }
+    
+    /// For 2-member case: the other member (not current user)
+    private var otherMember: HouseholdMember? {
+        members.first { $0.id != currentMemberId }
+    }
+    
+    /// Current member object
+    private var currentMember: HouseholdMember? {
+        members.first { $0.id == currentMemberId }
+    }
+    
+    /// Check if this is a 2-member household
+    private var isTwoMemberHousehold: Bool {
+        members.count == 2
     }
     
     var body: some View {
@@ -1117,11 +1144,17 @@ struct MemberBalanceCardWithInfo: View {
                         .font(.subheadline)
                         .foregroundStyle(Theme.Colors.textMuted)
                 }
+            } else if isTwoMemberHousehold, let current = currentMember, let other = otherMember {
+                // Special 2-member display
+                twoMemberBalanceView(current: current, other: other)
             } else if isZero {
                 Text("You're all settled up! 🎉")
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundStyle(Theme.Colors.textPrimary)
+                
+                // Avatar footer for 3+ members
+                memberAvatarFooter
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.xs) {
                     Text(abs(balance.doubleValue).formattedAsMoney())
@@ -1133,14 +1166,90 @@ struct MemberBalanceCardWithInfo: View {
                         .font(.subheadline)
                         .foregroundStyle(Theme.Colors.textMuted)
                 }
+                
+                // Avatar footer for 3+ members
+                memberAvatarFooter
             }
-            
-            Text("Between \(memberCount) bank members")
-                .font(.caption)
-                .foregroundStyle(Theme.Colors.textMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .materialCardStyle()
+    }
+    
+    /// Two-member balance display with avatars
+    @ViewBuilder
+    private func twoMemberBalanceView(current: HouseholdMember, other: HouseholdMember) -> some View {
+        if isZero {
+            // All square!
+            HStack(spacing: Theme.Spacing.xs) {
+                MemberAvatarView(member: current, size: 28, fontSize: 16)
+                Text("and")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textMuted)
+                MemberAvatarView(member: other, size: 28, fontSize: 16)
+                Text("are all square!")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+            }
+        } else if isPositive {
+            // Other owes current user
+            HStack(spacing: Theme.Spacing.xs) {
+                MemberAvatarView(member: other, size: 28, fontSize: 16)
+                Text("owes")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textMuted)
+                MemberAvatarView(member: current, size: 28, fontSize: 16)
+                Text(abs(balance.doubleValue).formattedAsMoney())
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(Theme.Colors.balancePositive)
+            }
+        } else {
+            // Current user owes other
+            HStack(spacing: Theme.Spacing.xs) {
+                MemberAvatarView(member: current, size: 28, fontSize: 16)
+                Text("owes")
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.Colors.textMuted)
+                MemberAvatarView(member: other, size: 28, fontSize: 16)
+                Text(abs(balance.doubleValue).formattedAsMoney())
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(Theme.Colors.balanceNegative)
+            }
+        }
+    }
+    
+    /// Footer showing avatars for 3+ member households
+    @ViewBuilder
+    private var memberAvatarFooter: some View {
+        HStack(spacing: Theme.Spacing.xs) {
+            Text("Between")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textMuted)
+            
+            HStack(spacing: -6) {
+                ForEach(relevantMembers.prefix(6)) { member in
+                    MemberAvatarView(member: member, size: 22, fontSize: 12)
+                        .overlay(
+                            Circle()
+                                .stroke(Theme.Colors.backgroundSecondary, lineWidth: 1.5)
+                        )
+                }
+                
+                // Show +N if more than 6 members
+                if relevantMembers.count > 6 {
+                    ZStack {
+                        Circle()
+                            .fill(Theme.Colors.backgroundTertiary)
+                            .frame(width: 22, height: 22)
+                        Text("+\(relevantMembers.count - 6)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.Colors.textSecondary)
+                    }
+                }
+            }
+        }
     }
 }
 
