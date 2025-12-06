@@ -132,6 +132,11 @@ enum Theme {
         static let settlement = Color(hex: "42A5F5")
         static let reimbursement = Color(hex: "AB47BC")
         
+        // MARK: - Balance Colors (static - always green/red regardless of theme)
+        
+        static let balancePositive = Color(hex: "4CAF50")
+        static let balanceNegative = Color(hex: "F44336")
+        
         // MARK: - Dynamic Border Colors
         
         static var borderLight: Color { ThemeProvider.shared.borderLight }

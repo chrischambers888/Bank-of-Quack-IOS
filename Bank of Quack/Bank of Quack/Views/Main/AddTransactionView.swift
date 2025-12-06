@@ -1225,13 +1225,13 @@ struct AddTransactionView: View {
                                         Text(formatBalanceCompact(item.newBalance))
                                             .font(.caption)
                                             .fontWeight(.semibold)
-                                            .foregroundStyle(item.newBalance >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                            .foregroundStyle(item.newBalance >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                                     }
                                     
                                     // Change indicator
                                     Text("(\(item.change >= 0 ? "+" : "")\(formatBalanceCompact(item.change)))")
                                         .font(.caption2)
-                                        .foregroundStyle(item.change >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                        .foregroundStyle(item.change >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                                 }
                             }
                         }

@@ -48,7 +48,7 @@ struct NetBalanceCard: View {
             
             Text(net.doubleValue.formattedAsMoney(showSign: true))
                 .font(.system(size: 36, weight: .bold))
-                .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+                .foregroundStyle(isPositive ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
         }
         .frame(maxWidth: .infinity)
         .materialCardStyle()
@@ -77,7 +77,7 @@ struct MemberBalanceCard: View {
                 Text(abs(balance.doubleValue).formattedAsMoney())
                     .font(.title2)
                     .fontWeight(.bold)
-                    .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+                    .foregroundStyle(isPositive ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
             }
             
             Text(isPositive ? "Others owe you money" : "You need to settle up")

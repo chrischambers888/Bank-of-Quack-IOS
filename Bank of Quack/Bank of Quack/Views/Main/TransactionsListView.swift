@@ -1286,7 +1286,7 @@ struct BalanceImpactRow: View {
         if abs(net.doubleValue) < 0.01 {
             return Theme.Colors.textMuted
         }
-        return net > 0 ? Theme.Colors.success : Theme.Colors.error
+        return net > 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative
     }
     
     private var detailText: String {

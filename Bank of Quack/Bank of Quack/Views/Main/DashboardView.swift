@@ -1024,9 +1024,9 @@ struct DashboardView: View {
                         Text("\(filterManager.filter.activeFilterCount)")
                             .font(.caption2)
                             .fontWeight(.bold)
-                            .foregroundStyle(Theme.Colors.textInverse)
+                            .foregroundStyle(.white)
                             .frame(width: 18, height: 18)
-                            .background(Theme.Colors.error)
+                            .background(Theme.Colors.balanceNegative)
                             .clipShape(Circle())
                             .offset(x: 4, y: -4)
                     }
@@ -1116,7 +1116,7 @@ struct MemberBalanceCardWithInfo: View {
                     Text(abs(balance.doubleValue).formattedAsMoney())
                         .font(.title2)
                         .fontWeight(.bold)
-                        .foregroundStyle(isPositive ? Theme.Colors.success : Theme.Colors.error)
+                        .foregroundStyle(isPositive ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                     
                     Text(isPositive ? "owed to you" : "you owe")
                         .font(.subheadline)
@@ -1740,14 +1740,14 @@ struct LedgerEntryRow: View {
         if abs(entry.balanceChange.doubleValue) < 0.01 {
             return Theme.Colors.textMuted
         }
-        return entry.balanceChange > 0 ? Theme.Colors.success : Theme.Colors.error
+        return entry.balanceChange > 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative
     }
     
     private var balanceColor: Color {
         if abs(entry.runningBalance.doubleValue) < 0.01 {
             return Theme.Colors.textPrimary
         }
-        return entry.runningBalance > 0 ? Theme.Colors.success : Theme.Colors.error
+        return entry.runningBalance > 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative
     }
     
     var body: some View {
@@ -2243,7 +2243,7 @@ struct PairwiseBalanceSheet: View {
                                     Text(settlementAmount > 0.01 ? settlementAmount.formattedAsMoney() : "$0.00")
                                         .font(.subheadline)
                                         .fontWeight(.bold)
-                                        .foregroundStyle(settlementAmount > 0.01 ? Theme.Colors.error : Theme.Colors.success)
+                                        .foregroundStyle(settlementAmount > 0.01 ? Theme.Colors.balanceNegative : Theme.Colors.balancePositive)
                                 }
                                 .padding(Theme.Spacing.md)
                             }
@@ -2674,7 +2674,7 @@ struct BalanceTransactionRow: View {
                         Spacer()
                         Text(impact.net > 0 ? "+\(impact.net.doubleValue.formattedAsMoney())" : "\(impact.net.doubleValue.formattedAsMoney())")
                             .fontWeight(.medium)
-                            .foregroundStyle(impact.net > 0 ? Theme.Colors.success : Theme.Colors.error)
+                            .foregroundStyle(impact.net > 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                     }
                     .font(.caption)
                 }
@@ -2689,7 +2689,7 @@ struct BalanceTransactionRow: View {
                         Spacer()
                         Text(impact.net > 0 ? "+\(impact.net.doubleValue.formattedAsMoney())" : "-\(abs(impact.net).doubleValue.formattedAsMoney())")
                             .fontWeight(.medium)
-                            .foregroundStyle(impact.net > 0 ? Theme.Colors.success : Theme.Colors.error)
+                            .foregroundStyle(impact.net > 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                     }
                     .font(.caption)
                 }
@@ -5044,7 +5044,7 @@ struct NetBalanceDetailSheet: View {
                                     Text(data.totalLine[0].dailyNet.doubleValue.formattedAsMoney(showSign: true))
                                         .font(.title2)
                                         .fontWeight(.bold)
-                                        .foregroundStyle(data.totalLine[0].dailyNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                        .foregroundStyle(data.totalLine[0].dailyNet >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                                 }
                                 .frame(maxWidth: .infinity)
                                 .materialCardStyle()
@@ -5220,7 +5220,7 @@ struct MultiLineNetBalanceChart: View {
     
     /// Color based on final balance
     private var netColor: Color {
-        finalNetBalance >= 0 ? Theme.Colors.success : Theme.Colors.error
+        finalNetBalance >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative
     }
     
     /// Get values at selected date
@@ -5276,12 +5276,12 @@ struct MultiLineNetBalanceChart: View {
                             
                             HStack(spacing: 4) {
                                 Circle()
-                                    .fill(totalPoint.cumulativeNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                    .fill(totalPoint.cumulativeNet >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                                     .frame(width: 8, height: 8)
                                 Text(totalPoint.cumulativeNet.doubleValue.formattedAsMoney(showSign: true))
                                     .font(.subheadline)
                                     .fontWeight(.bold)
-                                    .foregroundStyle(totalPoint.cumulativeNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                    .foregroundStyle(totalPoint.cumulativeNet >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                             }
                         }
                         
@@ -5295,7 +5295,7 @@ struct MultiLineNetBalanceChart: View {
                             Text(totalPoint.dailyNet.doubleValue.formattedAsMoney(showSign: true))
                                 .font(.caption)
                                 .fontWeight(.medium)
-                                .foregroundStyle(totalPoint.dailyNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                .foregroundStyle(totalPoint.dailyNet >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                         }
                     }
                     
@@ -5315,7 +5315,7 @@ struct MultiLineNetBalanceChart: View {
                                     Text(point.cumulativeNet.doubleValue.formattedAsMoney(showSign: true))
                                         .font(.caption2)
                                         .fontWeight(.medium)
-                                        .foregroundStyle(point.cumulativeNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                        .foregroundStyle(point.cumulativeNet >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                                 }
                             }
                             
@@ -5492,7 +5492,7 @@ struct MultiLineNetBalanceChart: View {
                             Text(line.totalNet.doubleValue.formattedAsMoney(showSign: true))
                                 .font(.caption)
                                 .fontWeight(.medium)
-                                .foregroundStyle(line.totalNet >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                                .foregroundStyle(line.totalNet >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                         }
                     }
                 }
@@ -5668,7 +5668,7 @@ struct PeriodTransactionsSheet: View {
         case .income:
             return Theme.Colors.income
         default:
-            return totalAmount >= 0 ? Theme.Colors.success : Theme.Colors.error
+            return totalAmount >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative
         }
     }
     

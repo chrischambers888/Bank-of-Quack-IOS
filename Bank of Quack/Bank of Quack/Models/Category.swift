@@ -139,7 +139,7 @@ struct UpdateCategoryDTO: Encodable, Sendable {
         case sortOrder = "sort_order"
     }
     
-    init(name: String? = nil, icon: String? = nil, color: String? = nil, imageUrl: String? = nil, sortOrder: Int? = nil) {
+    nonisolated init(name: String? = nil, icon: String? = nil, color: String? = nil, imageUrl: String? = nil, sortOrder: Int? = nil) {
         self.name = name
         self.icon = icon
         self.color = color
@@ -190,7 +190,7 @@ struct UpdateSectorDTO: Encodable, Sendable {
         case sortOrder = "sort_order"
     }
     
-    init(name: String? = nil, color: String? = nil, sortOrder: Int? = nil) {
+    nonisolated init(name: String? = nil, color: String? = nil, sortOrder: Int? = nil) {
         self.name = name
         self.color = color
         self.sortOrder = sortOrder

@@ -337,18 +337,32 @@ class AppliedThemeManager: ObservableObject {
         let colors = getOrderedColors(for: themeId)
         guard !colors.isEmpty else { return }
         
-        // Update sector colors
-        for (index, sector) in sectors.enumerated() {
-            let colorIndex = index % colors.count
-            let dto = UpdateSectorDTO(color: colors[colorIndex])
-            _ = try await dataService.updateSector(id: sector.id, dto: dto)
+        // Update sector colors in parallel for faster performance
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (index, sector) in sectors.enumerated() {
+                let colorIndex = index % colors.count
+                let color = colors[colorIndex]
+                let sectorId = sector.id
+                group.addTask {
+                    let dto = UpdateSectorDTO(color: color)
+                    _ = try await dataService.updateSector(id: sectorId, dto: dto)
+                }
+            }
+            try await group.waitForAll()
         }
         
-        // Update category colors
-        for (index, category) in categories.enumerated() {
-            let colorIndex = index % colors.count
-            let dto = UpdateCategoryDTO(color: colors[colorIndex])
-            _ = try await dataService.updateCategory(id: category.id, dto: dto)
+        // Update category colors in parallel for faster performance
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (index, category) in categories.enumerated() {
+                let colorIndex = index % colors.count
+                let color = colors[colorIndex]
+                let categoryId = category.id
+                group.addTask {
+                    let dto = UpdateCategoryDTO(color: color)
+                    _ = try await dataService.updateCategory(id: categoryId, dto: dto)
+                }
+            }
+            try await group.waitForAll()
         }
         
         // Let caller refresh data
@@ -367,8 +381,8 @@ enum QuackPalettes {
         name: "Quack Classic",
         description: "The signature teal and gold look",
         colors: [
-            "#80CBC4", "#FFEB3B", "#B2DFDB", "#FFF176",
-            "#E0F2F1", "#FFF59D", "#A5D6A7", "#FFFDE7"
+            "#26A69A", "#80CBC4", "#B2DFDB", "#FFF176",
+            "#FFEB3B", "#FFD54F", "#AED581", "#004D40"
         ],
         gradientStart: "#00796B",
         gradientEnd: "#004D40",
@@ -383,7 +397,7 @@ enum QuackPalettes {
     /// Bold and vibrant quack colors
     static let quackAttack = ColorPalette(
         id: "quack_attack",
-        name: "Quack Attack",
+        name: "Quack L'Orange",
         description: "Bold teal, gold, and accent pops",
         colors: [
             "#004D40", "#F57F17", "#00695C", "#F9A825",
@@ -418,62 +432,21 @@ enum QuackPalettes {
         isLightMode: false
     )
     
-    /// Warm golden hues - precious as a golden egg
-    static let goldenEgg = ColorPalette(
-        id: "golden_egg",
-        name: "Golden Egg",
-        description: "Warm sunset golds and oranges",
-        colors: [
-            "#BF360C", "#D84315", "#E64A19", "#F4511E",
-            "#E65100", "#EF6C00", "#F57C00", "#FB8C00"
-        ],
-        gradientStart: "#E65100",
-        gradientEnd: "#BF360C",
-        accentColor: "#FFAB00",
-        primaryTextColor: "#FFFFFF",
-        secondaryTextColor: "#FFE0B2",
-        backgroundPrimary: "#8B2500",
-        backgroundSecondary: "#BF360C",
-        isLightMode: false,
-        successColor: "#69F0AE",  // Bright mint green - high contrast on orange
-        errorColor: "#880E4F"     // Deep magenta - distinct from orange gradient
-    )
-    
     /// Cool ocean teals - like ripples on a pond
     static let pondRipple = ColorPalette(
         id: "pond_ripple",
         name: "Pond Ripple",
         description: "Cool blues and teals like water",
         colors: [
-            "#0D47A1", "#1565C0", "#1976D2", "#1E88E5",
-            "#006064", "#00838F", "#0097A7", "#00ACC1"
+            "#03045e", "#0077b6", "#00b4d8", "#90e0ef", "#caf0f8"
         ],
-        gradientStart: "#0277BD",
-        gradientEnd: "#01579B",
+        gradientStart: "#0077b6",
+        gradientEnd: "#03045e",
         accentColor: "#00E5FF",
         primaryTextColor: "#FFFFFF",
         secondaryTextColor: "#B3E5FC",
         backgroundPrimary: "#01579B",
         backgroundSecondary: "#0277BD",
-        isLightMode: false
-    )
-    
-    /// Cool Scandinavian frost tones
-    static let featherFrost = ColorPalette(
-        id: "feather_frost",
-        name: "Feather Frost",
-        description: "Cool icy Scandinavian tones",
-        colors: [
-            "#37474F", "#455A64", "#546E7A", "#607D8B",
-            "#0277BD", "#0288D1", "#039BE5", "#03A9F4"
-        ],
-        gradientStart: "#455A64",
-        gradientEnd: "#263238",
-        accentColor: "#4DD0E1",
-        primaryTextColor: "#FFFFFF",
-        secondaryTextColor: "#B0BEC5",
-        backgroundPrimary: "#263238",
-        backgroundSecondary: "#37474F",
         isLightMode: false
     )
     
@@ -483,11 +456,11 @@ enum QuackPalettes {
         name: "Waddle Sunset",
         description: "Warm dusk colors",
         colors: [
-            "#BF360C", "#E65100", "#F9A825", "#558B2F",
-            "#4E342E", "#D84315", "#FF8F00", "#33691E"
+            "#001219", "#005f73", "#0a9396", "#94d2bd", "#e9d8a6",
+            "#ee9b00", "#ca6702", "#bb3e03", "#ae2012", "#9b2226"
         ],
-        gradientStart: "#D84315",
-        gradientEnd: "#BF360C",
+        gradientStart: "#ee9b00",
+        gradientEnd: "#9b2226",
         accentColor: "#FFAB00",
         primaryTextColor: "#FFFFFF",
         secondaryTextColor: "#FFCCBC",
@@ -520,7 +493,7 @@ enum QuackPalettes {
     /// Tropical paradise vibes - colorful plumage
     static let plumageParadise = ColorPalette(
         id: "plumage_paradise",
-        name: "Plumage Paradise",
+        name: "Duck Paradise",
         description: "Vibrant tropical plumage",
         colors: [
             "#FF6F00", "#00BFA5", "#F50057", "#00B0FF",
@@ -528,7 +501,7 @@ enum QuackPalettes {
         ],
         gradientStart: "#00897B",
         gradientEnd: "#00695C",
-        accentColor: "#FF6D00",
+        accentColor: "#FFCA28",
         primaryTextColor: "#FFFFFF",
         secondaryTextColor: "#A7FFEB",
         backgroundPrimary: "#004D40",
@@ -552,44 +525,6 @@ enum QuackPalettes {
         secondaryTextColor: "#F8BBD0",
         backgroundPrimary: "#1A0A14",
         backgroundSecondary: "#4A0028",
-        isLightMode: false
-    )
-    
-    /// Rich gemstone colors - jewels fit for a drake
-    static let drakesJewels = ColorPalette(
-        id: "drakes_jewels",
-        name: "Drake's Jewels",
-        description: "Rich gemstone-inspired colors",
-        colors: [
-            "#B71C1C", "#1A237E", "#004D40", "#E65100",
-            "#4A148C", "#006064", "#880E4F", "#33691E"
-        ],
-        gradientStart: "#4A148C",
-        gradientEnd: "#1A0A28",
-        accentColor: "#E040FB",
-        primaryTextColor: "#FFFFFF",
-        secondaryTextColor: "#CE93D8",
-        backgroundPrimary: "#1A0A28",
-        backgroundSecondary: "#4A148C",
-        isLightMode: false
-    )
-    
-    /// Fresh garden colors - Mother Goose's garden
-    static let motherGoose = ColorPalette(
-        id: "mother_goose",
-        name: "Mother Goose",
-        description: "Fresh floral garden palette",
-        colors: [
-            "#C2185B", "#7B1FA2", "#388E3C", "#F57C00",
-            "#1976D2", "#D32F2F", "#00796B", "#FBC02D"
-        ],
-        gradientStart: "#388E3C",
-        gradientEnd: "#1B5E20",
-        accentColor: "#FFAB00",
-        primaryTextColor: "#FFFFFF",
-        secondaryTextColor: "#A5D6A7",
-        backgroundPrimary: "#0D3B16",
-        backgroundSecondary: "#1B5E20",
         isLightMode: false
     )
     
@@ -631,25 +566,6 @@ enum QuackPalettes {
         isLightMode: false
     )
     
-    /// Autumn harvest - cozy nest egg colors
-    static let nestEgg = ColorPalette(
-        id: "nest_egg",
-        name: "Nest Egg",
-        description: "Warm autumn harvest colors",
-        colors: [
-            "#BF360C", "#E65100", "#F9A825", "#558B2F",
-            "#4E342E", "#D84315", "#FF8F00", "#33691E"
-        ],
-        gradientStart: "#5D4037",
-        gradientEnd: "#3E2723",
-        accentColor: "#FF8F00",
-        primaryTextColor: "#FFFFFF",
-        secondaryTextColor: "#BCAAA4",
-        backgroundPrimary: "#2C1810",
-        backgroundSecondary: "#3E2723",
-        isLightMode: false
-    )
-    
     /// Retro 70s vibes - vintage tail feathers
     static let tailFeathers = ColorPalette(
         id: "tail_feathers",
@@ -669,51 +585,52 @@ enum QuackPalettes {
         isLightMode: false
     )
     
-    /// Playful candy colors - sweet hatchling vibes
-    static let hatchling = ColorPalette(
-        id: "hatchling",
-        name: "Hatchling",
-        description: "Playful sweet candy colors",
+    /// Deep forest greens and sage - nature's tranquility
+    static let forestCanopy = ColorPalette(
+        id: "forest_canopy",
+        name: "Forest Canopy",
+        description: "Deep woods and soft sage tones",
         colors: [
-            "#D32F2F", "#C2185B", "#7B1FA2", "#512DA8",
-            "#1976D2", "#0288D1", "#0097A7", "#00796B"
+            "#dad7cd", "#a3b18a", "#588157", "#3a5a40", "#344e41"
         ],
-        gradientStart: "#AD1457",
-        gradientEnd: "#880E4F",
-        accentColor: "#FF4081",
+        gradientStart: "#588157",
+        gradientEnd: "#344e41",
+        accentColor: "#dad7cd",
         primaryTextColor: "#FFFFFF",
-        secondaryTextColor: "#F8BBD0",
-        backgroundPrimary: "#4A0028",
-        backgroundSecondary: "#880E4F",
-        isLightMode: false
+        secondaryTextColor: "#a3b18a",
+        backgroundPrimary: "#344e41",
+        backgroundSecondary: "#3a5a40",
+        isLightMode: false,
+        successColor: "#a3b18a",  // Sage green for success
+        errorColor: "#D84315"     // Warm terracotta for error
     )
     
-    /// Elegant monochrome - sleek preening duck
-    static let preening = ColorPalette(
-        id: "preening",
-        name: "Preening",
-        description: "Elegant grayscale with accents",
+    /// Warm coral and peach tones - soft and inviting
+    static let peachyKeen = ColorPalette(
+        id: "peachy_keen",
+        name: "Peachy Keen",
+        description: "Warm coral blush and soft peach",
         colors: [
-            "#212121", "#424242", "#616161", "#757575",
-            "#00BCD4", "#FF5722", "#4CAF50", "#9C27B0"
+            "#f08080", "#f4978e", "#f8ad9d", "#fbc4ab", "#ffdab9"
         ],
-        gradientStart: "#424242",
-        gradientEnd: "#212121",
-        accentColor: "#00BCD4",
-        primaryTextColor: "#FFFFFF",
-        secondaryTextColor: "#9E9E9E",
-        backgroundPrimary: "#121212",
-        backgroundSecondary: "#1E1E1E",
-        isLightMode: false
+        gradientStart: "#f4978e",
+        gradientEnd: "#ffdab9",
+        accentColor: "#f08080",
+        primaryTextColor: "#5D4037",
+        secondaryTextColor: "#8D6E63",
+        backgroundPrimary: "#ffdab9",
+        backgroundSecondary: "#fbc4ab",
+        isLightMode: true,
+        successColor: "#66BB6A",  // Fresh green for contrast
+        errorColor: "#C62828"     // Deep red for errors
     )
     
     // MARK: - All Palettes
     
     static let all: [ColorPalette] = [
-        quackClassic, quackAttack, mallardMidnight, goldenEgg, pondRipple,
-        featherFrost, waddleSunset, billBright, plumageParadise, rubberDucky,
-        drakesJewels, motherGoose, ducklingRainbow, wingTips, nestEgg,
-        tailFeathers, hatchling, preening
+        quackClassic, quackAttack, mallardMidnight, pondRipple,
+        waddleSunset, billBright, plumageParadise, rubberDucky,
+        ducklingRainbow, wingTips, tailFeathers, forestCanopy, peachyKeen
     ]
     
     static let darkThemes: [ColorPalette] = all
@@ -733,7 +650,6 @@ struct ThemePaletteView: View {
     @State private var selectedPalette: ColorPalette?
     @State private var isApplying = false
     @State private var showConfirmation = false
-    @State private var showSuccess = false
     @State private var showColorReorder = false
     @State private var showAccentPicker = false
     
@@ -893,13 +809,6 @@ struct ThemePaletteView: View {
             } message: {
                 Text("This will change your app's entire look to \(selectedPalette?.name ?? "the selected theme"), including colors for sectors and categories.")
             }
-            .alert("Theme Applied!", isPresented: $showSuccess) {
-                Button("OK") {
-                    selectedPalette = nil
-                }
-            } message: {
-                Text("Your app has been transformed with the \(themeManager.appliedThemeName ?? "new") theme!")
-            }
             .sheet(isPresented: $showColorReorder) {
                 ColorReorderView()
             }
@@ -918,27 +827,43 @@ struct ThemePaletteView: View {
         
         isApplying = true
         
+        // Update the ThemeProvider immediately for instant visual feedback
+        ThemeProvider.shared.updatePalette(palette)
+        
         Task {
             do {
                 // Get the ordered colors (respecting any custom order for this theme)
                 let colors = themeManager.getOrderedColors(for: palette.id)
                 
+                // Update sectors in parallel for much faster performance
                 let sectors = authViewModel.sectors
-                for (index, sector) in sectors.enumerated() {
-                    let colorIndex = index % colors.count
-                    let dto = UpdateSectorDTO(color: colors[colorIndex])
-                    _ = try await dataService.updateSector(id: sector.id, dto: dto)
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    for (index, sector) in sectors.enumerated() {
+                        let colorIndex = index % colors.count
+                        let color = colors[colorIndex]
+                        let sectorId = sector.id
+                        group.addTask {
+                            let dto = UpdateSectorDTO(color: color)
+                            _ = try await self.dataService.updateSector(id: sectorId, dto: dto)
+                        }
+                    }
+                    try await group.waitForAll()
                 }
                 
+                // Update categories in parallel for much faster performance
                 let categories = authViewModel.categories
-                for (index, category) in categories.enumerated() {
-                    let colorIndex = index % colors.count
-                    let dto = UpdateCategoryDTO(color: colors[colorIndex])
-                    _ = try await dataService.updateCategory(id: category.id, dto: dto)
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    for (index, category) in categories.enumerated() {
+                        let colorIndex = index % colors.count
+                        let color = colors[colorIndex]
+                        let categoryId = category.id
+                        group.addTask {
+                            let dto = UpdateCategoryDTO(color: color)
+                            _ = try await self.dataService.updateCategory(id: categoryId, dto: dto)
+                        }
+                    }
+                    try await group.waitForAll()
                 }
-                
-                await authViewModel.refreshSectors()
-                await authViewModel.refreshCategories()
                 
                 // Save the applied theme for this household
                 if let householdId = authViewModel.currentHousehold?.id {
@@ -948,13 +873,14 @@ struct ThemePaletteView: View {
                 // Reset any custom accent color when switching themes - user starts fresh with new theme's default
                 themeManager.resetAccentColor(for: palette.id)
                 
-                // Update the ThemeProvider to reflect the new theme immediately
-                ThemeProvider.shared.updatePalette(palette)
-                
                 await MainActor.run {
                     isApplying = false
-                    showSuccess = true
+                    selectedPalette = nil
                 }
+                
+                // Note: We intentionally don't refresh sectors/categories here to avoid
+                // triggering a parent view re-render that would dismiss this sheet.
+                // The data will refresh when the user dismisses this sheet.
             } catch {
                 await MainActor.run {
                     isApplying = false
@@ -1294,22 +1220,39 @@ struct ColorReorderView: View {
         // Save the new order
         themeManager.saveCustomColorOrder(for: palette.id, order: colorOrder)
         
+        // Capture orderedColors before async context
+        let colorsToApply = orderedColors
+        
         Task {
             do {
-                // Apply new colors to existing sectors
+                // Apply new colors to existing sectors in parallel
                 let sectors = authViewModel.sectors
-                for (index, sector) in sectors.enumerated() {
-                    let colorIndex = index % orderedColors.count
-                    let dto = UpdateSectorDTO(color: orderedColors[colorIndex])
-                    _ = try await dataService.updateSector(id: sector.id, dto: dto)
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    for (index, sector) in sectors.enumerated() {
+                        let colorIndex = index % colorsToApply.count
+                        let color = colorsToApply[colorIndex]
+                        let sectorId = sector.id
+                        group.addTask {
+                            let dto = UpdateSectorDTO(color: color)
+                            _ = try await self.dataService.updateSector(id: sectorId, dto: dto)
+                        }
+                    }
+                    try await group.waitForAll()
                 }
                 
-                // Apply new colors to existing categories
+                // Apply new colors to existing categories in parallel
                 let categories = authViewModel.categories
-                for (index, category) in categories.enumerated() {
-                    let colorIndex = index % orderedColors.count
-                    let dto = UpdateCategoryDTO(color: orderedColors[colorIndex])
-                    _ = try await dataService.updateCategory(id: category.id, dto: dto)
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    for (index, category) in categories.enumerated() {
+                        let colorIndex = index % colorsToApply.count
+                        let color = colorsToApply[colorIndex]
+                        let categoryId = category.id
+                        group.addTask {
+                            let dto = UpdateCategoryDTO(color: color)
+                            _ = try await self.dataService.updateCategory(id: categoryId, dto: dto)
+                        }
+                    }
+                    try await group.waitForAll()
                 }
                 
                 await authViewModel.refreshSectors()

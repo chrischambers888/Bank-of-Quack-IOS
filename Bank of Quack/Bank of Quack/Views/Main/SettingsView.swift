@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AuthViewModel.self) private var authViewModel
-    @ObservedObject private var themeProvider = ThemeProvider.shared
     
     @State private var showSwitchHousehold = false
     @State private var showCategories = false
@@ -64,7 +63,14 @@ struct SettingsView: View {
         .sheet(isPresented: $showTemplates) {
             TemplatesView()
         }
-        .sheet(isPresented: $showThemePalette) {
+        .sheet(isPresented: $showThemePalette, onDismiss: {
+            // Refresh sectors and categories after theme sheet closes
+            // to pick up any color changes from theme application
+            Task {
+                await authViewModel.refreshSectors()
+                await authViewModel.refreshCategories()
+            }
+        }) {
             ThemePaletteView()
         }
         .alert("Sign Out?", isPresented: $showSignOutConfirm) {

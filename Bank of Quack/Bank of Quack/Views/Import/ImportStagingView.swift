@@ -380,7 +380,7 @@ struct ImportStagingView: View {
                         Text(formatCurrency(netTotal))
                             .font(.subheadline)
                             .fontWeight(.bold)
-                            .foregroundStyle(netTotal >= 0 ? Theme.Colors.success : Theme.Colors.error)
+                            .foregroundStyle(netTotal >= 0 ? Theme.Colors.balancePositive : Theme.Colors.balanceNegative)
                     }
                 }
                 .padding(Theme.Spacing.md)
