@@ -284,7 +284,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -353,7 +353,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -413,7 +413,7 @@ struct SettingsView: View {
                     SettingsRow(icon: "paintpalette.fill", title: "Color Themes", subtitle: AppliedThemeManager.shared.appliedThemeName ?? "No theme applied", showChevron: true)
                 }
             }
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -653,7 +653,7 @@ struct SettingsView: View {
                     SettingsRow(icon: "rectangle.portrait.and.arrow.right", title: "Sign Out", iconColor: Theme.Colors.error)
                 }
             }
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -1463,7 +1463,7 @@ struct DataSettingsSection: View {
                     )
                 }
             }
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
         }
@@ -2000,7 +2000,7 @@ struct PrivacySettingsSection: View {
                     )
                 )
             }
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
             .padding(.horizontal, Theme.Spacing.md)
             

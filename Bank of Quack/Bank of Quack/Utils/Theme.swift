@@ -212,7 +212,7 @@ struct MaterialCardStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(Theme.Spacing.md)
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.lg))
     }
 }

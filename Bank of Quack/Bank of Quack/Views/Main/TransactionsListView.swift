@@ -355,7 +355,7 @@ struct TransactionsListView: View {
                                         }
                                         .padding(.horizontal, Theme.Spacing.md)
                                         .padding(.vertical, Theme.Spacing.sm)
-                                        .background(.ultraThinMaterial)
+                                        .background(.regularMaterial)
                                     }
                                 }
                                 

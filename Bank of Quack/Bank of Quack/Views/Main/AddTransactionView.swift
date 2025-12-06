@@ -648,7 +648,7 @@ struct AddTransactionView: View {
         }
         .padding(Theme.Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial)
+        .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
     }
     
@@ -795,7 +795,7 @@ struct AddTransactionView: View {
         }
         .padding(Theme.Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial)
+        .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.sm))
     }
     
@@ -2317,7 +2317,7 @@ struct CustomSplitEditor: View {
             }
         }
         .padding(Theme.Spacing.md)
-        .background(.ultraThinMaterial)
+        .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
     }
     
