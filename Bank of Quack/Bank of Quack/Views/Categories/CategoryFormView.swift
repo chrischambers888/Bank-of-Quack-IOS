@@ -27,11 +27,17 @@ struct CategoryFormView: View {
     
     @State private var name = ""
     @State private var icon = ""
+    @State private var selectedPhotoUrl = ""
+    @State private var selectedPhotoImage: UIImage? = nil
     @State private var selectedColor = "#26A69A"
     @State private var selectedSectorId: UUID? = nil
     @State private var isSubmitting = false
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var showPhotoPicker = false
+    @State private var imageUsage: (current: Int, limit: Int) = (0, 50)
+    @State private var isLoadingUsage = false
+    @State private var showLimitAlert = false
     
     @FocusState private var focusedField: Field?
     
@@ -41,6 +47,7 @@ struct CategoryFormView: View {
     }
     
     private let dataService = DataService()
+    private let imageService = ImageService()
     
     private var isFormValid: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty && !isDuplicateName
@@ -87,6 +94,16 @@ struct CategoryFormView: View {
         return false
     }
     
+    /// Returns true if user has a photo selected (either new or existing)
+    private var hasPhoto: Bool {
+        selectedPhotoImage != nil || selectedPhotoUrl.isPhotoUrl
+    }
+    
+    /// Returns the owner user ID for image counting/uploading
+    private var ownerUserId: UUID? {
+        authViewModel.members.first { $0.role == .owner }?.userId
+    }
+    
     init(mode: Mode) {
         self.mode = mode
         
@@ -94,6 +111,10 @@ struct CategoryFormView: View {
             _name = State(initialValue: category.name)
             _icon = State(initialValue: category.icon ?? "")
             _selectedColor = State(initialValue: category.color)
+            // Initialize photo URL if it's a photo
+            if let imageUrl = category.imageUrl, imageUrl.isPhotoUrl {
+                _selectedPhotoUrl = State(initialValue: imageUrl)
+            }
         }
     }
     
@@ -130,46 +151,8 @@ struct CategoryFormView: View {
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Icon Field (Emoji)
-                        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                            Text("Icon (Optional)")
-                                .font(.caption)
-                                .foregroundStyle(Theme.Colors.textSecondary)
-                            
-                            HStack {
-                                TextField("Tap to add emoji", text: $icon)
-                                    .font(.system(size: 32))
-                                    .multilineTextAlignment(.center)
-                                    .focused($focusedField, equals: .icon)
-                                    .onChange(of: icon) { _, newValue in
-                                        // Only keep the first emoji
-                                        if let first = newValue.first, first.isEmoji {
-                                            icon = String(first)
-                                        } else if !newValue.isEmpty && newValue.first?.isEmoji != true {
-                                            // If non-emoji character entered, clear it
-                                            icon = ""
-                                        }
-                                    }
-                                
-                                if !icon.isEmpty {
-                                    Button {
-                                        icon = ""
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundStyle(Theme.Colors.textMuted)
-                                    }
-                                }
-                            }
-                            .padding(Theme.Spacing.md)
-                            .frame(height: 60)
-                            .background(Theme.Colors.backgroundInput)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md))
-                            
-                            Text("Tap the field and use your emoji keyboard")
-                                .font(.caption2)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                        }
-                        .padding(.horizontal, Theme.Spacing.md)
+                        // Icon Selection (Photo or Emoji)
+                        iconSelectionSection
                         
                         // Color Display (read-only)
                         colorDisplaySection
@@ -229,6 +212,29 @@ struct CategoryFormView: View {
                 if case .edit = mode {
                     selectedSectorId = currentSectorId
                 }
+                loadImageUsage()
+            }
+            .sheet(isPresented: $showPhotoPicker) {
+                ImagePickerView(selectedImage: $selectedPhotoImage)
+            }
+            .onChange(of: icon) { _, newValue in
+                // Clear photo when emoji is selected
+                if !newValue.isEmpty {
+                    selectedPhotoImage = nil
+                    selectedPhotoUrl = ""
+                }
+            }
+            .onChange(of: selectedPhotoImage) { _, newValue in
+                // Clear emoji when photo is selected
+                if newValue != nil {
+                    icon = ""
+                    selectedPhotoUrl = ""
+                }
+            }
+            .alert("Photo Limit Reached", isPresented: $showLimitAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("You've used all \(imageUsage.limit) photo slots. Remove some photos from members or categories to add more.")
             }
         }
         .alert("Error", isPresented: $showError) {
@@ -236,6 +242,175 @@ struct CategoryFormView: View {
         } message: {
             Text(errorMessage)
         }
+    }
+    
+    @ViewBuilder
+    private var iconSelectionSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            HStack {
+                Text("Icon (Optional)")
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.textSecondary)
+                
+                Spacer()
+                
+                if hasPhoto || !icon.isEmpty {
+                    Button("Clear") {
+                        icon = ""
+                        selectedPhotoImage = nil
+                        selectedPhotoUrl = ""
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            
+            // Photo usage indicator
+            if isLoadingUsage {
+                HStack(spacing: Theme.Spacing.xs) {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Loading photo usage...")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+            } else {
+                Text("\(imageUsage.current) of \(imageUsage.limit) photos used")
+                    .font(.caption2)
+                    .foregroundStyle(imageUsage.current >= imageUsage.limit ? Theme.Colors.warning : Theme.Colors.textMuted)
+            }
+            
+            HStack(spacing: Theme.Spacing.md) {
+                // Photo picker button
+                Button {
+                    checkLimitAndShowPicker()
+                } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                            .fill(hasPhoto ? Theme.Colors.accent.opacity(0.1) : Theme.Colors.backgroundCard)
+                            .frame(width: 70, height: 70)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                                    .stroke(hasPhoto ? Theme.Colors.accent : Color.clear, lineWidth: 2)
+                            )
+                        
+                        if let photoImage = selectedPhotoImage {
+                            Image(uiImage: photoImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 66, height: 66)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md - 2))
+                        } else if selectedPhotoUrl.isPhotoUrl {
+                            AsyncImage(url: URL(string: selectedPhotoUrl)) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 66, height: 66)
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md - 2))
+                                default:
+                                    Image(systemName: "photo")
+                                        .font(.title2)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                }
+                            }
+                        } else {
+                            VStack(spacing: 2) {
+                                Image(systemName: "photo")
+                                    .font(.title2)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                Text("Photo")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                        }
+                    }
+                }
+                
+                // Emoji input
+                HStack {
+                    TextField("Tap for emoji", text: $icon)
+                        .font(.system(size: 28))
+                        .multilineTextAlignment(.center)
+                        .focused($focusedField, equals: .icon)
+                        .onChange(of: icon) { _, newValue in
+                            // Only keep the first emoji
+                            if let first = newValue.first, first.isEmoji {
+                                icon = String(first)
+                            } else if !newValue.isEmpty && newValue.first?.isEmoji != true {
+                                icon = ""
+                            }
+                        }
+                }
+                .frame(width: 70, height: 70)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                        .fill(!icon.isEmpty ? Theme.Colors.accent.opacity(0.1) : Theme.Colors.backgroundInput)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                        .stroke(!icon.isEmpty ? Theme.Colors.accent : Color.clear, lineWidth: 2)
+                )
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    if hasPhoto {
+                        Text("Photo selected")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                    } else if !icon.isEmpty {
+                        Text("Emoji selected")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textPrimary)
+                    } else {
+                        Text("Choose photo or emoji")
+                            .font(.caption)
+                            .foregroundStyle(Theme.Colors.textMuted)
+                    }
+                    
+                    Text("Or leave blank for default icon")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+                
+                Spacer()
+            }
+        }
+        .padding(.horizontal, Theme.Spacing.md)
+    }
+    
+    private func loadImageUsage() {
+        guard let ownerId = ownerUserId else { return }
+        
+        isLoadingUsage = true
+        Task {
+            do {
+                let (_, current, limit) = try await imageService.canAddImage(ownerUserId: ownerId)
+                await MainActor.run {
+                    imageUsage = (current, limit)
+                    isLoadingUsage = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingUsage = false
+                }
+            }
+        }
+    }
+    
+    private func checkLimitAndShowPicker() {
+        // If user already has a photo, they can replace it
+        if hasPhoto {
+            showPhotoPicker = true
+            return
+        }
+        
+        if imageUsage.current >= imageUsage.limit {
+            showLimitAlert = true
+            return
+        }
+        
+        showPhotoPicker = true
     }
     
     @ViewBuilder
@@ -382,7 +557,28 @@ struct CategoryFormView: View {
                     .fill(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")).opacity(0.2))
                     .frame(width: 44, height: 44)
                 
-                if !icon.isEmpty {
+                if let photoImage = selectedPhotoImage {
+                    Image(uiImage: photoImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 44, height: 44)
+                        .clipShape(Circle())
+                } else if selectedPhotoUrl.isPhotoUrl {
+                    AsyncImage(url: URL(string: selectedPhotoUrl)) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 44, height: 44)
+                                .clipShape(Circle())
+                        default:
+                            Image(systemName: "folder.fill")
+                                .font(.title3)
+                                .foregroundStyle(Color(hex: selectedColor.replacingOccurrences(of: "#", with: "")))
+                        }
+                    }
+                } else if !icon.isEmpty {
                     Text(icon)
                         .font(.title2)
                 } else {
@@ -417,6 +613,43 @@ struct CategoryFormView: View {
         
         Task {
             do {
+                var imageUrlToSave: String? = nil
+                var iconToSave: String? = icon.isEmpty ? nil : icon
+                
+                // Handle photo upload if new photo selected
+                if let photoImage = selectedPhotoImage, let ownerId = ownerUserId {
+                    // Get existing URL for potential deletion
+                    var existingUrl: String? = nil
+                    if case .edit(let category) = mode {
+                        existingUrl = category.imageUrl
+                    }
+                    
+                    // Upload new photo
+                    let uploadedUrl = try await imageService.uploadImage(
+                        photoImage,
+                        ownerUserId: ownerId,
+                        existingUrl: existingUrl?.isPhotoUrl == true ? existingUrl : nil
+                    )
+                    imageUrlToSave = uploadedUrl
+                    iconToSave = nil // Clear emoji when using photo
+                } else if selectedPhotoUrl.isPhotoUrl {
+                    // Keep existing photo URL
+                    imageUrlToSave = selectedPhotoUrl
+                    iconToSave = nil
+                } else if !icon.isEmpty {
+                    // Using emoji - clear any existing photo
+                    if case .edit(let category) = mode, let existingUrl = category.imageUrl, existingUrl.isPhotoUrl {
+                        try? await imageService.deleteImage(at: existingUrl)
+                    }
+                    imageUrlToSave = nil
+                } else {
+                    // Cleared both - delete any existing photo
+                    if case .edit(let category) = mode, let existingUrl = category.imageUrl, existingUrl.isPhotoUrl {
+                        try? await imageService.deleteImage(at: existingUrl)
+                    }
+                    imageUrlToSave = nil
+                }
+                
                 let categoryId: UUID
                 
                 switch mode {
@@ -424,9 +657,9 @@ struct CategoryFormView: View {
                     let dto = CreateCategoryDTO(
                         householdId: householdId,
                         name: name.trimmingCharacters(in: .whitespaces),
-                        icon: icon.isEmpty ? nil : icon,
+                        icon: iconToSave,
                         color: selectedColor,
-                        imageUrl: nil,
+                        imageUrl: imageUrlToSave,
                         sortOrder: authViewModel.categories.count
                     )
                     let category = try await dataService.createCategory(dto)
@@ -436,8 +669,9 @@ struct CategoryFormView: View {
                     // When editing, don't change the color - it's managed by theme
                     let dto = UpdateCategoryDTO(
                         name: name.trimmingCharacters(in: .whitespaces),
-                        icon: icon.isEmpty ? nil : icon,
-                        color: nil
+                        icon: iconToSave,
+                        color: nil,
+                        imageUrl: imageUrlToSave
                     )
                     _ = try await dataService.updateCategory(id: category.id, dto: dto)
                     categoryId = category.id

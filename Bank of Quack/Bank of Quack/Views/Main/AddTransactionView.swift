@@ -1059,13 +1059,7 @@ struct AddTransactionView: View {
                         HStack(spacing: Theme.Spacing.sm) {
                             // Avatar/Emoji
                             if let member = member {
-                                Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(Theme.Colors.textInverse)
-                                    .frame(width: 32, height: 32)
-                                    .background(member.swiftUIColor)
-                                    .clipShape(Circle())
+                                InlineMemberAvatar(member: member, size: 32)
                             } else {
                                 Circle()
                                     .fill(Theme.Colors.textMuted)
@@ -1149,13 +1143,7 @@ struct AddTransactionView: View {
                                         HStack(spacing: Theme.Spacing.sm) {
                                             // From member avatar
                                             if let member = fromMember {
-                                                Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
-                                                    .font(.caption2)
-                                                    .fontWeight(.semibold)
-                                                    .foregroundStyle(Theme.Colors.textInverse)
-                                                    .frame(width: 24, height: 24)
-                                                    .background(member.swiftUIColor)
-                                                    .clipShape(Circle())
+                                                InlineMemberAvatar(member: member, size: 24)
                                             }
                                             
                                             Text(settlement.from.displayName)
@@ -1169,13 +1157,7 @@ struct AddTransactionView: View {
                                             
                                             // To member avatar
                                             if let member = toMember {
-                                                Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
-                                                    .font(.caption2)
-                                                    .fontWeight(.semibold)
-                                                    .foregroundStyle(Theme.Colors.textInverse)
-                                                    .frame(width: 24, height: 24)
-                                                    .background(member.swiftUIColor)
-                                                    .clipShape(Circle())
+                                                InlineMemberAvatar(member: member, size: 24)
                                             }
                                             
                                             Text(settlement.to.displayName)
@@ -1225,13 +1207,7 @@ struct AddTransactionView: View {
                             ForEach(projectedBalanceChanges, id: \.member.id) { item in
                                 HStack(spacing: Theme.Spacing.sm) {
                                     // Member avatar
-                                    Text(item.member.avatarUrl ?? String(item.member.displayName.prefix(1)).uppercased())
-                                        .font(.caption2)
-                                        .fontWeight(.semibold)
-                                        .foregroundStyle(Theme.Colors.textInverse)
-                                        .frame(width: 24, height: 24)
-                                        .background(item.member.swiftUIColor)
-                                        .clipShape(Circle())
+                                    InlineMemberAvatar(member: item.member, size: 24)
                                     
                                     Text(item.member.displayName)
                                         .font(.caption)

@@ -842,21 +842,7 @@ struct MemberFilterRow: View {
     var body: some View {
         Button(action: action) {
             HStack {
-                ZStack {
-                    Circle()
-                        .fill(member.swiftUIColor)
-                        .frame(width: 32, height: 32)
-                    
-                    if let emoji = member.avatarUrl, !emoji.isEmpty {
-                        Text(emoji)
-                            .font(.system(size: 16))
-                    } else {
-                        Text(member.initials)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(Theme.Colors.textInverse)
-                    }
-                }
+                InlineMemberAvatar(member: member, size: 32)
                 
                 Text(member.displayName)
                     .font(.subheadline)
@@ -887,4 +873,3 @@ struct MemberFilterRow: View {
         sectorCategories: [:]
     )
 }
-

@@ -676,7 +676,7 @@ struct MemberExpenseRow: View {
         VStack(spacing: Theme.Spacing.xs) {
             HStack(spacing: Theme.Spacing.sm) {
                 // Member emoji or color
-                if let emoji = member.emoji, !emoji.isEmpty {
+                if let emoji = member.emoji, !emoji.isEmpty, !emoji.isPhotoUrl {
                     Text(emoji)
                         .font(.system(size: 20))
                         .frame(width: 28, height: 28)
@@ -1171,7 +1171,7 @@ struct CategoryMemberRow: View {
         VStack(spacing: Theme.Spacing.xs) {
             HStack(spacing: Theme.Spacing.sm) {
                 // Member emoji or color
-                if let emoji = member.emoji, !emoji.isEmpty {
+                if let emoji = member.emoji, !emoji.isEmpty, !emoji.isPhotoUrl {
                     Text(emoji)
                         .font(.system(size: 24))
                         .frame(width: 36, height: 36)

@@ -1312,13 +1312,7 @@ struct BalanceImpactRow: View {
     var body: some View {
         HStack(spacing: Theme.Spacing.sm) {
             // Member avatar
-            Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(Theme.Colors.textInverse)
-                .frame(width: 32, height: 32)
-                .background(member.swiftUIColor)
-                .clipShape(Circle())
+            InlineMemberAvatar(member: member, size: 32)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(member.displayName)
@@ -1358,4 +1352,3 @@ struct BalanceImpactRow: View {
         .environment(AuthViewModel())
         .environment(TransactionViewModel())
 }
-

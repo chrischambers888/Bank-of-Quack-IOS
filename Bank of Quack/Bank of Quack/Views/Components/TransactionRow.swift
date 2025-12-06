@@ -41,20 +41,7 @@ struct TransactionRow: View {
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
             // Category Icon
-            ZStack {
-                Circle()
-                    .fill(categoryColor.opacity(0.2))
-                    .frame(width: 44, height: 44)
-                
-                // Note: "folder" string is invalid (was a bug) - treat as nil
-                if let icon = transaction.categoryIcon, !icon.isEmpty, icon != "folder" {
-                    Text(icon)
-                        .font(.title3)
-                } else {
-                    Image(systemName: transaction.transactionType.icon)
-                        .foregroundStyle(categoryColor)
-                }
-            }
+            categoryIconView
             
             // Details
             VStack(alignment: .leading, spacing: 4) {
@@ -123,6 +110,43 @@ struct TransactionRow: View {
             return Color(hex: colorHex.replacingOccurrences(of: "#", with: ""))
         }
         return transaction.transactionType.color
+    }
+    
+    @ViewBuilder
+    private var categoryIconView: some View {
+        ZStack {
+            Circle()
+                .fill(categoryColor.opacity(0.2))
+                .frame(width: 44, height: 44)
+            
+            // Check for category image URL first
+            if let imageUrl = transaction.categoryImageUrl, imageUrl.isPhotoUrl {
+                AsyncImage(url: URL(string: imageUrl)) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 44, height: 44)
+                            .clipShape(Circle())
+                    default:
+                        defaultCategoryIcon
+                    }
+                }
+            } else if let icon = transaction.categoryIcon, !icon.isEmpty, icon != "folder" {
+                // Emoji icon
+                Text(icon)
+                    .font(.title3)
+            } else {
+                // Default system icon based on transaction type
+                defaultCategoryIcon
+            }
+        }
+    }
+    
+    private var defaultCategoryIcon: some View {
+        Image(systemName: transaction.transactionType.icon)
+            .foregroundStyle(categoryColor)
     }
     
     private var amountText: String {
@@ -237,4 +261,3 @@ struct PortionBadge: View {
     }
     .background(Theme.Colors.backgroundPrimary)
 }
-

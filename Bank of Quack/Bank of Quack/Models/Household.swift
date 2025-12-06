@@ -104,6 +104,11 @@ struct HouseholdMember: Identifiable, Codable, Hashable, Sendable {
     func isManagedBy(userId: UUID) -> Bool {
         managedByUserId == userId
     }
+    
+    /// Returns true if the avatar is a photo URL (vs emoji or nil)
+    var isPhotoAvatar: Bool {
+        avatarUrl?.isPhotoUrl ?? false
+    }
 }
 
 enum MemberRole: String, Codable, CaseIterable, Sendable {
@@ -673,4 +678,3 @@ struct ProblematicTransaction: Codable, Identifiable, Sendable {
         return issues.joined(separator: ", ")
     }
 }
-

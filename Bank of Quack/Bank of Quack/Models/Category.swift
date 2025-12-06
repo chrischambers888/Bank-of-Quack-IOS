@@ -35,6 +35,11 @@ struct Category: Identifiable, Codable, Hashable, Sendable {
     var swiftUIColor: Color {
         Color(hex: color.replacingOccurrences(of: "#", with: ""))
     }
+    
+    /// Returns true if the category has a photo icon (vs emoji or nil)
+    var isPhotoIcon: Bool {
+        imageUrl?.isPhotoUrl ?? false
+    }
 }
 
 struct Sector: Identifiable, Codable, Hashable, Sendable {
@@ -216,4 +221,3 @@ struct CreateSectorCategoryDTO: Encodable, Sendable {
         try container.encode(categoryId, forKey: .categoryId)
     }
 }
-

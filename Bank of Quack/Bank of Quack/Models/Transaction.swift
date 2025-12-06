@@ -255,6 +255,7 @@ struct TransactionView: Identifiable, Codable, Hashable, Sendable {
     var categoryName: String?
     var categoryIcon: String?
     var categoryColor: String?
+    var categoryImageUrl: String?
     var paidByName: String?
     var paidByAvatar: String?
     var paidToName: String?
@@ -281,6 +282,7 @@ struct TransactionView: Identifiable, Codable, Hashable, Sendable {
         case categoryName = "category_name"
         case categoryIcon = "category_icon"
         case categoryColor = "category_color"
+        case categoryImageUrl = "category_image_url"
         case paidByName = "paid_by_name"
         case paidByAvatar = "paid_by_avatar"
         case paidToName = "paid_to_name"
@@ -345,6 +347,7 @@ struct TransactionView: Identifiable, Codable, Hashable, Sendable {
         categoryName = try container.decodeIfPresent(String.self, forKey: .categoryName)
         categoryIcon = try container.decodeIfPresent(String.self, forKey: .categoryIcon)
         categoryColor = try container.decodeIfPresent(String.self, forKey: .categoryColor)
+        categoryImageUrl = try container.decodeIfPresent(String.self, forKey: .categoryImageUrl)
         paidByName = try container.decodeIfPresent(String.self, forKey: .paidByName)
         paidByAvatar = try container.decodeIfPresent(String.self, forKey: .paidByAvatar)
         paidToName = try container.decodeIfPresent(String.self, forKey: .paidToName)

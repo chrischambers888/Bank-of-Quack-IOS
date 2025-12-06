@@ -205,23 +205,21 @@ struct SettingsView: View {
     @ViewBuilder
     private var profileSection: some View {
         VStack(spacing: Theme.Spacing.md) {
-            ZStack {
+            if let member = authViewModel.currentMember {
+                MemberAvatarView(member: member, size: 80, fontSize: 40)
+                    .onTapGesture {
+                        showEditProfile = true
+                    }
+            } else {
                 Circle()
-                    .fill(authViewModel.currentMember?.swiftUIColor ?? Theme.Colors.accent)
+                    .fill(Theme.Colors.accent)
                     .frame(width: 80, height: 80)
-                
-                if let emoji = authViewModel.currentMember?.avatarUrl, !emoji.isEmpty {
-                    Text(emoji)
-                        .font(.system(size: 40))
-                } else {
-                    Text(authViewModel.currentMember?.initials ?? "?")
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .foregroundStyle(Theme.Colors.textInverse)
-                }
-            }
-            .onTapGesture {
-                showEditProfile = true
+                    .overlay(
+                        Text("?")
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .foregroundStyle(Theme.Colors.textInverse)
+                    )
             }
             
             Text(authViewModel.currentMember?.displayName ?? "User")
@@ -784,10 +782,20 @@ struct EditProfileView: View {
     
     @State private var displayName: String = ""
     @State private var selectedEmoji: String = ""
+    @State private var selectedPhotoUrl: String = ""
+    @State private var selectedPhotoImage: UIImage? = nil
     @State private var selectedColor: String = ""
     @State private var isSaving = false
     @State private var showEmojiInput = false
+    @State private var showPhotoPicker = false
+    @State private var imageUsage: (current: Int, limit: Int) = (0, 50)
+    @State private var isLoadingUsage = false
+    @State private var showLimitAlert = false
+    @State private var showError = false
+    @State private var errorMessage = ""
     @FocusState private var isEmojiFieldFocused: Bool
+    
+    private let imageService = ImageService()
     
     private let colorOptions = [
         "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4",
@@ -804,6 +812,17 @@ struct EditProfileView: View {
         !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
+    /// Returns true if user has a photo selected (either new or existing)
+    private var hasPhoto: Bool {
+        selectedPhotoImage != nil || selectedPhotoUrl.isPhotoUrl
+    }
+    
+    /// Returns the owner user ID for image counting/uploading
+    private var ownerUserId: UUID? {
+        // Find the owner of the current household
+        authViewModel.members.first { $0.role == .owner }?.userId
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -814,21 +833,7 @@ struct EditProfileView: View {
                     VStack(spacing: Theme.Spacing.xl) {
                         // Preview
                         VStack(spacing: Theme.Spacing.md) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color(hex: selectedColor.isEmpty ? (authViewModel.currentMember?.color ?? "#4ECDC4") : selectedColor))
-                                    .frame(width: 100, height: 100)
-                                
-                                if selectedEmoji.isEmpty {
-                                    Text(previewInitials.isEmpty ? "?" : previewInitials)
-                                        .font(.largeTitle)
-                                        .fontWeight(.bold)
-                                        .foregroundStyle(.white)
-                                } else {
-                                    Text(selectedEmoji)
-                                        .font(.system(size: 50))
-                                }
-                            }
+                            avatarPreview
                             
                             Text(displayName.isEmpty ? "Your Name" : displayName)
                                 .font(.title3)
@@ -848,74 +853,18 @@ struct EditProfileView: View {
                         }
                         .padding(.horizontal, Theme.Spacing.md)
                         
-                        // Emoji Selection
-                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                            HStack {
-                                Text("Profile Emoji")
-                                    .font(.headline)
-                                    .foregroundStyle(Theme.Colors.textPrimary)
-                                
-                                Spacer()
-                                
-                                if !selectedEmoji.isEmpty {
-                                    Button("Clear") {
-                                        selectedEmoji = ""
-                                    }
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.Colors.accent)
-                                }
-                            }
-                            
-                            Text("Choose any emoji to represent you, or leave blank to show your initials")
-                                .font(.caption)
-                                .foregroundStyle(Theme.Colors.textMuted)
-                            
-                            HStack(spacing: Theme.Spacing.md) {
-                                // Emoji display/input button
-                                Button {
-                                    showEmojiInput = true
-                                } label: {
-                                    ZStack {
-                                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
-                                            .fill(Theme.Colors.backgroundCard)
-                                            .frame(width: 80, height: 80)
-                                        
-                                        if selectedEmoji.isEmpty {
-                                            VStack(spacing: 4) {
-                                                Image(systemName: "face.smiling")
-                                                    .font(.title)
-                                                    .foregroundStyle(Theme.Colors.textMuted)
-                                                Text("Tap")
-                                                    .font(.caption2)
-                                                    .foregroundStyle(Theme.Colors.textMuted)
-                                            }
-                                        } else {
-                                            Text(selectedEmoji)
-                                                .font(.system(size: 50))
-                                        }
-                                    }
-                                }
-                                
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(selectedEmoji.isEmpty ? "No emoji selected" : "Emoji selected")
-                                        .font(.subheadline)
-                                        .foregroundStyle(Theme.Colors.textPrimary)
-                                    
-                                    Text("Tap to choose from the emoji keyboard")
-                                        .font(.caption)
-                                        .foregroundStyle(Theme.Colors.textSecondary)
-                                }
-                                
-                                Spacer()
-                            }
-                        }
-                        .padding(.horizontal, Theme.Spacing.md)
+                        // Avatar Selection (Photo or Emoji)
+                        avatarSelectionSection
                         
                         // Color Selection
                         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                             Text("Profile Color")
                                 .font(.headline)
                                 .foregroundStyle(Theme.Colors.textPrimary)
+                            
+                            Text("Used as background when no photo is set")
+                                .font(.caption)
+                                .foregroundStyle(Theme.Colors.textMuted)
                             
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: Theme.Spacing.sm) {
                                 ForEach(colorOptions, id: \.self) { color in
@@ -968,8 +917,16 @@ struct EditProfileView: View {
             .onAppear {
                 // Initialize with current values
                 displayName = authViewModel.currentMember?.displayName ?? ""
-                selectedEmoji = authViewModel.currentMember?.avatarUrl ?? ""
+                let currentAvatar = authViewModel.currentMember?.avatarUrl ?? ""
+                if currentAvatar.isPhotoUrl {
+                    selectedPhotoUrl = currentAvatar
+                    selectedEmoji = ""
+                } else {
+                    selectedEmoji = currentAvatar
+                    selectedPhotoUrl = ""
+                }
                 selectedColor = authViewModel.currentMember?.color ?? ""
+                loadImageUsage()
             }
             .sheet(isPresented: $showEmojiInput) {
                 EmojiPickerSheet(
@@ -977,28 +934,339 @@ struct EditProfileView: View {
                     profileColor: selectedColor.isEmpty ? (authViewModel.currentMember?.color ?? "#4ECDC4") : selectedColor
                 )
             }
+            .sheet(isPresented: $showPhotoPicker) {
+                ImagePickerView(selectedImage: $selectedPhotoImage)
+            }
+            .onChange(of: selectedEmoji) { _, newValue in
+                // Clear photo when emoji is selected
+                if !newValue.isEmpty {
+                    selectedPhotoImage = nil
+                    selectedPhotoUrl = ""
+                }
+            }
+            .onChange(of: selectedPhotoImage) { _, newValue in
+                // Clear emoji when photo is selected
+                if newValue != nil {
+                    selectedEmoji = ""
+                    selectedPhotoUrl = ""
+                }
+            }
+            .alert("Photo Limit Reached", isPresented: $showLimitAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("You've used all \(imageUsage.limit) photo slots. Remove some photos from members or categories to add more.")
+            }
+            .alert("Error", isPresented: $showError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(errorMessage)
+            }
         }
+    }
+    
+    @ViewBuilder
+    private var avatarPreview: some View {
+        ZStack {
+            Circle()
+                .fill(Color(hex: selectedColor.isEmpty ? (authViewModel.currentMember?.color ?? "#4ECDC4") : selectedColor))
+                .frame(width: 100, height: 100)
+            
+            if let photoImage = selectedPhotoImage {
+                // New photo selected
+                Image(uiImage: photoImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 100, height: 100)
+                    .clipShape(Circle())
+            } else if selectedPhotoUrl.isPhotoUrl {
+                // Existing photo URL
+                AsyncImage(url: URL(string: selectedPhotoUrl)) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 100, height: 100)
+                            .clipShape(Circle())
+                    case .failure:
+                        Text(previewInitials.isEmpty ? "?" : previewInitials)
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.white)
+                    case .empty:
+                        ProgressView()
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+            } else if !selectedEmoji.isEmpty {
+                Text(selectedEmoji)
+                    .font(.system(size: 50))
+            } else {
+                Text(previewInitials.isEmpty ? "?" : previewInitials)
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var avatarSelectionSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            HStack {
+                Text("Profile Picture")
+                    .font(.headline)
+                    .foregroundStyle(Theme.Colors.textPrimary)
+                
+                Spacer()
+                
+                if hasPhoto || !selectedEmoji.isEmpty {
+                    Button("Clear") {
+                        selectedEmoji = ""
+                        selectedPhotoImage = nil
+                        selectedPhotoUrl = ""
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Theme.Colors.accent)
+                }
+            }
+            
+            // Photo usage indicator
+            if isLoadingUsage {
+                HStack(spacing: Theme.Spacing.xs) {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Loading photo usage...")
+                        .font(.caption)
+                        .foregroundStyle(Theme.Colors.textMuted)
+                }
+            } else {
+                Text("\(imageUsage.current) of \(imageUsage.limit) photos used")
+                    .font(.caption)
+                    .foregroundStyle(imageUsage.current >= imageUsage.limit ? Theme.Colors.warning : Theme.Colors.textMuted)
+            }
+            
+            HStack(spacing: Theme.Spacing.md) {
+                // Photo picker button
+                Button {
+                    checkLimitAndShowPicker()
+                } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                            .fill(hasPhoto ? Theme.Colors.accent.opacity(0.1) : Theme.Colors.backgroundCard)
+                            .frame(width: 80, height: 80)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                                    .stroke(hasPhoto ? Theme.Colors.accent : Color.clear, lineWidth: 2)
+                            )
+                        
+                        if let photoImage = selectedPhotoImage {
+                            Image(uiImage: photoImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 76, height: 76)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md - 2))
+                        } else if selectedPhotoUrl.isPhotoUrl {
+                            AsyncImage(url: URL(string: selectedPhotoUrl)) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 76, height: 76)
+                                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.md - 2))
+                                default:
+                                    Image(systemName: "photo")
+                                        .font(.title)
+                                        .foregroundStyle(Theme.Colors.textMuted)
+                                }
+                            }
+                        } else {
+                            VStack(spacing: 4) {
+                                Image(systemName: "photo")
+                                    .font(.title)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                Text("Photo")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                        }
+                    }
+                }
+                
+                // Emoji picker button
+                Button {
+                    showEmojiInput = true
+                } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                            .fill(!selectedEmoji.isEmpty ? Theme.Colors.accent.opacity(0.1) : Theme.Colors.backgroundCard)
+                            .frame(width: 80, height: 80)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.CornerRadius.md)
+                                    .stroke(!selectedEmoji.isEmpty ? Theme.Colors.accent : Color.clear, lineWidth: 2)
+                            )
+                        
+                        if selectedEmoji.isEmpty {
+                            VStack(spacing: 4) {
+                                Image(systemName: "face.smiling")
+                                    .font(.title)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                                Text("Emoji")
+                                    .font(.caption2)
+                                    .foregroundStyle(Theme.Colors.textMuted)
+                            }
+                        } else {
+                            Text(selectedEmoji)
+                                .font(.system(size: 40))
+                        }
+                    }
+                }
+                
+                Spacer()
+            }
+            
+            Text("Choose a photo or emoji, or leave blank to show your initials")
+                .font(.caption)
+                .foregroundStyle(Theme.Colors.textMuted)
+        }
+        .padding(.horizontal, Theme.Spacing.md)
+    }
+    
+    private func loadImageUsage() {
+        guard let ownerId = ownerUserId else { return }
+        
+        isLoadingUsage = true
+        Task {
+            do {
+                let (_, current, limit) = try await imageService.canAddImage(ownerUserId: ownerId)
+                await MainActor.run {
+                    imageUsage = (current, limit)
+                    isLoadingUsage = false
+                }
+            } catch {
+                await MainActor.run {
+                    isLoadingUsage = false
+                }
+            }
+        }
+    }
+    
+    private func checkLimitAndShowPicker() {
+        // If user already has a photo, they can replace it (doesn't count as new)
+        if hasPhoto {
+            showPhotoPicker = true
+            return
+        }
+        
+        // Check if at limit
+        if imageUsage.current >= imageUsage.limit {
+            showLimitAlert = true
+            return
+        }
+        
+        showPhotoPicker = true
     }
     
     private func saveProfile() {
         isSaving = true
         
         Task {
+            do {
             let nameToSave = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-            let emojiToSave = selectedEmoji.isEmpty ? nil : selectedEmoji
+                var avatarToSave: String? = nil
+                
+                // Handle photo upload if new photo selected
+                if let photoImage = selectedPhotoImage, let ownerId = ownerUserId {
+                    // Get existing URL for potential deletion
+                    let existingUrl = authViewModel.currentMember?.avatarUrl
+                    
+                    // Upload new photo
+                    let uploadedUrl = try await imageService.uploadImage(
+                        photoImage,
+                        ownerUserId: ownerId,
+                        existingUrl: existingUrl?.isPhotoUrl == true ? existingUrl : nil
+                    )
+                    avatarToSave = uploadedUrl
+                } else if selectedPhotoUrl.isPhotoUrl {
+                    // Keep existing photo URL
+                    avatarToSave = selectedPhotoUrl
+                } else if !selectedEmoji.isEmpty {
+                    // Use emoji
+                    avatarToSave = selectedEmoji
+                } else {
+                    // Clear avatar - check if we need to delete an old photo
+                    let existingUrl = authViewModel.currentMember?.avatarUrl
+                    if existingUrl?.isPhotoUrl == true {
+                        try? await imageService.deleteImage(at: existingUrl!)
+                    }
+                    avatarToSave = nil
+                }
+                
             let colorToSave = selectedColor.isEmpty ? nil : selectedColor
             
             let success = await authViewModel.updateMyProfile(
                 displayName: nameToSave,
-                emoji: emojiToSave,
+                    emoji: avatarToSave,
                 color: colorToSave
             )
             
+                await MainActor.run {
             if success {
                 dismiss()
             }
-            
             isSaving = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showError = true
+                    isSaving = false
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Image Picker View
+
+struct ImagePickerView: UIViewControllerRepresentable {
+    @Binding var selectedImage: UIImage?
+    @Environment(\.dismiss) private var dismiss
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .photoLibrary
+        picker.delegate = context.coordinator
+        picker.allowsEditing = true
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: ImagePickerView
+        
+        init(_ parent: ImagePickerView) {
+            self.parent = parent
+        }
+        
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let editedImage = info[.editedImage] as? UIImage {
+                parent.selectedImage = editedImage
+            } else if let originalImage = info[.originalImage] as? UIImage {
+                parent.selectedImage = originalImage
+            }
+            parent.dismiss()
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
         }
     }
 }
@@ -1264,23 +1532,8 @@ struct MemberRow: View {
     
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
-            ZStack {
-                Circle()
-                    .fill(member.swiftUIColor.opacity(member.isInactive ? 0.5 : 1.0))
-                    .frame(width: 36, height: 36)
-                
-                if let emoji = member.avatarUrl, !emoji.isEmpty {
-                    Text(emoji)
-                        .font(.system(size: 20))
+            MemberAvatarView(member: member, size: 36, fontSize: 20)
                         .opacity(member.isInactive ? 0.6 : 1.0)
-                } else {
-                    Text(member.initials)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Theme.Colors.textInverse)
-                        .opacity(member.isInactive ? 0.6 : 1.0)
-                }
-            }
             
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: Theme.Spacing.xs) {
@@ -1329,22 +1582,8 @@ struct PendingMemberRow: View {
     
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
-            ZStack {
-                Circle()
-                    .fill(member.swiftUIColor.opacity(0.5))
-                    .frame(width: 36, height: 36)
-                
-                if let emoji = member.avatarUrl, !emoji.isEmpty {
-                    Text(emoji)
-                        .font(.system(size: 20))
+            MemberAvatarView(member: member, size: 36, fontSize: 20)
                         .opacity(0.7)
-                } else {
-                    Text(member.initials)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Theme.Colors.textInverse)
-                }
-            }
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(member.displayName)
@@ -2123,4 +2362,3 @@ struct ExportProgressView: View {
     SettingsView()
         .environment(AuthViewModel())
 }
-

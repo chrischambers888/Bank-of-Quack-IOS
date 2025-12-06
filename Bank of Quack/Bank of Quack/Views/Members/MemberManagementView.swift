@@ -253,21 +253,7 @@ struct MemberManagementView: View {
                                         }
                                         
                                         HStack(spacing: Theme.Spacing.md) {
-                                            ZStack {
-                                                Circle()
-                                                    .fill(pendingMember.swiftUIColor)
-                                                    .frame(width: 36, height: 36)
-                                                
-                                                if let emoji = pendingMember.avatarUrl, !emoji.isEmpty {
-                                                    Text(emoji)
-                                                        .font(.system(size: 20))
-                                                } else {
-                                                    Text(pendingMember.initials)
-                                                        .font(.caption)
-                                                        .fontWeight(.semibold)
-                                                        .foregroundStyle(.white)
-                                                }
-                                            }
+                                            MemberAvatarView(member: pendingMember, size: 36, fontSize: 20)
                                             
                                             VStack(alignment: .leading, spacing: 2) {
                                                 Text(pendingMember.displayName)
@@ -446,23 +432,8 @@ struct MemberManagementRow: View {
     
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
-            ZStack {
-                Circle()
-                    .fill(member.swiftUIColor.opacity(member.isInactive ? 0.5 : 1.0))
-                    .frame(width: 44, height: 44)
-                
-                if let emoji = member.avatarUrl, !emoji.isEmpty {
-                    Text(emoji)
-                        .font(.system(size: 24))
-                        .opacity(member.isInactive ? 0.6 : 1.0)
-                } else {
-                    Text(member.initials)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Theme.Colors.textInverse)
-                        .opacity(member.isInactive ? 0.6 : 1.0)
-                }
-            }
+            MemberAvatarView(member: member, size: 44, fontSize: 24)
+                .opacity(member.isInactive ? 0.6 : 1.0)
             
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: Theme.Spacing.xs) {
@@ -790,21 +761,7 @@ struct MemberCreatedSuccessView: View {
             
             // Member Preview
             VStack(spacing: Theme.Spacing.sm) {
-                ZStack {
-                    Circle()
-                        .fill(member.swiftUIColor)
-                        .frame(width: 80, height: 80)
-                    
-                    if let emoji = member.avatarUrl, !emoji.isEmpty {
-                        Text(emoji)
-                            .font(.system(size: 44))
-                    } else {
-                        Text(member.initials)
-                            .font(.title)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.white)
-                    }
-                }
+                MemberAvatarView(member: member, size: 80, fontSize: 44)
                 
                 Text(member.displayName)
                     .font(.title2)
@@ -916,21 +873,7 @@ struct ManagedMemberDetailView: View {
                     VStack(spacing: Theme.Spacing.xl) {
                         // Member Profile
                         VStack(spacing: Theme.Spacing.md) {
-                            ZStack {
-                                Circle()
-                                    .fill(member.swiftUIColor)
-                                    .frame(width: 100, height: 100)
-                                
-                                if let emoji = member.avatarUrl, !emoji.isEmpty {
-                                    Text(emoji)
-                                        .font(.system(size: 50))
-                                } else {
-                                    Text(member.initials)
-                                        .font(.largeTitle)
-                                        .fontWeight(.bold)
-                                        .foregroundStyle(.white)
-                                }
-                            }
+                            MemberAvatarView(member: member, size: 100, fontSize: 50)
                             
                             Text(member.displayName)
                                 .font(.title2)
@@ -1474,21 +1417,7 @@ struct TransferOwnershipView: View {
                                             showConfirmation = true
                                         } label: {
                                             HStack(spacing: Theme.Spacing.md) {
-                                                ZStack {
-                                                    Circle()
-                                                        .fill(member.swiftUIColor)
-                                                        .frame(width: 44, height: 44)
-                                                    
-                                                    if let emoji = member.avatarUrl, !emoji.isEmpty {
-                                                        Text(emoji)
-                                                            .font(.system(size: 24))
-                                                    } else {
-                                                        Text(member.initials)
-                                                            .font(.subheadline)
-                                                            .fontWeight(.semibold)
-                                                            .foregroundStyle(.white)
-                                                    }
-                                                }
+                                                MemberAvatarView(member: member, size: 44, fontSize: 24)
                                                 
                                                 VStack(alignment: .leading, spacing: 2) {
                                                     Text(member.displayName)
@@ -1625,23 +1554,8 @@ struct InactiveMemberDetailView: View {
                     VStack(spacing: Theme.Spacing.xl) {
                         // Member Profile
                         VStack(spacing: Theme.Spacing.md) {
-                            ZStack {
-                                Circle()
-                                    .fill(member.swiftUIColor.opacity(0.5))
-                                    .frame(width: 100, height: 100)
-                                
-                                if let emoji = member.avatarUrl, !emoji.isEmpty {
-                                    Text(emoji)
-                                        .font(.system(size: 50))
-                                        .opacity(0.6)
-                                } else {
-                                    Text(member.initials)
-                                        .font(.largeTitle)
-                                        .fontWeight(.bold)
-                                        .foregroundStyle(.white)
-                                        .opacity(0.6)
-                                }
-                            }
+                            MemberAvatarView(member: member, size: 100, fontSize: 50)
+                                .opacity(0.6)
                             
                             Text(member.displayName)
                                 .font(.title2)
@@ -1796,21 +1710,7 @@ struct RegularMemberDetailView: View {
                     VStack(spacing: Theme.Spacing.xl) {
                         // Member Profile
                         VStack(spacing: Theme.Spacing.md) {
-                            ZStack {
-                                Circle()
-                                    .fill(member.swiftUIColor)
-                                    .frame(width: 100, height: 100)
-                                
-                                if let emoji = member.avatarUrl, !emoji.isEmpty {
-                                    Text(emoji)
-                                        .font(.system(size: 50))
-                                } else {
-                                    Text(member.initials)
-                                        .font(.largeTitle)
-                                        .fontWeight(.bold)
-                                        .foregroundStyle(.white)
-                                }
-                            }
+                            MemberAvatarView(member: member, size: 100, fontSize: 50)
                             
                             Text(member.displayName)
                                 .font(.title2)
@@ -1997,21 +1897,7 @@ struct MemberPermissionsView: View {
                     VStack(spacing: Theme.Spacing.lg) {
                         // Member Info Header
                         VStack(spacing: Theme.Spacing.md) {
-                            ZStack {
-                                Circle()
-                                    .fill(member.swiftUIColor)
-                                    .frame(width: 80, height: 80)
-                                
-                                if let emoji = member.avatarUrl, !emoji.isEmpty {
-                                    Text(emoji)
-                                        .font(.system(size: 40))
-                                } else {
-                                    Text(member.initials)
-                                        .font(.title)
-                                        .fontWeight(.bold)
-                                        .foregroundStyle(.white)
-                                }
-                            }
+                            MemberAvatarView(member: member, size: 80, fontSize: 40)
                             
                             Text(member.displayName)
                                 .font(.title3)
@@ -2231,4 +2117,3 @@ struct PermissionToggleRow: View {
     MemberManagementView()
         .environment(AuthViewModel())
 }
-

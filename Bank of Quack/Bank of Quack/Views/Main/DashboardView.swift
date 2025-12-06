@@ -1524,13 +1524,7 @@ struct BalanceDetailsSheet: View {
                                     // From member
                                     VStack(spacing: 2) {
                                         if let member = fromMember {
-                                            Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
-                                                .font(.caption)
-                                                .fontWeight(.semibold)
-                                                .foregroundStyle(Theme.Colors.textInverse)
-                                                .frame(width: 32, height: 32)
-                                                .background(member.swiftUIColor)
-                                                .clipShape(Circle())
+                                            InlineMemberAvatar(member: member, size: 32)
                                         }
                                         Text(settlement.from.displayName)
                                             .font(.caption2)
@@ -1554,13 +1548,7 @@ struct BalanceDetailsSheet: View {
                                     // To member
                                     VStack(spacing: 2) {
                                         if let member = toMember {
-                                            Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
-                                                .font(.caption)
-                                                .fontWeight(.semibold)
-                                                .foregroundStyle(Theme.Colors.textInverse)
-                                                .frame(width: 32, height: 32)
-                                                .background(member.swiftUIColor)
-                                                .clipShape(Circle())
+                                            InlineMemberAvatar(member: member, size: 32)
                                         }
                                         Text(settlement.to.displayName)
                                             .font(.caption2)
@@ -2149,13 +2137,7 @@ struct PairwiseBalanceSheet: View {
                                 // From member
                                 VStack(spacing: Theme.Spacing.xs) {
                                     if let member = member(for: fromMember.memberId) {
-                                        Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
-                                            .font(.title2)
-                                            .fontWeight(.semibold)
-                                            .foregroundStyle(Theme.Colors.textInverse)
-                                            .frame(width: 60, height: 60)
-                                            .background(member.swiftUIColor)
-                                            .clipShape(Circle())
+                                        MemberAvatarView(member: member, size: 60, fontSize: 28)
                                     }
                                     Text(fromMember.displayName)
                                         .font(.subheadline)
@@ -2177,13 +2159,7 @@ struct PairwiseBalanceSheet: View {
                                 // To member
                                 VStack(spacing: Theme.Spacing.xs) {
                                     if let member = member(for: toMember.memberId) {
-                                        Text(member.avatarUrl ?? String(member.displayName.prefix(1)).uppercased())
-                                            .font(.title2)
-                                            .fontWeight(.semibold)
-                                            .foregroundStyle(Theme.Colors.textInverse)
-                                            .frame(width: 60, height: 60)
-                                            .background(member.swiftUIColor)
-                                            .clipShape(Circle())
+                                        MemberAvatarView(member: member, size: 60, fontSize: 28)
                                     }
                                     Text(toMember.displayName)
                                         .font(.subheadline)
@@ -3376,7 +3352,7 @@ struct MultiLineExpenseChart: View {
                         HStack(spacing: Theme.Spacing.md) {
                             ForEach(point.memberShares.prefix(4)) { share in
                                 HStack(spacing: 4) {
-                                    if let emoji = share.memberEmoji, !emoji.isEmpty {
+                                    if let emoji = share.memberEmoji, !emoji.isEmpty, !emoji.isPhotoUrl {
                                         Text(emoji)
                                             .font(.caption2)
                                     } else {
@@ -3547,7 +3523,7 @@ struct MultiLineExpenseChart: View {
                     ForEach(data.memberLines) { line in
                         HStack(spacing: Theme.Spacing.sm) {
                             HStack(spacing: 6) {
-                                if let emoji = line.emoji, !emoji.isEmpty {
+                                if let emoji = line.emoji, !emoji.isEmpty, !emoji.isPhotoUrl {
                                     Text(emoji)
                                         .font(.system(size: 14))
                                         .frame(width: 16)
@@ -4313,7 +4289,7 @@ struct MultiLineIncomeChart: View {
                         HStack(spacing: Theme.Spacing.md) {
                             ForEach(point.memberShares.prefix(4)) { share in
                                 HStack(spacing: 4) {
-                                    if let emoji = share.memberEmoji, !emoji.isEmpty {
+                                    if let emoji = share.memberEmoji, !emoji.isEmpty, !emoji.isPhotoUrl {
                                         Text(emoji)
                                             .font(.caption2)
                                     } else {
@@ -4484,7 +4460,7 @@ struct MultiLineIncomeChart: View {
                     ForEach(data.memberLines) { line in
                         HStack(spacing: Theme.Spacing.sm) {
                             HStack(spacing: 6) {
-                                if let emoji = line.emoji, !emoji.isEmpty {
+                                if let emoji = line.emoji, !emoji.isEmpty, !emoji.isPhotoUrl {
                                     Text(emoji)
                                         .font(.system(size: 14))
                                         .frame(width: 16)
@@ -5324,7 +5300,7 @@ struct MultiLineNetBalanceChart: View {
                         HStack(spacing: Theme.Spacing.md) {
                             ForEach(selected.members.prefix(4), id: \.0.id) { (line, point) in
                                 HStack(spacing: 4) {
-                                    if let emoji = line.emoji, !emoji.isEmpty {
+                                    if let emoji = line.emoji, !emoji.isEmpty, !emoji.isPhotoUrl {
                                         Text(emoji)
                                             .font(.caption2)
                                     } else {
@@ -5491,7 +5467,7 @@ struct MultiLineNetBalanceChart: View {
                     ForEach(data.memberLines) { line in
                         HStack(spacing: Theme.Spacing.sm) {
                             HStack(spacing: 6) {
-                                if let emoji = line.emoji, !emoji.isEmpty {
+                                if let emoji = line.emoji, !emoji.isEmpty, !emoji.isPhotoUrl {
                                     Text(emoji)
                                         .font(.system(size: 14))
                                         .frame(width: 16)
